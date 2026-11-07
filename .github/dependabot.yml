@@ -1,10 +1,17 @@
 version: 2
 updates:
+  # Minor and patch updates only: a major version is upgraded by hand, when the maintainer chooses.
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: monthly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
