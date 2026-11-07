@@ -37,8 +37,8 @@ Each `':memory:'` database is its own, fresh and gone when the test ends; nothin
 stamps people, messages and audit lines. `store.auditLog()` and `store.history(personId)` are the easiest things to
 assert on.
 
-`node:sqlite` is loaded through Node's own `require`, so Vitest (whose resolver doesn't know it) runs the store
-without any configuration.
+`node:sqlite` is loaded with `process.getBuiltinModule`, which no bundler or test resolver intercepts, so Vitest
+(whose resolver doesn't know `node:sqlite`) runs the store without any configuration.
 
 ## A fixed clock and fixed randomness
 

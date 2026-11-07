@@ -2,12 +2,15 @@
 
 All notable changes to soulframe are documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project will adhere to
-[Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it is released.
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-The first beta, `0.1.0-beta.0`: a general-purpose persona framework that knows no messaging channel and no product. First published to npm with this release, under the MIT license.
+## [0.1.0-beta.0] - 2026-11-07
+
+The first beta: a general-purpose persona framework that knows no messaging channel and no product, published to npm
+on the `beta` dist-tag under the MIT license.
 
 ### Added
 
@@ -17,11 +20,10 @@ The first beta, `0.1.0-beta.0`: a general-purpose persona framework that knows n
 - Versioning, commit message and changelog standards written down in `CONTRIBUTING.md` and `AGENTS.md`, with `npm run lint:commits`.
 - **Reading time.** Before it types, a persona spends as long as it takes to read what they wrote (the unread messages
   together): `pacing.readingCharsPerSecond` (default `[15, 25]`) within `pacing.readingDurationSeconds` (default
-  `[1, 20]`), with or without `markRead`. It replaces `pacing.readBeforeTypingSeconds`, a flat pause only on a
-  conversation with `markRead`, which is gone.
+  `[1, 20]`), with or without `markRead`.
 - `pacing.singlePresence` (default `true`): the reply queue answers one person at a time, so parallel turns cannot overwrite
   each other's self notes; a reply stuck over 10 minutes stops blocking the others. A temporary guard until self notes merge
-  safely; with it off, turns run in parallel as before and `personaWarnings` flags the risk.
+  safely; with it off, turns for different people run in parallel and `personaWarnings` flags the risk.
 - `sfw: true` in a persona's file or `_shared.yaml` (default `false`): every prompt of that persona gets one rule
   keeping its conversations free of sexual or explicit content.
 - **Persona config.** `loadPersonas` reads a folder holding `_shared.yaml` (optional defaults) and `<id>.yaml` per
@@ -49,7 +51,7 @@ The first beta, `0.1.0-beta.0`: a general-purpose persona framework that knows n
   group-chat line there should be is its `targetLength`; the actions a DM turn may
   choose besides blocking are the channel's `actions` (`ChannelAction`: a name and when to choose it), carried out by
   the reply queue's `act`. `samplePrompt` takes `identity` and `style` too.
-- **Generic names throughout**, settled before the first release: group chats (`composeGroupChatLine`,
+- **Generic names throughout**: group chats (`composeGroupChatLine`,
   `GroupChatLine`, `checkGroupChatLine`, `settings.models.groupChat`, `settings.decisions.groupChatGate`,
   `settings.decisions.minor.groupChats`, the Decisions uses `dmCheck`, `groupChatGate` and `groupChatLine`), posts
   (`settings.models.post`), `Conversation.invitation.name`, `Channel.invitations` and `Channel.actions`.
@@ -82,31 +84,22 @@ The first beta, `0.1.0-beta.0`: a general-purpose persona framework that knows n
 - Documentation, a runnable console example (`examples/console-chat.ts`) and the soulframe logo.
 - **Typing realism**, opt-in: `Conversation.typingRefreshMs` makes the queue show typing again at the platform's
   rhythm while a message is typed (indicators expire after a few seconds, a message may be typed for 45);
-  `Conversation.markRead()` shows the person their messages read once per reply, when the reading starts; `pacing.thinkingPauses` (`chance`, default `0`; `minChars` 120; `max` 2;
-  `seconds` `[2, 6]`) lets typing stop a moment and start again in a long message. The halt switch, `stop()` and the
-  person's state are checked after every wait, typing never stays on after a cut or a failure, and a dry run makes the
-  same calls. Without the hooks and with `thinkingPauses.chance` at 0, the calls, timings and random draws are as
-  before.
+  `Conversation.markRead()` shows the person their messages read once per reply, when the reading starts;
+  `pacing.thinkingPauses` (`chance`, default `0`; `minChars` 120; `max` 2; `seconds` `[2, 6]`) lets typing stop a
+  moment and start again in a long message. The halt switch, `stop()` and the person's state are checked after every
+  wait, typing never stays on after a cut or a failure, and a dry run makes the same calls. Without the hooks and with
+  `thinkingPauses.chance` at 0, each message is one `typing(true)`, the typing time, `send` and one `typing(false)`.
+- **One clock and one rng.** `createBrain` takes the reply queue's `runtime` (its `now`, `rng` and `store`, read at
+  each use), so the brain and the queue can't run on different clocks; `{ store, now, rng }` is enough for a brain
+  used without a queue. `createConfiguredDecisions` takes a `now` (default `Date.now`) for the day it logs a spent
+  budget on.
+- **Configuration errors are not retried.** A task with no provider or no model set rejects with a configuration
+  error: the queue gives up at once (`reply_given_up` with `reason: 'model_not_configured'`) and the person stays
+  owed for a start with the settings fixed.
+- A person takes the name of their newest message (one read late changes nothing).
 - Doc drift tests (`test/docs.test.ts`): every `file.ts:NN` reference in the README and `docs/` points at existing
   lines that hold what its code span names, every export is documented in `docs/api.md` (and nothing else), and every
   relative link and anchor resolves.
 
-### Changed
-
-- **One clock and one rng.** `createBrain` takes the reply queue's `runtime` (its `now`, `rng` and `store`, read at
-  each use) in place of its own `store`, `rng` and `now`, so the brain and the queue can't run on different clocks;
-  `{ store, now, rng }` is enough for a brain used without a queue. `createConfiguredDecisions` takes a `now` (default
-  `Date.now`) for the day it logs a spent budget on.
-
-### Fixed
-
-- A task with no provider or no model set is no longer retried like a failed model call: the configured client
-  rejects with a configuration error, the queue gives up at once (`reply_given_up` with `reason:
-  'model_not_configured'`) and the person stays owed for a start with the settings fixed.
-- A person takes the name of their newest message (one read late changes nothing), instead of keeping their first
-  name for good.
-- `samplePrompt` closes its throwaway database when composing throws.
-- `queue.start()` starts its tick once: a second call no longer adds a timer, and one after `stop()` none at all.
-- Stale line references in `docs/prompts.md`.
-
-[Unreleased]: https://github.com/RubyDevil/soulframe/commits/main
+[Unreleased]: https://github.com/RubyDevil/soulframe/compare/v0.1.0-beta.0...HEAD
+[0.1.0-beta.0]: https://github.com/RubyDevil/soulframe/releases/tag/v0.1.0-beta.0

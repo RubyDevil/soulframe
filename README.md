@@ -4,11 +4,11 @@
 
 **AI personas that keep hours, remember people and chat at a human pace, on any channel you plug in.**
 
-[![npm](https://img.shields.io/npm/v/soulframe?color=cb3837&logo=npm)](https://www.npmjs.com/package/soulframe)
+[![npm](https://img.shields.io/npm/v/soulframe/beta?color=cb3837&logo=npm)](https://www.npmjs.com/package/soulframe)
 [![CI](https://github.com/RubyDevil/soulframe/actions/workflows/ci.yml/badge.svg)](https://github.com/RubyDevil/soulframe/actions/workflows/ci.yml)
 [![status: beta](https://img.shields.io/badge/status-beta-7c5cff)](#status-beta)
 [![node: >=22.13](https://img.shields.io/badge/node-%3E%3D22.13-5fa04e?logo=node.js&logoColor=white)](https://nodejs.org/)
-[![types: included](https://img.shields.io/badge/types-included-3178c6?logo=typescript&logoColor=white)](./src/index.ts)
+[![types: included](https://img.shields.io/badge/types-included-3178c6?logo=typescript&logoColor=white)](./docs/api.md)
 [![module: ESM + CJS](https://img.shields.io/badge/module-ESM%20%2B%20CJS-f7df1e)](#install)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 
@@ -62,7 +62,22 @@ safe for work (`sfw: true`).
 ## Status: beta
 
 > [!IMPORTANT]
-> soulframe is **beta** software: the API may still change before 1.0. Releases are SemVer prereleases (`0.1.0-beta.N`) on the `beta` dist-tag, so install with `soulframe@beta` and pin the exact version you test with.
+> soulframe is **beta** software: the API may still change before 1.0. Releases are SemVer prereleases
+> (`0.1.0-beta.N`) on the `beta` dist-tag, so install with `soulframe@beta` and pin the exact version you test with.
+
+What the beta does not do yet:
+
+- **No stability promise.** The exports, the persona config and the database layout may change between betas, and
+  there is no migration policy yet (see the [roadmap](#roadmap-to-10)).
+- **One kind of text provider.** Text generation speaks the OpenAI-compatible `/chat/completions` API only.
+- **A small default budget.** `llm.dailyTokens` defaults to 200,000 tokens a day for every persona together, about
+  55 DM turns at the shipped prompt sizes: size it to your fleet ([configuration](./docs/configuration.md#llm)).
+- **No adapters.** You write the channel adapters ([guide](./docs/channels.md)).
+- **Test helpers and model error classes are not exported** (a scripted Decisions client, a seeded random source,
+  the errors a custom model client needs to signal a spent budget or an outage).
+
+Errors: config problems are returned as `issues`, never thrown; the rest is listed in
+[concepts](./docs/concepts.md#errors).
 
 ## Install
 
@@ -84,13 +99,30 @@ const { createBrain } = require('soulframe'); // CommonJS
 soulframe needs **Node.js 22.13 or newer** (for `node:sqlite` without a flag) and depends on
 [`zod`](https://zod.dev/) and [`yaml`](https://eemeli.org/yaml/) only.
 
+`node:sqlite` is still marked experimental in Node 22, so Node may print an `ExperimentalWarning` once, when soulframe
+loads. It is harmless; run `node --disable-warning=ExperimentalWarning` to hide it.
+
 ## Quick start
 
-A persona, an in-memory store, the canned model (no provider, no key) and a channel that prints to the console. Save it
-as `quick-start.ts` in your project and run `npx tsx quick-start.ts`:
+A persona, an in-memory store, the canned model (no provider, no key) and a channel that prints to the console. It
+uses top-level `await`, so it runs as an ES module: save it as `quick-start.mts` (or as `quick-start.ts` in a project
+whose `package.json` has `"type": "module"`) and run it with [tsx](https://tsx.is/):
+
+```sh
+npx tsx quick-start.mts
+```
 
 ```ts
-import { createBrain, createCannedLlm, createReplyQueue, createRuntime, createStore, openDatabase, parsePersonas, type Conversation } from 'soulframe';
+import {
+	createBrain,
+	createCannedLlm,
+	createReplyQueue,
+	createRuntime,
+	createStore,
+	openDatabase,
+	parsePersonas,
+	type Conversation,
+} from 'soulframe';
 
 // A fixed clock inside the persona's hours and fixed randomness (a real service keeps the defaults, Date.now and Math.random)
 const now = () => Date.UTC(2026, 0, 15, 20, 0);
@@ -106,7 +138,15 @@ const { personas, issues } = parsePersonas({
 			timezone: 'UTC',
 			window: { start: ['19:00', '19:00'], end: ['23:00', '23:00'] },
 			// Instant replies for the demo (the defaults wait seconds to minutes, as a person would)
-			settings: { pacing: { quickReplyChance: 1, slowReplyChance: 0, quickReplyDelaySeconds: [0, 0], typingDurationSeconds: [0, 0] } },
+			settings: {
+				pacing: {
+					quickReplyChance: 1,
+					slowReplyChance: 0,
+					quickReplyDelaySeconds: [0, 0],
+					readingDurationSeconds: [0, 0],
+					typingDurationSeconds: [0, 0],
+				},
+			},
 		},
 	}],
 	channels: { robin: ['console'] },

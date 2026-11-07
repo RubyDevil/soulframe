@@ -219,7 +219,7 @@ The text provider, for text generation only (never read by `decisions`). Global:
 | `apiKeyEnv` | string | `LLM_API_KEY` | The key's environment variable; empty for a provider without authentication. |
 | `model` | string | none | The model of every task that doesn't name its own. |
 | `timeoutSeconds` | number, 5 to 300 | `60` | Before a request is given up (it is retried once). |
-| `dailyTokens` | integer, 0 or more | `200000` | Tokens per UTC day for every persona together; 0 for no limit. Applies through the meter your code passes to `llmsFor` (`createTokenMeter(store, settings.llm.dailyTokens)`). |
+| `dailyTokens` | integer, 0 or more | `200000` | Tokens per UTC day for every persona together; 0 for no limit. At the shipped prompt sizes a DM turn is about 3,500 to 4,000 tokens, so the default buys about 55 DM turns a day: size it to your fleet. Applies through the meter your code passes to `llmsFor` (`createTokenMeter(store, settings.llm.dailyTokens)`). |
 | `directMessageReserve` | number, 0 to 0.9 | `0.3` | The share of `dailyTokens` kept for DMs: group chat and posts stop once the rest is spent. |
 | `concurrency` | integer, 1 to 32 | `4` | The most requests in flight for every persona together; pass it to `llmsFor`. |
 | `jsonMode` | boolean | `false` | Ask for strict JSON (`response_format: json_object`), for providers that support it. A task with its own `baseUrl` doesn't inherit it. |
@@ -251,7 +251,9 @@ Once a provider is set (`llm.baseUrl` or the task's `baseUrl`), every task must 
 
 Optional typed checks by a Decisions API (see [concepts](./concepts.md#decisions-optional-typed-checks)). This
 block is its only configuration: nothing falls back to `llm` or `models`. Global: `_shared.yaml` only. Off by default:
-turning it on sends people's messages, the personas' replies and group-chat lines to `baseUrl`.
+turning it on sends people's messages, the personas' replies and group-chat lines to `baseUrl`. Before you turn it
+on, check that the endpoint and model you use (the defaults below, or your own) answer `{baseUrl}/decisions`: any
+failure behaves as if the checks were off, so a wrong endpoint would only show in the `decisions_failed` log.
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |

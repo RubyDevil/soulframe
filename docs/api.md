@@ -3,7 +3,11 @@
 Everything below is exported by `src/index.ts`, the package's only public module:
 
 ```ts
-import { createBrain, createReplyQueue, createStore, loadPersonas /* ... */ } from 'soulframe';
+import { createBrain, createReplyQueue, createStore, loadPersonas /* ... */ } from 'soulframe'; // ESM or TypeScript
+```
+
+```js
+const { createBrain, createReplyQueue, createStore, loadPersonas /* ... */ } = require('soulframe'); // CommonJS
 ```
 
 Anything not listed here is internal. Signatures are simplified where the source infers a type; times are
@@ -645,7 +649,8 @@ Sets a 5-second busy timeout, WAL journaling and foreign keys. Whoever opens it 
 type Database = InstanceType<typeof import('node:sqlite').DatabaseSync>;
 ```
 
-One connection, for the package's tables and the application's own.
+One connection, for the package's tables and the application's own: Node's own `DatabaseSync`. Type-checking code
+that uses it needs `@types/node` 22 or newer.
 
 ### `createStore`
 

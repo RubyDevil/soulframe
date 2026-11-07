@@ -15,8 +15,8 @@ npm install
 
 The source is TypeScript, run directly by `tsx` and Vitest during development and compiled by `npm run build`
 ([tsdown](https://tsdown.dev/)) into `dist/` (ESM and CommonJS, with type declarations) for publishing. The example and
-the docs import the package by its own name, `soulframe`; `tsconfig.json` maps that name to `src/index.ts`, so
-type-checking and `tsx` need no build.
+the docs import the package by its own name, `soulframe`, as an application installed from npm does. In a clone,
+`tsconfig.json` maps that name to `src/index.ts`, so type-checking and `tsx` need no build.
 
 ## Checks
 
@@ -27,7 +27,8 @@ npx tsx examples/console-chat.ts  # the example still runs, offline
 npm run check                     # all of the above's gates plus the build, publint and are-the-types-wrong
 ```
 
-A pull request keeps these green (CI runs `npm run check` once, then the tests and a smoke test of the build on Node 22.13 and newer, on Linux, Windows and macOS). Run one test file with `npx vitest run test/brain.test.ts`.
+A pull request keeps these green (CI runs `npm run check` once, then the tests and a smoke test of the build on Node
+22.13 and newer, on Linux, Windows and macOS). Run one test file with `npx vitest run test/brain.test.ts`.
 
 `npm test` checks the docs too (`test/docs.test.ts`):
 
@@ -41,18 +42,19 @@ A pull request keeps these green (CI runs `npm run check` once, then the tests a
 
 ## The boundary
 
-soulframe stays independent of any application that uses it. An application that embeds the package (as a workspace
-under its `packages/soulframe`) may enforce these rules with its own test:
+soulframe stays independent of any application that uses it. An application that depends on the package may enforce
+these rules with its own test:
 
 1. The package's `src` and `test` import only the package itself, `node:*` modules, its own dependencies (`zod`,
    `yaml`) and, in tests, `vitest`.
-2. An application reaches the package only by its bare name, `soulframe`: no relative path into the package's
-   folder, no subpath such as `soulframe/src/...`.
-3. No file of the package (source, tests, docs, examples, manifest, assets) names a messaging platform or a product.
-   Channels are opaque `ChannelId` strings the application chooses.
-4. `package.json` exports only the root entry (`"."`, built from `src/index.ts`, plus `./package.json`): `src/index.ts`
-   is the only public module. A new export
-   goes there, with its doc comment, and into [docs/api.md](./docs/api.md).
+2. An application reaches the package only by its bare name, `soulframe`: no deep import such as
+   `soulframe/src/...` or `soulframe/dist/...`.
+3. No file of the package (source, tests, docs, examples, manifest, assets) names a messaging platform or an
+   application built on the package. Channels are opaque `ChannelId` strings the application chooses. Model providers
+   and API standards (OpenAI-compatible, a provider's default endpoint) may be named where a setting needs them.
+4. `package.json` exports only the root entry (`"."`: the compiled `dist/index.mjs` and `dist/index.cjs`, plus
+   `./package.json`), built from `src/index.ts`, the only public module. A new export goes there, with its doc comment,
+   and into [docs/api.md](./docs/api.md).
 
 A channel in an example is `console`, `chat` or `forum`. The package keeps no application's history: an application's
 own database layouts, and their migrations, are the application's.
@@ -101,7 +103,7 @@ Commits follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/
 
 <optional body: what changed and why, wrapped at about 80 columns>
 
-<optional footers, such as BREAKING CHANGE: ... or Co-Authored-By: ...>
+<optional footers, such as BREAKING CHANGE: ... or Co-Authored-By: Name <email> for a human co-author>
 ```
 
 - **Types:** `feat` (a new capability: a `MINOR` bump), `fix` (a bug fix: `PATCH`), `perf`, `refactor`, `docs`, `test`,
@@ -134,7 +136,7 @@ Contributions are accepted under the project's [MIT license](./LICENSE).
 To release (maintainers):
 
 1. Move the `[Unreleased]` notes under a new `## [x.y.z] - date` heading in the CHANGELOG.
-2. `npm version <x.y.z> --no-git-tag-version`, commit (`Release x.y.z`) and push to `main` once CI is green.
+2. `npm version <x.y.z> --no-git-tag-version`, commit (`chore(release): x.y.z`) and push to `main` once CI is green.
 3. `git tag vx.y.z && git push origin vx.y.z`. The `Release` workflow checks the tag against `package.json`, runs
-   `npm run check`, publishes to npm (a prerelease such as `0.1.0-beta.1` goes out on the `beta` dist-tag, and only a version without a suffix becomes `latest`) and
-   creates the GitHub release from the CHANGELOG.
+   `npm run check`, publishes to npm (a prerelease such as `0.1.0-beta.1` goes out on the `beta` dist-tag, and only a
+   version without a suffix becomes `latest`) and creates the GitHub release from the CHANGELOG.

@@ -43,7 +43,7 @@ const loaded = parsePersonas({
 					moods: ['cheerful', { mood: 'a little sleepy', weight: 0.5 }],
 				},
 				// Human pacing (seconds to minutes before a reply), made instant for the demo
-				settings: { pacing: { quickReplyChance: 1, slowReplyChance: 0, quickReplyDelaySeconds: [0, 0], typingDurationSeconds: [0, 0], betweenReplyMessagesSeconds: [0, 0] } },
+				settings: { pacing: { quickReplyChance: 1, slowReplyChance: 0, quickReplyDelaySeconds: [0, 0], readingDurationSeconds: [0, 0], typingDurationSeconds: [0, 0], betweenReplyMessagesSeconds: [0, 0] } },
 			},
 		},
 	],

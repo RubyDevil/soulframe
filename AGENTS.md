@@ -15,8 +15,10 @@ Node >= 22.13 (it uses `node:sqlite`). Runtime dependencies: `zod` and `yaml` on
    `###` heading in `docs/api.md` (and every heading there must be an export). `package.json` `exports` stays the root
    entry plus `./package.json`: no subpaths, no deep imports.
 2. **Boundary.** `src/` and `test/` import only the package itself, `node:*`, `zod`, `yaml` and (tests) `vitest`.
-   No file anywhere (source, tests, docs, examples, manifest, assets) names a messaging platform or a product; example
-   channels are `console`, `chat` or `forum`.
+   No file anywhere (source, tests, docs, examples, manifest, assets) names a messaging platform or an application
+   built on the package; example channels are `console`, `chat` or `forum`. Model providers and API standards
+   (OpenAI-compatible, a provider's default endpoint) may be named where a setting needs them, and rule 13 names AI
+   tools only to forbid crediting them.
 3. **No content policy in `src/`.** What a persona may say belongs to the application. The shipped safeguards (stop
    handling, the opt-in minors safeguard `Channel.adult`) may only get stricter, never weaker.
 4. **Prompt text only in `src/prompts.ts`** (fixed messages in `src/safety.ts`). No other file writes text for the model.
@@ -65,17 +67,18 @@ npx tsx examples/console-chat.ts   # the example must still run, offline
 2. Make the smallest change that does the job, with its test, docs and CHANGELOG line.
 3. Run `npm run check`. Report failures as they are; do not claim a pass you did not see.
 4. `dist/` is build output and is git-ignored: never edit or commit it.
-5. Commit on a branch or `main` as the maintainer prefers, with a Conventional Commits message (rule 11) and no AI attribution (rule 13). Do not
-   push, tag, publish or rewrite history unless asked.
+5. Commit on a branch or `main` as the maintainer prefers, with a Conventional Commits message (rule 11) and no AI
+   attribution (rule 13). Do not push, tag, publish or rewrite history unless asked.
 6. Packaging changes (`package.json`, `tsdown.config.mjs`, `tsconfig.json`): also check `npm pack --dry-run` lists only
    `dist`, `assets`, `README.md`, `LICENSE`, `CHANGELOG.md`, `package.json`.
 
 ## CI and releases
 
-- Versions follow SemVer (rule 12). While in beta they are prereleases `0.x.y-beta.N` (first release: `0.1.0-beta.0`, tag `v0.1.0-beta.0`), published on the `beta` dist-tag. `1.0.0` is the first stable version.
-- `.github/workflows/ci.yml` builds and runs `npm run check` once on Node 24 (tsdown needs Node >= 22.18), then runs the tests and a CJS/ESM smoke test of that build on Node 22.13, 22, 24 (Linux) and 22 on
-  Windows and macOS.
+- Versions follow SemVer (rule 12). While in beta they are prereleases `0.x.y-beta.N` (first release:
+  `0.1.0-beta.0`, tag `v0.1.0-beta.0`), published on the `beta` dist-tag. `1.0.0` is the first stable version.
+- `.github/workflows/ci.yml` builds and runs `npm run check` once on Node 24 (tsdown needs Node >= 22.18), then runs
+  the tests and a CJS/ESM smoke test of that build on Node 22.13, 22, 24 (Linux) and 22 on Windows and macOS.
 - Releasing is maintainer-only: move the CHANGELOG notes under the new version, `npm version <x.y.z>
-  --no-git-tag-version`, commit, then push a `vX.Y.Z` tag. `.github/workflows/release.yml` verifies the tag against
+  --no-git-tag-version`, commit (`chore(release): x.y.z`), then push a `vX.Y.Z` tag. `.github/workflows/release.yml` verifies the tag against
   `package.json`, runs `npm run check`, publishes (`beta` dist-tag for versions with a suffix) and creates the GitHub
   release. Agents must not tag or publish.

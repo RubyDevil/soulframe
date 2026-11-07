@@ -24,6 +24,11 @@ flowchart LR
     send --> out
 ```
 
+In words: your adapter hands each platform message to `brain.incoming`, which answers a `Decision` at once.
+`queue.handle` waits for a human-paced delay inside an open span, then `brain.compose` builds the system prompt and
+calls the model (`Llm.complete`). The resulting `Turn` is typed and sent through your `Conversation`, and the history,
+notes and audit go to the store.
+
 ## Persona
 
 A persona is a `PersonaConfig`, loaded from a folder (`loadPersonas`) or from values already read (`parsePersonas`):
@@ -156,6 +161,8 @@ once delivery was attempted.
 The store (`createStore` on a database from `openDatabase`) keeps everything in one SQLite file, through Node's
 built-in `node:sqlite`. Its tables are made, if missing, each time it opens. The application may keep its own tables
 in the same database (and migrate its own older layouts before the store opens; `inTransaction` helps).
+`node:sqlite` is still marked experimental in Node 22, so Node may print an `ExperimentalWarning` once, when soulframe
+loads; `node --disable-warning=ExperimentalWarning` hides it.
 
 - **People.** A person belongs to one persona: two personas talking with the same account have two people. A person
   has a `state` (`active`, `stopped` when they asked to stop or cannot be reached, `blocked` by the persona, `denied`
@@ -260,6 +267,26 @@ When it is on, it adds three checks:
 It is additive only. The code's own checks run first and stay authoritative; every failure, timeout, refusal or spent
 budget (`decisions.dailyTokens`, counted apart from text generation) behaves exactly as if it were off. The thresholds
 are not calibrated: tune them from the audit rows, which record each probability.
+
+## Errors
+
+Where things can go wrong, and how each one reaches you:
+
+- **Config.** `loadPersonas` and `parsePersonas` never throw on a config problem: every problem is in `issues`, with
+  its file and path, and a persona with one is left out (see [configuration](./configuration.md#errors-and-warnings)).
+  Throw a `ConfigError` yourself to stop on them.
+- **No provider.** `llmsFor` throws, naming every persona without one, outside a dry run. A task left without a
+  provider or a model rejects with a configuration error that the queue never retries (`reply_given_up`).
+- **The model.** A rejection from `Llm.complete`, or an answer `compose` cannot read, is a failed attempt: the queue
+  retries it (`settings.retries`). A spent token budget or a provider outage waits without counting an attempt.
+- **Delivery.** `Conversation.send` rejects with an `UnreachableError` when the person can't be reached any more
+  (they become `stopped`), or with any other error (`delivery_failed`; never retried). A rejection from `typing`,
+  `markRead` or `delivered` counts as a failed delivery. See [channels](./channels.md#typing-and-send).
+- **Decisions.** The client never throws: a failure, a timeout or a spent budget behaves as if the checks were off.
+- **The store.** `personById` throws when there is no such person, and `link` when the account is already taken:
+  check with `person` first.
+
+`queue.handle` resolves once the decision is acted on; catch its rejection in your adapter and log it.
 
 ## Context toggles
 
