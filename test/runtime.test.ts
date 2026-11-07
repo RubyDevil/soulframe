@@ -1300,3 +1300,68 @@ describe('typing realism', () => {
 		}
 	});
 });
+
+describe('single presence', () => {
+	const personaWith = (singlePresence: boolean): PersonaConfig => {
+		const base = utc.personas[0]!;
+		return { ...base, settings: { ...base.settings, pacing: { ...base.settings.pacing, singlePresence } } };
+	};
+	/** Two people write at once; each reply is held until the test lets it finish. Answers who was composing and when. */
+	const twoAtOnce = async (persona: PersonaConfig) => {
+		const run = start({ persona });
+		const gates = new Map<number, ReturnType<typeof held<void>>>();
+		const order: string[] = [];
+		vi.spyOn(run.brain, 'compose').mockImplementation(async (personId) => {
+			order.push(`start ${personId}`);
+			gates.set(personId, held<void>());
+			await gates.get(personId)!.promise;
+			order.push(`end ${personId}`);
+			return { messages: [], action: 'none' };
+		});
+		await run.message('hi', 'ana');
+		await run.message('hello', 'bo');
+		return { ...run, gates, order };
+	};
+
+	it('answers one person at a time by default: the second waits until the first is done', async () => {
+		const run = await twoAtOnce(personaWith(true));
+		try {
+			await vi.advanceTimersByTimeAsync(5 * MINUTE);
+			expect(run.order).toEqual(['start 1']);
+			run.gates.get(1)!.resolve();
+			await vi.advanceTimersByTimeAsync(MINUTE);
+			expect(run.order).toEqual(['start 1', 'end 1', 'start 2']);
+			run.gates.get(2)!.resolve();
+			await vi.advanceTimersByTimeAsync(MINUTE);
+			expect(run.order).toEqual(['start 1', 'end 1', 'start 2', 'end 2']);
+		} finally {
+			run.close();
+		}
+	});
+
+	it('answers both at once when it is off', async () => {
+		const run = await twoAtOnce(personaWith(false));
+		try {
+			await vi.advanceTimersByTimeAsync(5 * MINUTE);
+			expect(run.order).toEqual(['start 1', 'start 2']);
+		} finally {
+			run.close();
+		}
+	});
+
+	it('stops holding the others back for a reply stuck over ten minutes', async () => {
+		const run = await twoAtOnce(personaWith(true));
+		try {
+			await vi.advanceTimersByTimeAsync(5 * MINUTE);
+			expect(run.order).toEqual(['start 1']);
+			await vi.advanceTimersByTimeAsync(10 * MINUTE);
+			expect(run.order).toEqual(['start 1', 'start 2']);
+		} finally {
+			run.close();
+		}
+	});
+
+	it('is on unless the persona says otherwise', () => {
+		expect(utc.personas[0]!.settings.pacing.singlePresence).toBe(true);
+	});
+});

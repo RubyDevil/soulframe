@@ -12,6 +12,9 @@ license has been chosen.
 
 ### Added
 
+- `pacing.singlePresence` (default `true`): the reply queue answers one person at a time, so parallel turns cannot overwrite
+  each other's self notes; a reply stuck over 10 minutes stops blocking the others. A temporary guard until self notes merge
+  safely; with it off, turns run in parallel as before and `personaWarnings` flags the risk.
 - `sfw: true` in a persona's file or `_shared.yaml` (default `false`): every prompt of that persona gets one rule
   keeping its conversations free of sexual or explicit content.
 - **Persona config.** `loadPersonas` reads a folder holding `_shared.yaml` (optional defaults) and `<id>.yaml` per

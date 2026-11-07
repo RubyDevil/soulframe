@@ -259,8 +259,8 @@ The brain fills it in at brain.ts:364-391. Each slot:
 | `personNotes` | `person.summary`, written by the model |
 | `channel` | the `Channel` (its `invitations` and `actions`) |
 | `memory` | `settings.memory` (`personNotes`, `selfNotes`) |
-| `extraLines` | `options.extraLines?.(person) ?? []`: the reply queue passes `Conversation.extraLines` (runtime.ts:255) |
-| `invitation` | `options.invitation` where `channel.invitations`, else nothing (brain.ts:361); the queue passes the name of `Conversation.invitation` (runtime.ts:250, :255) |
+| `extraLines` | `options.extraLines?.(person) ?? []`: the reply queue passes `Conversation.extraLines` (runtime.ts:262) |
+| `invitation` | `options.invitation` where `channel.invitations`, else nothing (brain.ts:361); the queue passes the name of `Conversation.invitation` (runtime.ts:257, :262) |
 | `joinNow` | `fullyOnline(persona, channel.id, now())`: a full online span is open on the channel (brain.ts:360) |
 | `time` | `directMessageTimePrompt` |
 | `minorCaution` | `!!channel.adult && minorCautioned(person)` (brain.ts:358) |
@@ -383,7 +383,7 @@ export const BREAK_INVITE_PROMPT = "You're only on for a few minutes, so you can
 
 DM turn only. Present when the channel has `invitations` and a name is passed: the app attaches
 `Conversation.invitation` (`{ name, join }`, runtime.ts:82) to the conversation, the reply queue keeps it from the
-incoming message (runtime.ts:426) and passes its `name` to `compose` where `channel.invitations` (runtime.ts:250). The
+incoming message (runtime.ts:426) and passes its `name` to `compose` where `channel.invitations` (runtime.ts:257). The
 name is the app's data, quoted as a JSON string. With a full online span open on the channel (`joinNow`) the line asks
 for a decision; on a break `BREAK_INVITE_PROMPT` takes its place, and the turn reports `inviteWaits` (brain.ts:408).
 Rendered (`joinNow` true, name `Friday "movie" night`):
@@ -977,7 +977,7 @@ It is Saturday, November 7, 8:00 PM for you. Their last message was just now. Yo
 hey, how was your day?
 ```
 
-`samplePrompt({ persona, channel, now })` (report.ts:105) returns the same system prompt: it runs the same brain on a
+`samplePrompt({ persona, channel, now })` (report.ts:106) returns the same system prompt: it runs the same brain on a
 throwaway store, with a person "Sam" who wrote "hey".
 
 ### Group-chat line

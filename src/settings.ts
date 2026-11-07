@@ -225,6 +225,13 @@ export const SettingsSchema = z
 					})
 					.strict()
 					.default({}),
+				/**
+				 * One person at a time: while it is composing or sending a reply to someone, it starts nobody else's, so what it
+				 * learns about itself is never overwritten by a turn that began before it (self notes are read when a turn starts and
+				 * written when it ends). Others wait their turn, a few seconds at a time. Turn it off only if you accept that:
+				 * parallel turns can lose each other's self notes. A turn stuck for over 10 minutes stops blocking the others.
+				 */
+				singlePresence: z.boolean().default(true),
 				/** Seconds between two messages of the same reply. */
 				betweenReplyMessagesSeconds: range(0.8, 3.5),
 				/** Chance that a long reply (over 90 characters) is sent as two messages. */
