@@ -62,7 +62,7 @@ npx tsx examples/console-chat.ts   # the example must still run, offline
 ## CI and releases
 
 - Versions follow SemVer. While in beta they are prereleases `0.x.y-beta.N` (first release: `0.1.0-beta.0`, tag `v0.1.0-beta.0`), published on the `beta` dist-tag. `1.0.0` is the first stable version.
-- `.github/workflows/ci.yml` runs `npm run check` plus a CJS/ESM smoke test on Node 22.13, 22, 24 (Linux) and 22 on
+- `.github/workflows/ci.yml` builds and runs `npm run check` once on Node 24 (tsdown needs Node >= 22.18), then runs the tests and a CJS/ESM smoke test of that build on Node 22.13, 22, 24 (Linux) and 22 on
   Windows and macOS.
 - Releasing is maintainer-only: move the CHANGELOG notes under the new version, `npm version <x.y.z>
   --no-git-tag-version`, commit, then push a `vX.Y.Z` tag. `.github/workflows/release.yml` verifies the tag against

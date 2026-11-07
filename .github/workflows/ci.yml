@@ -9,8 +9,28 @@ permissions:
   contents: read
 
 jobs:
-  check:
+  # The build tooling (tsdown) needs Node >= 22.18, so build and lint once on a current Node...
+  build:
+    name: Build and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+          retention-days: 1
+
+  # ...then run the tests and load the built package on every Node the package supports (>= 22.13).
+  compat:
     name: Node ${{ matrix.node }} on ${{ matrix.os }}
+    needs: build
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -27,7 +47,11 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
-      - run: npm run check
+      - run: npm test
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
       - name: Smoke test the built package (CJS and ESM)
         shell: bash
         run: |
