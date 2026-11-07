@@ -13,8 +13,10 @@ cd soulframe
 npm install
 ```
 
-The package has no build step: its source is TypeScript, run by `tsx` and Vitest. The example and the docs import it
-by its own name, `soulframe`, which Node resolves to this folder through the `exports` of `package.json`.
+The source is TypeScript, run directly by `tsx` and Vitest during development and compiled by `npm run build`
+([tsdown](https://tsdown.dev/)) into `dist/` (ESM and CommonJS, with type declarations) for publishing. The example and
+the docs import the package by its own name, `soulframe`; `tsconfig.json` maps that name to `src/index.ts`, so
+type-checking and `tsx` need no build.
 
 ## Checks
 
@@ -22,9 +24,10 @@ by its own name, `soulframe`, which Node resolves to this folder through the `ex
 npm test                          # vitest run: every test/**/*.test.ts
 npm run type-check                # tsc --noEmit over src, test and examples
 npx tsx examples/console-chat.ts  # the example still runs, offline
+npm run check                     # all of the above's gates plus the build, publint and are-the-types-wrong
 ```
 
-A pull request keeps all three green. Run one test file with `npx vitest run test/brain.test.ts`.
+A pull request keeps these green (CI runs `npm run check` on Linux, Windows and macOS and several Node versions). Run one test file with `npx vitest run test/brain.test.ts`.
 
 `npm test` checks the docs too (`test/docs.test.ts`):
 
@@ -47,7 +50,8 @@ under its `packages/soulframe`) may enforce these rules with its own test:
    folder, no subpath such as `soulframe/src/...`.
 3. No file of the package (source, tests, docs, examples, manifest, assets) names a messaging platform or a product.
    Channels are opaque `ChannelId` strings the application chooses.
-4. `package.json` exports exactly `{ ".": "./src/index.ts" }`: `src/index.ts` is the only public module. A new export
+4. `package.json` exports only the root entry (`"."`, built from `src/index.ts`, plus `./package.json`): `src/index.ts`
+   is the only public module. A new export
    goes there, with its doc comment, and into [docs/api.md](./docs/api.md).
 
 A channel in an example is `console`, `chat` or `forum`. The package keeps no application's history: an application's
@@ -72,5 +76,12 @@ own database layouts, and their migrations, are the application's.
 ## Changes and releases
 
 Add a line under `[Unreleased]` in [CHANGELOG.md](./CHANGELOG.md) for anything a user of the package would notice.
-The package is not published yet and no license has been chosen; until one is, contributions are accepted on the
-understanding that the owner will choose the license for the first release.
+Contributions are accepted under the project's [MIT license](./LICENSE).
+
+To release (maintainers):
+
+1. Move the `[Unreleased]` notes under a new `## [x.y.z] - date` heading in the CHANGELOG.
+2. `npm version <x.y.z> --no-git-tag-version`, commit (`Release x.y.z`) and push to `main` once CI is green.
+3. `git tag vx.y.z && git push origin vx.y.z`. The `Release` workflow checks the tag against `package.json`, runs
+   `npm run check`, publishes to npm (a prerelease such as `0.1.0-beta.1` goes out on the `beta` dist-tag, and only a version without a suffix becomes `latest`) and
+   creates the GitHub release from the CHANGELOG.

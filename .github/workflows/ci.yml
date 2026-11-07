@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Node ${{ matrix.node }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        node: ['22.13', '22', '24']
+        include:
+          - { os: windows-latest, node: '22' }
+          - { os: macos-latest, node: '22' }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - name: Smoke test the built package (CJS and ESM)
+        shell: bash
+        run: |
+          node -e "const s=require('./dist/index.cjs'); s.createStore(s.openDatabase(':memory:')); if(typeof s.createBrain!=='function') process.exit(1)"
+          node --input-type=module -e "import * as s from './dist/index.mjs'; s.createStore(s.openDatabase(':memory:')); if(typeof s.createBrain!=='function') process.exit(1)"
