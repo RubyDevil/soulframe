@@ -27,7 +27,7 @@ npx tsx examples/console-chat.ts  # the example still runs, offline
 npm run check                     # all of the above's gates plus the build, publint and are-the-types-wrong
 ```
 
-A pull request keeps these green (CI runs `npm run check` on Linux, Windows and macOS and several Node versions). Run one test file with `npx vitest run test/brain.test.ts`.
+A pull request keeps these green (CI runs `npm run check` once, then the tests and a smoke test of the build on Node 22.13 and newer, on Linux, Windows and macOS). Run one test file with `npx vitest run test/brain.test.ts`.
 
 `npm test` checks the docs too (`test/docs.test.ts`):
 
