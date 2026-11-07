@@ -14,6 +14,7 @@ The first beta, `0.1.0-beta.0`: a general-purpose persona framework that knows n
 - **Published as compiled JavaScript.** `npm install soulframe` gives ESM (`dist/index.mjs`) and CommonJS (`dist/index.cjs`) builds with matching
   type declarations, behind a conditional `exports` map; `src/store.ts` loads `node:sqlite` with `process.getBuiltinModule`, which works in both.
 - **MIT license.**
+- Versioning, commit message and changelog standards written down in `CONTRIBUTING.md` and `AGENTS.md`, with `npm run lint:commits`.
 - **Reading time.** Before it types, a persona spends as long as it takes to read what they wrote (the unread messages
   together): `pacing.readingCharsPerSecond` (default `[15, 25]`) within `pacing.readingDurationSeconds` (default
   `[1, 20]`), with or without `markRead`. It replaces `pacing.readBeforeTypingSeconds`, a flat pause only on a

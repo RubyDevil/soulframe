@@ -53,7 +53,8 @@
 		"type-check": "tsc --noEmit",
 		"lint:pkg": "publint && attw --pack . --profile node16",
 		"check": "npm run type-check && npm test && npm run build && npm run lint:pkg",
-		"prepublishOnly": "npm run check"
+		"prepublishOnly": "npm run check",
+		"lint:commits": "node scripts/lint-commits.mjs"
 	},
 	"files": [
 		"dist",

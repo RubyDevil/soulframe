@@ -73,7 +73,58 @@ own database layouts, and their migrations, are the application's.
 - Prompt text lives in `src/prompts.ts` (and the fixed messages in `src/safety.ts`): no other file writes text for the
   model.
 
-## Changes and releases
+## Versioning
+
+soulframe follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html) (`MAJOR.MINOR.PATCH`). npm reads
+versions with the same rules.
+
+- **Before 1.0.0** (`0.y.z`) the API is not stable: a breaking change raises `MINOR`, a feature or fix raises `PATCH`.
+  From 1.0.0 on, a breaking change raises `MAJOR`, a backwards-compatible feature `MINOR`, a fix `PATCH`.
+- **Prereleases** add a hyphen and dot-separated identifiers after the version: `0.1.0-beta.0`
+  ([SemVer §9](https://semver.org/spec/v2.0.0.html#spec-item-9)). `beta` is the label and the number after it counts the
+  prereleases of that version: `0.1.0-beta.0`, `0.1.0-beta.1`, ..., then `0.1.0` for the stable release. Numeric
+  identifiers are compared as numbers, so `beta.2` comes before `beta.10`
+  ([§11](https://semver.org/spec/v2.0.0.html#spec-item-11)). The labels, in order: `alpha`, `beta`, `rc`.
+- **npm dist-tags.** A version with a hyphen is published with `npm publish --tag beta` (the tag matches the label), so
+  it never becomes `latest`; only a version without a prerelease part does. Install a beta with
+  `npm install soulframe@beta`.
+- **What counts as the public API:** the exports of `src/index.ts`, the shape of the persona config files, and the
+  database layout. See [docs/api.md](./docs/api.md).
+- A published version is never changed or reused: fix forward with a new version.
+
+## Commit messages
+
+Commits follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/):
+
+```
+<type>(<optional scope>)<!>: <description>
+
+<optional body: what changed and why, wrapped at about 80 columns>
+
+<optional footers, such as BREAKING CHANGE: ... or Co-Authored-By: ...>
+```
+
+- **Types:** `feat` (a new capability: a `MINOR` bump), `fix` (a bug fix: `PATCH`), `perf`, `refactor`, `docs`, `test`,
+  `build` (build, packaging, dependencies), `ci`, `chore` (anything else), `revert`.
+- **Scope** is the area touched, in lowercase, such as `pacing`, `store`, `brain`, `config`, `llm`, `deps`.
+- **Description:** imperative mood ("add", not "added"), lowercase start, no final period, 72 characters or fewer on the
+  first line.
+- **Breaking changes** put `!` before the colon (`feat(config)!: rename x to y`) and/or a
+  `BREAKING CHANGE: <what changed and how to migrate>` footer. They also get a CHANGELOG line under `Changed` or `Removed`.
+- One logical change per commit. `npm run lint:commits` checks the subjects of the commits since `origin/main` (CI
+  checks every pull request's commits).
+
+## Changelog
+
+[CHANGELOG.md](./CHANGELOG.md) follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/). It is written for
+people who use the package, by hand, in the same change as the code (not generated from commit messages).
+
+- New entries go under `## [Unreleased]`, in these sections only: `Added`, `Changed`, `Deprecated`, `Removed`,
+  `Fixed`, `Security`. Mention a breaking change in `Changed` or `Removed` and say how to migrate.
+- At release time the notes move to `## [x.y.z] - YYYY-MM-DD` (newest first).
+- Internal changes with nothing a user would notice (tests, CI, refactors) get no entry.
+
+## Releases
 
 Add a line under `[Unreleased]` in [CHANGELOG.md](./CHANGELOG.md) for anything a user of the package would notice.
 Contributions are accepted under the project's [MIT license](./LICENSE).

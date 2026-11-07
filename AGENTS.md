@@ -29,7 +29,13 @@ Node >= 22.13 (it uses `node:sqlite`). Runtime dependencies: `zod` and `yaml` on
    at the code span written just before it), the export/heading match and every relative link. When you move lines in
    `src/`, update the references that point at them.
 9. **Tests next to the behaviour:** `src/foo.ts` is tested in `test/foo.test.ts`; use `:memory:` stores.
-10. **CHANGELOG.** Anything a user would notice gets a line under `[Unreleased]` in `CHANGELOG.md`.
+10. **CHANGELOG** ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/)). Anything a user would notice gets a
+    hand-written line under `[Unreleased]` in `CHANGELOG.md`, in the same change as the code.
+11. **Commit messages are [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):**
+    `type(scope): imperative lowercase description`, 72 columns or fewer, types `feat fix perf refactor docs test build
+    ci chore revert`, `!` or a `BREAKING CHANGE:` footer for breaking changes. `npm run lint:commits` checks them.
+12. **Versions are [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html).** Never edit a published version. Details,
+    including prerelease labels and dist-tags: [CONTRIBUTING.md](./CONTRIBUTING.md#versioning).
 
 ## Style
 
@@ -54,14 +60,14 @@ npx tsx examples/console-chat.ts   # the example must still run, offline
 2. Make the smallest change that does the job, with its test, docs and CHANGELOG line.
 3. Run `npm run check`. Report failures as they are; do not claim a pass you did not see.
 4. `dist/` is build output and is git-ignored: never edit or commit it.
-5. Commit on a branch or `main` as the maintainer prefers, with a short imperative subject. Do not push, tag or
-   publish unless asked.
+5. Commit on a branch or `main` as the maintainer prefers, with a Conventional Commits message (rule 11). Do not
+   push, tag, publish or rewrite history unless asked.
 6. Packaging changes (`package.json`, `tsdown.config.mjs`, `tsconfig.json`): also check `npm pack --dry-run` lists only
    `dist`, `assets`, `README.md`, `LICENSE`, `CHANGELOG.md`, `package.json`.
 
 ## CI and releases
 
-- Versions follow SemVer. While in beta they are prereleases `0.x.y-beta.N` (first release: `0.1.0-beta.0`, tag `v0.1.0-beta.0`), published on the `beta` dist-tag. `1.0.0` is the first stable version.
+- Versions follow SemVer (rule 12). While in beta they are prereleases `0.x.y-beta.N` (first release: `0.1.0-beta.0`, tag `v0.1.0-beta.0`), published on the `beta` dist-tag. `1.0.0` is the first stable version.
 - `.github/workflows/ci.yml` builds and runs `npm run check` once on Node 24 (tsdown needs Node >= 22.18), then runs the tests and a CJS/ESM smoke test of that build on Node 22.13, 22, 24 (Linux) and 22 on
   Windows and macOS.
 - Releasing is maintainer-only: move the CHANGELOG notes under the new version, `npm version <x.y.z>

@@ -9,6 +9,16 @@ permissions:
   contents: read
 
 jobs:
+  commits:
+    name: Commit messages
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: node scripts/lint-commits.mjs "origin/${{ github.base_ref }}..HEAD"
+
   # The build tooling (tsdown) needs Node >= 22.18, so build and lint once on a current Node...
   build:
     name: Build and lint
