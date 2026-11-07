@@ -176,7 +176,7 @@ const WRAP_UP_MS = 10 * MINUTE;
 const lineTarget = (chat: Channel) => chat.targetLength ?? Math.min(150, Math.floor(chat.maxLength * 0.8));
 
 /** Their messages in a history that had no turn yet: those after `handledAt`. */
-const unhandled = <M extends { direction: 'in' | 'out'; at: number }>(history: M[], handledAt: number) =>
+export const unhandled = <M extends { direction: 'in' | 'out'; at: number }>(history: M[], handledAt: number) =>
 	history.filter((m) => m.direction === 'in' && m.at > handledAt);
 
 /** The relationship from the conversations so far: acquainted, regular and close from each count in `after`. */

@@ -525,8 +525,8 @@ describe('turns still owed (handled_at)', () => {
 		});
 		try {
 			await message('hi');
-			// The first turn fires after 4 s and is cut 2.4 s later
-			await vi.advanceTimersByTimeAsync(7_000);
+			// The first turn fires after 4 s, reads for 1 s, and is cut 2.4 s later
+			await vi.advanceTimersByTimeAsync(8_000);
 			expect(conversation.send).not.toHaveBeenCalled();
 			halt(false);
 			await vi.advanceTimersByTimeAsync(5 * MINUTE);
@@ -643,8 +643,8 @@ describe('turns still owed (handled_at)', () => {
 		});
 		try {
 			await message('hi');
-			// The first turn fires after 4 s (rng 0) and is sent 2.4 s later; the one for the newer message is due 4 s after it came
-			await vi.advanceTimersByTimeAsync(7_000);
+			// The first turn fires after 4 s (rng 0), reads for 1 s and is sent 2.4 s later; the one for the newer message is due 4 s after it came
+			await vi.advanceTimersByTimeAsync(7_500);
 			expect(compose).toHaveBeenCalledTimes(1);
 			expect(store.personById(1)).toMatchObject({ lastInAt: EVENING + 4_000, handledAt: EVENING });
 			expect(store.unanswered('test', 0).map(({ person }) => person.id)).toEqual([1]);
@@ -1162,8 +1162,8 @@ describe('typing realism', () => {
 	/** Sam writes, and the queue gets it with `conversation`. */
 	const hi = async ({ queue, brain }: ReturnType<typeof start>, conversation: Conversation) => queue.handle(brain.incoming(NOTED_DM, 'user-1', 'Sam', 'hi'), conversation, 'hi');
 
-	// With this rng the reply comes 4 s after the message, and 'hey you' is typed for 2.4 s (3.5 characters a second, plus 0.4 s)
-	it('keeps the calls, timings and draws of a plain conversation as they were', async () => {
+	// With this rng the reply comes 4 s after the message, 'hi' is read for 1 s (the shortest) and 'hey you' is typed for 2.4 s (3.5 characters a second, plus 0.4 s)
+	it('makes only the calls a plain conversation needs, with one draw for the reading', async () => {
 		const rng = vi.fn(() => 0);
 		const run = start({ rng });
 		const { conversation, events } = recording();
@@ -1171,8 +1171,8 @@ describe('typing realism', () => {
 			await hi(run, conversation);
 			await vi.advanceTimersByTimeAsync(MINUTE);
 			expect(events).toEqual(['typing on @0', 'send hey you @2400', 'typing off @2400']);
-			// The reply delay (two draws) and the typing time (two): nothing for what the conversation and settings leave out
-			expect(rng).toHaveBeenCalledTimes(4);
+			// The reply delay (two draws), the reading speed (one) and the typing time (two): nothing for what the conversation and settings leave out
+			expect(rng).toHaveBeenCalledTimes(5);
 		} finally {
 			run.close();
 		}
@@ -1195,7 +1195,7 @@ describe('typing realism', () => {
 		const { conversation, events } = recording({ typingRefreshMs: 1_000 });
 		try {
 			await hi(run, conversation);
-			await vi.advanceTimersByTimeAsync(4_000 + 1_500);
+			await vi.advanceTimersByTimeAsync(4_000 + 1_000 + 1_500);
 			run.halt(true);
 			await vi.advanceTimersByTimeAsync(MINUTE);
 			expect(events).toEqual(['typing on @0', 'typing on @1000', 'typing off @2000']);
@@ -1206,8 +1206,8 @@ describe('typing realism', () => {
 		}
 	});
 
-	it('shows their messages read once per reply, then waits readBeforeTypingSeconds before typing', async () => {
-		const run = start({ persona: typist({ readBeforeTypingSeconds: [2, 2], betweenReplyMessagesSeconds: [1, 1] }) });
+	it('shows their messages read once per reply, then reads for readingDurationSeconds before typing', async () => {
+		const run = start({ persona: typist({ readingDurationSeconds: [2, 2], betweenReplyMessagesSeconds: [1, 1] }) });
 		vi.spyOn(run.brain, 'compose').mockResolvedValue({ messages: ['one', 'two'], action: 'none' });
 		const { conversation, events } = recording({ markRead: 'resolves' });
 		try {
@@ -1215,6 +1215,22 @@ describe('typing realism', () => {
 			await vi.advanceTimersByTimeAsync(MINUTE);
 			// 1.5 s of typing each: the shortest typingDurationSeconds
 			expect(events).toEqual(['read @0', 'typing on @2000', 'send one @3500', 'typing off @3500', 'typing on @4500', 'send two @6000', 'typing off @6000']);
+		} finally {
+			run.close();
+		}
+	});
+
+	it('reads for as long as the unread messages take, from the moment the reply is due', async () => {
+		const run = start();
+		const { conversation, events } = recording({ markRead: 'resolves' });
+		const long = 'x'.repeat(150);
+		try {
+			await run.queue.handle(run.brain.incoming(NOTED_DM, 'user-1', 'Sam', long), conversation, long);
+			// Due after 4 s; with rng 0 it reads 15 characters a second: 10 s
+			await vi.advanceTimersByTimeAsync(4_000 + 9_999);
+			expect(events).toEqual(['read @0']);
+			await vi.advanceTimersByTimeAsync(1);
+			expect(events).toEqual(['read @0', 'typing on @10000']);
 		} finally {
 			run.close();
 		}
@@ -1234,7 +1250,7 @@ describe('typing realism', () => {
 	});
 
 	it('types nothing when halted during the read pause, and keeps the turn owed', async () => {
-		const run = start({ persona: typist({ readBeforeTypingSeconds: [2, 2] }) });
+		const run = start({ persona: typist({ readingDurationSeconds: [2, 2] }) });
 		const { conversation, events } = recording({ markRead: 'resolves' });
 		try {
 			await hi(run, conversation);
@@ -1288,7 +1304,7 @@ describe('typing realism', () => {
 	});
 
 	it('rehearses all of it in a dry run, sending nothing', async () => {
-		const run = start({ dryRun: true, persona: typist({ readBeforeTypingSeconds: [2, 2] }) });
+		const run = start({ dryRun: true, persona: typist({ readingDurationSeconds: [2, 2] }) });
 		const { conversation, events } = recording({ markRead: 'resolves', typingRefreshMs: 2_000 });
 		try {
 			await hi(run, conversation);

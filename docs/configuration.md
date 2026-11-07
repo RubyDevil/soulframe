@@ -301,7 +301,8 @@ Per persona. Unknown keys here are refused.
 | `typingCharsPerSecond` | range, floor 0.5 | `[3.5, 7]` | The typing indicator shows for as long as the message would take. |
 | `typingDurationSeconds` | range | `[1.5, 45]` | The shortest and longest typing time for one message (thinking pauses come on top). |
 | `singlePresence` | boolean | `true` | One person at a time: while it composes or sends a reply to someone it starts nobody else's, so its self notes (read when a turn starts, written when it ends) are never overwritten by a turn that began earlier. Others wait, re-checked every 5 seconds; a reply stuck for over 10 minutes stops holding them back. With `false`, turns for different people run in parallel and can lose each other's self notes; `personaWarnings` says so. |
-| `readBeforeTypingSeconds` | range | `[1, 3]` | Between showing their messages read and starting to type; only on a conversation with `markRead` (see [channels](./channels.md#typing-read-receipts-and-thinking-pauses)), so nothing changes without one. |
+| `readingCharsPerSecond` | range, floor 1 | `[15, 25]` | How fast it reads: before typing it waits as long as their unread messages (together) take to read, with or without a `markRead` receipt (see [channels](./channels.md#typing-read-receipts-and-thinking-pauses)). |
+| `readingDurationSeconds` | range | `[1, 20]` | The shortest and longest that reading takes. |
 | `thinkingPauses.chance` | number, 0 to 1 | `0` | The chance of each pause while a long message is typed (typing off a moment, then on again); `0`: none. |
 | `thinkingPauses.minChars` | integer, 1 or more | `120` | The shortest message, in characters, that may have a pause. |
 | `thinkingPauses.max` | integer, 1 to 3 | `2` | The most pauses in one message. |

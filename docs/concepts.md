@@ -123,9 +123,9 @@ delivers:
 - **Delivery** types before each message for a time proportional to its length (`typingCharsPerSecond`, within
   `typingDurationSeconds`, each persona's own), pauses between the messages of one reply, and splits a long single
   reply in two now and then (`replySplitChance`). The model may also write up to three messages itself, one per line.
-  Three opt-in touches make it look closer to a person typing: the conversation's `typingRefreshMs` keeps the
+  Before it types, it reads what they wrote, as long as that takes at its reading speed (`readingCharsPerSecond`, `readingDurationSeconds`). Three opt-in touches make it look closer to a person typing: the conversation's `typingRefreshMs` keeps the
   indicator on while a long message is typed (platforms drop it after a few seconds), its `markRead()` shows their
-  messages read when the reply starts, `readBeforeTypingSeconds` before the typing, and `thinkingPauses` lets typing
+  messages read when the reply starts, and `thinkingPauses` lets typing
   stop a moment and start again in a long message. The halt switch, `stop()` and the person's state are checked after
   every wait, and typing never stays on after a reply is cut short or fails.
 - **Restarts.** While running (`queue.start()`), the queue records every 30 seconds when the persona was last online.

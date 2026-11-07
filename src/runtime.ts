@@ -1,10 +1,10 @@
 import { existsSync } from 'node:fs';
 import { inspect } from 'node:util';
-import type { Brain, Decision, PersonAction } from './brain.js';
+import { unhandled, type Brain, type Decision, type PersonAction } from './brain.js';
 import type { Channel, ChannelId } from './channel.js';
 import { LlmBudgetError, ModelNotConfiguredError, ProviderUnavailableError } from './llm.js';
 import type { PersonaConfig } from './config/personas.js';
-import { betweenMessagesMs, fitDelay, quickReplyMs, readPauseMs, replyDelayMs, typingPlan } from './pacing.js';
+import { betweenMessagesMs, fitDelay, quickReplyMs, readingMs, replyDelayMs, typingPlan } from './pacing.js';
 import { between, sleep, type Rng } from './rng.js';
 import { nextSpan, spanAt, type Hours, type Span } from './schedule.js';
 import { MINUTE, SECOND } from './settings.js';
@@ -69,8 +69,9 @@ export interface Conversation {
 	 */
 	typingRefreshMs?: number;
 	/**
-	 * Shows the person their messages were read (a read receipt): called once per reply, before its first message is
-	 * typed, which starts `pacing.readBeforeTypingSeconds` later. A rejection counts as a failed delivery, as `typing`'s.
+	 * Shows the person their messages were read (a read receipt): called once per reply, when the reading starts, which
+	 * lasts as long as `pacing.readingCharsPerSecond` says before the first message is typed. A rejection counts as a
+	 * failed delivery, as `typing`'s.
 	 */
 	markRead?(): Promise<void>;
 	send(text: string): Promise<void>;
@@ -140,12 +141,12 @@ export function createReplyQueue({
 
 	/**
 	 * Sends the messages in order, typing before each, and records each one once sent (a dry run only logs it); either
-	 * way the conversation is told it was `delivered`. With `markRead`, their messages are shown read before the first
-	 * one is typed. The rest is dropped once paused or no longer `stillWanted`, checked again after each wait, or once a
+	 * way the conversation is told it was `delivered`. Before the first one is typed, their messages are shown read (with
+	 * `markRead`) and `readChars` characters are read, as long as that takes. The rest is dropped once paused or no longer `stillWanted`, checked again after each wait, or once a
 	 * send fails: that is never retried, since a send that timed out may still have landed. Typing always ends, sent or
 	 * not. Answers how many went out and why it stopped.
 	 */
-	const deliver = async (conversation: Conversation, messages: string[], personId: number, stillWanted = () => true) => {
+	const deliver = async (conversation: Conversation, messages: string[], personId: number, stillWanted = () => true, readChars = 0) => {
 		const channel = conversation.channel.id;
 		const cut = () => paused() ?? (stillWanted() ? 'done' : 'ended');
 		/** Waits `ms`, then answers whether the reply goes on ('done') or why not. */
@@ -190,9 +191,9 @@ export function createReplyQueue({
 			if ((stop = cut()) !== 'done') break;
 			try {
 				// Once, before the first message is typed (nothing follows a failed one)
-				if (!sent && conversation.markRead) {
-					await conversation.markRead();
-					if ((stop = await wait(readPauseMs(runtime.rng, pacing))) !== 'done') break;
+				if (!sent) {
+					await conversation.markRead?.();
+					if ((stop = await wait(readingMs(readChars, runtime.rng, pacing))) !== 'done') break;
 				}
 				if ((stop = await typeOut(text)) !== 'done') break;
 				if (runtime.dryRun) runtime.log(persona.id, 'dry_send', { personId, platform: channel, text });
@@ -256,7 +257,9 @@ export function createReplyQueue({
 			let turn: Awaited<ReturnType<Brain['compose']>>;
 			const invitation = conversation.channel.invitations ? invitations.get(personId) : undefined;
 			// Their newest message the model sees: compose reads them before its first wait
-			const through = runtime.store.personById(personId).lastInAt;
+			const { lastInAt: through, handledAt } = runtime.store.personById(personId);
+			/** What there is to read: their messages this turn answers, together. */
+			const readChars = unhandled(runtime.store.history(personId, persona.settings.memory.historyMessages), handledAt).reduce((sum, m) => sum + m.text.length, 0);
 			try {
 				runtime.log(persona.id, 'reply_processing', { personId, platform: channel });
 				turn = await brain.compose(personId, conversation.channel, { invitation: invitation?.name, extraLines: conversation.extraLines });
@@ -275,7 +278,7 @@ export function createReplyQueue({
 			// Anything but the code's goodbye is dropped once they end it meanwhile (a block the persona chose still sends its reply)
 			const stillWanted = () => !endedIt(runtime.store.personById(personId).state);
 			if (turn.messages.length) {
-				const { sent, stop } = await deliver(conversation, turn.messages, personId, turn.final ? undefined : stillWanted);
+				const { sent, stop } = await deliver(conversation, turn.messages, personId, turn.final ? undefined : stillWanted, readChars);
 				if ((stop === 'halt_switch' || stop === 'stopped') && !sent && runtime.store.personById(personId).state === 'active') {
 					// Paused before anything went out: still owed, invitation and all; after HALT back in the backlog unless a newer message's turn is coming
 					if (!queued(personId)) park(personId, conversation, 'halt_switch');

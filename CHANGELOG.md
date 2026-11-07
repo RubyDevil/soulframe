@@ -12,6 +12,10 @@ license has been chosen.
 
 ### Added
 
+- **Reading time.** Before it types, a persona spends as long as it takes to read what they wrote (the unread messages
+  together): `pacing.readingCharsPerSecond` (default `[15, 25]`) within `pacing.readingDurationSeconds` (default
+  `[1, 20]`), with or without `markRead`. It replaces `pacing.readBeforeTypingSeconds`, a flat pause only on a
+  conversation with `markRead`, which is gone.
 - `pacing.singlePresence` (default `true`): the reply queue answers one person at a time, so parallel turns cannot overwrite
   each other's self notes; a reply stuck over 10 minutes stops blocking the others. A temporary guard until self notes merge
   safely; with it off, turns run in parallel as before and `personaWarnings` flags the risk.
@@ -75,8 +79,7 @@ license has been chosen.
 - Documentation, a runnable console example (`examples/console-chat.ts`) and the soulframe logo.
 - **Typing realism**, opt-in: `Conversation.typingRefreshMs` makes the queue show typing again at the platform's
   rhythm while a message is typed (indicators expire after a few seconds, a message may be typed for 45);
-  `Conversation.markRead()` shows the person their messages read once per reply, `pacing.readBeforeTypingSeconds`
-  (default `[1, 3]`) before typing starts; `pacing.thinkingPauses` (`chance`, default `0`; `minChars` 120; `max` 2;
+  `Conversation.markRead()` shows the person their messages read once per reply, when the reading starts; `pacing.thinkingPauses` (`chance`, default `0`; `minChars` 120; `max` 2;
   `seconds` `[2, 6]`) lets typing stop a moment and start again in a long message. The halt switch, `stop()` and the
   person's state are checked after every wait, typing never stays on after a cut or a failure, and a dry run makes the
   same calls. Without the hooks and with `thinkingPauses.chance` at 0, the calls, timings and random draws are as

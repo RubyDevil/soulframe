@@ -559,7 +559,7 @@ interface Conversation {
 	channel: Channel;
 	typing(on: boolean): Promise<void>;
 	typingRefreshMs?: number;      // how long one typing(true) shows on the platform: repeated at that rhythm
-	markRead?(): Promise<void>;    // a read receipt, once per reply, before its first message is typed
+	markRead?(): Promise<void>;    // a read receipt, once per reply, when the reading starts
 	send(text: string): Promise<void>;
 	delivered?(text: string): void;
 	extraLines?(person: Person): readonly string[];
@@ -569,9 +569,9 @@ interface Conversation {
 
 Where a reply goes, implemented by a channel adapter: see [channels](./channels.md). Each stretch of typing is one
 `typing(true)` (repeated every `typingRefreshMs` ms when given, while the message is typed) and one `typing(false)`;
-a thinking pause (`pacing.thinkingPauses`) ends one stretch and starts the next. `markRead()`, when given, is called
-once per reply before its first message, `pacing.readBeforeTypingSeconds` before typing starts; a rejection from it,
-as from `typing`, counts as a failed delivery. Without either, the calls and timings are one `typing(true)`, the
+a thinking pause (`pacing.thinkingPauses`) ends one stretch and starts the next. Before its first message every reply is read for as long as
+the unread messages take (`pacing.readingCharsPerSecond`), and `markRead()`, when given, is called as that starts; a
+rejection from it, as from `typing`, counts as a failed delivery. Without either, the calls are one `typing(true)`, the
 typing time, `send`, one `typing(false)` per message. `delivered(text)`, when given, is called after each message of
 a reply went out (once `send` resolved), and in a dry run after each message logged in place of sending; never for
 one whose send failed. A dry run makes every other call as a live run does.
