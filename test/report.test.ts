@@ -84,6 +84,13 @@ describe('the warnings on a persona', () => {
 			'"test" has no text provider (settings.llm.baseUrl): the app refuses to start without it; a dry run uses canned lines',
 		]);
 	});
+
+	it('warns when it answers several people at once, which can lose self notes', () => {
+		expect(personaWarnings(persona({ window: evening, settings: { pacing: { singlePresence: false } } }), ['forum'])).toEqual([
+			`"test" has pacing.singlePresence off: replies to different people run at once and can overwrite each other's self notes`,
+		]);
+		expect(warningsOf({ window: evening })).toEqual([]);
+	});
 });
 
 describe('the sample prompt', () => {

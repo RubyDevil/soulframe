@@ -35,6 +35,7 @@ export function personaWarnings(persona: PersonaConfig, channels: readonly Chann
 		...(average < 1 ? [`"${id}" is online about ${average.toFixed(1)} hours a day on average`] : []),
 		...skips.filter(({ chance }) => chance > 0.5).map(({ where, chance }) => `"${id}" takes more than every other day off${where} (skipDayChance ${chance})`),
 		...channels.filter((channel) => !spans.some((span) => isOn(span, channel))).map((channel) => `"${id}" is never online on ${channel}: its DMs there would wait forever`),
+		...(persona.settings.pacing.singlePresence ? [] : [`"${id}" has pacing.singlePresence off: replies to different people run at once and can overwrite each other's self notes`]),
 		...(providerSet(persona.settings) ? [] : [`"${id}" has no text provider (settings.llm.baseUrl): the app refuses to start without it; a dry run uses canned lines`]),
 	];
 }

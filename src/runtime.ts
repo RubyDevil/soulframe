@@ -89,6 +89,8 @@ const endedIt = (state: PersonState) => state === 'stopped' || state === 'denied
 const BACKLOG_LOOKBACK = 48 * 60 * MINUTE;
 /** A reply is due at least this long before its span ends, or it waits for the next span. */
 const SPAN_END_MARGIN = 90 * SECOND;
+/** A reply under way for longer than this no longer holds the others back (`pacing.singlePresence`): a send that never returned must not silence the persona. */
+const PRESENCE_LEASE = 10 * MINUTE;
 
 /**
  * Answers people at a human pace: one turn per person at a time (more messages from them while it waits are answered
@@ -118,6 +120,8 @@ export function createReplyQueue({
 	const busy = new Set<number>();
 	/** The backlog turn in progress (one at a time), and the start of the span it was taken in. */
 	let drainingId: number | null = null;
+	/** With `pacing.singlePresence`: who it is composing or sending a reply to, and since when. */
+	let present: { personId: number; since: number } | null = null;
 	let drainSpanStart: number | null = null;
 	const invitations = new Map<number, NonNullable<Conversation['invitation']>>();
 	/** Failed attempts at the pending answer, by person. */
@@ -130,6 +134,8 @@ export function createReplyQueue({
 	/** Set by `stop` (the app's, after a start that failed, say): a turn under way sends nothing more and nothing is timed or parked again, so whoever it was for is still owed at the next start. */
 	let stopped = false;
 	/** Why nothing may be sent or started now, if so: the queue stopped, or the halt switch. */
+	/** Someone else's reply is under way, with `pacing.singlePresence`, and not for so long that it must be stuck (it stops blocking after PRESENCE_LEASE). */
+	const occupied = () => present !== null && runtime.now() - present.since < PRESENCE_LEASE;
 	const paused = () => (stopped ? 'stopped' : runtime.halted() ? 'halt_switch' : null);
 
 	/**
@@ -228,7 +234,7 @@ export function createReplyQueue({
 				runtime.log(persona.id, 'reply_paused', { personId, platform: conversation.channel.id, reason: 'halt_switch' });
 				park(personId, conversation, 'halt_switch');
 			} else if (!spanAt(persona, runtime.now(), conversation.channel.id)) park(personId, conversation, 'offline');
-			else if (busy.has(personId)) schedule(personId, conversation, 5_000);
+			else if (busy.has(personId) || occupied()) schedule(personId, conversation, 5_000);
 			else await answer(personId, conversation);
 		} finally {
 			release(personId);
@@ -245,6 +251,7 @@ export function createReplyQueue({
 	const answer = async (personId: number, conversation: Conversation) => {
 		const channel = conversation.channel.id;
 		busy.add(personId);
+		if (pacing.singlePresence) present = { personId, since: runtime.now() };
 		try {
 			let turn: Awaited<ReturnType<Brain['compose']>>;
 			const invitation = conversation.channel.invitations ? invitations.get(personId) : undefined;
@@ -295,6 +302,7 @@ export function createReplyQueue({
 			runtime.log(persona.id, 'delivery_failed', { personId, error: String(error) });
 		} finally {
 			busy.delete(personId);
+			if (present?.personId === personId) present = null;
 		}
 	};
 
@@ -351,7 +359,7 @@ export function createReplyQueue({
 
 	/** Starts the next backlog turn unless one is in progress: the oldest waiting person whose channel has a span open with time left for it. */
 	const drain = () => {
-		if (drainingId !== null || runtime.halted()) return;
+		if (drainingId !== null || runtime.halted() || occupied()) return;
 		const now = runtime.now();
 		for (const [personId, conversation] of waiting) {
 			const span = spanAt(persona, now, conversation.channel.id);
