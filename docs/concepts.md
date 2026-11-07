@@ -4,16 +4,24 @@ soulframe runs AI personas of any kind: characters that keep hours, remember the
 a human pace. This page explains the pieces and how they fit. The keys are in [configuration](./configuration.md), the
 signatures in the [API reference](./api.md).
 
-```text
- your adapter                         soulframe
- ────────────                         ─────────
- platform message ──▶ brain.incoming ──▶ Decision ──▶ queue.handle ──▶ (delay, inside an open span)
-                                                                          │
-                                       brain.compose ◀────────────────────┘
-                                          │  system prompt: persona + character + rules + task + time
-                                          ▼
-                                       Llm.complete ──▶ Turn ──▶ Conversation.typing / send ──▶ platform
-                                                                  store: history, notes, audit
+```mermaid
+flowchart LR
+    subgraph adapter["your adapter"]
+        in(["platform message"])
+        out(["platform"])
+    end
+    subgraph sf["soulframe"]
+        incoming["brain.incoming"] --> decision{{"Decision"}}
+        decision --> handle["queue.handle"]
+        handle --> wait["delay, inside an open span"]
+        wait --> compose["brain.compose<br/><i>system prompt: persona + character + rules + task + time</i>"]
+        compose --> complete["Llm.complete"]
+        complete --> turn["Turn"]
+        turn --> send["Conversation.typing / send"]
+        turn -.-> store[("store: history, notes, audit")]
+    end
+    in --> incoming
+    send --> out
 ```
 
 ## Persona
