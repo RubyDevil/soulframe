@@ -56,7 +56,7 @@ npx tsx examples/console-chat.ts   # the example must still run, offline
 4. `dist/` is build output and is git-ignored: never edit or commit it.
 5. Commit on a branch or `main` as the maintainer prefers, with a short imperative subject. Do not push, tag or
    publish unless asked.
-6. Packaging changes (`package.json`, `tsdown.config.ts`, `tsconfig.json`): also check `npm pack --dry-run` lists only
+6. Packaging changes (`package.json`, `tsdown.config.mjs`, `tsconfig.json`): also check `npm pack --dry-run` lists only
    `dist`, `assets`, `README.md`, `LICENSE`, `CHANGELOG.md`, `package.json`.
 
 ## CI and releases
