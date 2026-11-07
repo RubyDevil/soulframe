@@ -1,0 +1,58 @@
+{
+	"name": "soulframe",
+	"version": "0.1.0-beta.0",
+	"private": true,
+	"description": "Build AI personas that feel human, for any purpose and any messaging channel: character, daily agenda, mood, human-paced replies, memory and opt-in safeguards.",
+	"keywords": [
+		"ai",
+		"persona",
+		"chatbot",
+		"character",
+		"llm",
+		"openai-compatible",
+		"conversation",
+		"memory",
+		"sqlite",
+		"scheduling",
+		"safety",
+		"typescript"
+	],
+	"author": "RubyDevil",
+	"license": "UNLICENSED",
+	"homepage": "https://github.com/RubyDevil/soulframe#readme",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/RubyDevil/soulframe.git"
+	},
+	"bugs": {
+		"url": "https://github.com/RubyDevil/soulframe/issues"
+	},
+	"type": "module",
+	"engines": {
+		"node": ">=22.13"
+	},
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"test": "vitest run",
+		"type-check": "tsc --noEmit"
+	},
+	"files": [
+		"src",
+		"README.md",
+		"CHANGELOG.md",
+		"assets",
+		"docs"
+	],
+	"dependencies": {
+		"yaml": "^2.6.0",
+		"zod": "^3.23.8"
+	},
+	"devDependencies": {
+		"@types/node": "^22.10.1",
+		"tsx": "^4.19.2",
+		"typescript": "^5.6.3",
+		"vitest": "^2.1.8"
+	}
+}
