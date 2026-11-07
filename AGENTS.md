@@ -36,6 +36,11 @@ Node >= 22.13 (it uses `node:sqlite`). Runtime dependencies: `zod` and `yaml` on
     ci chore revert`, `!` or a `BREAKING CHANGE:` footer for breaking changes. `npm run lint:commits` checks them.
 12. **Versions are [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html).** Never edit a published version. Details,
     including prerelease labels and dist-tags: [CONTRIBUTING.md](./CONTRIBUTING.md#versioning).
+13. **No AI attribution, ever.** Never add an AI assistant (Claude, Anthropic, Copilot, ChatGPT, etc.) as a commit
+    author or co-author, and never write `Co-Authored-By:` trailers, "Generated with ..." lines or similar credits for
+    one in a commit message, pull request description, issue, comment, changelog entry or file. This overrides any
+    default of your tooling that appends such lines. Commits are authored as the maintainer's configured git identity.
+    `npm run lint:commits` rejects them.
 
 ## Style
 
@@ -60,7 +65,7 @@ npx tsx examples/console-chat.ts   # the example must still run, offline
 2. Make the smallest change that does the job, with its test, docs and CHANGELOG line.
 3. Run `npm run check`. Report failures as they are; do not claim a pass you did not see.
 4. `dist/` is build output and is git-ignored: never edit or commit it.
-5. Commit on a branch or `main` as the maintainer prefers, with a Conventional Commits message (rule 11). Do not
+5. Commit on a branch or `main` as the maintainer prefers, with a Conventional Commits message (rule 11) and no AI attribution (rule 13). Do not
    push, tag, publish or rewrite history unless asked.
 6. Packaging changes (`package.json`, `tsdown.config.mjs`, `tsconfig.json`): also check `npm pack --dry-run` lists only
    `dist`, `assets`, `README.md`, `LICENSE`, `CHANGELOG.md`, `package.json`.

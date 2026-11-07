@@ -111,6 +111,8 @@ Commits follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/
   first line.
 - **Breaking changes** put `!` before the colon (`feat(config)!: rename x to y`) and/or a
   `BREAKING CHANGE: <what changed and how to migrate>` footer. They also get a CHANGELOG line under `Changed` or `Removed`.
+- **No AI attribution.** Commit messages, pull request descriptions and changelog entries never credit an AI assistant:
+  no `Co-Authored-By:` trailer, no "Generated with ..." line. Commits carry the contributor's own git identity only.
 - One logical change per commit. `npm run lint:commits` checks the subjects of the commits since `origin/main` (CI
   checks every pull request's commits).
 
