@@ -1,0 +1,47 @@
+name: Release
+
+# Push a tag vX.Y.Z (matching package.json) to publish. See CONTRIBUTING.md.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # the GitHub release
+  id-token: write # npm trusted publishing (OIDC)
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - name: Tag matches package.json
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $version" >&2
+            exit 1
+          fi
+      - run: npm ci
+      - run: npm run check
+      - name: Publish to npm
+        run: |
+          tag=latest
+          case "$GITHUB_REF_NAME" in *-*) tag=beta ;; esac
+          npm publish --access public --tag "$tag"
+        env:
+          # Only needed until npm trusted publishing is configured for the package
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '$0 ~ "^## \[" v "\]" {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "See CHANGELOG.md" > notes.md
+          flags=""; case "$version" in *-*) flags="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md $flags

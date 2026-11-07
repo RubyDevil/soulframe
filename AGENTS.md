@@ -1,0 +1,70 @@
+# Agent guide: soulframe
+
+Rules and workflow for AI coding agents (and humans) working in this repository. [CONTRIBUTING.md](./CONTRIBUTING.md)
+is the long form; this file is the checklist. If the two disagree, fix the disagreement in the same change.
+
+## What this is
+
+`soulframe` is an npm package (MIT, beta): a persona framework that knows no messaging platform and no product.
+Source is TypeScript in `src/`, compiled by tsdown to `dist/` (ESM `.mjs` + CommonJS `.cjs` + `.d.mts`/`.d.cts`).
+Node >= 22.13 (it uses `node:sqlite`). Runtime dependencies: `zod` and `yaml` only.
+
+## Strict rules (a change that breaks one is not mergeable)
+
+1. **One public module.** `src/index.ts` is the only entry. A new export goes there with a doc comment, and gets a
+   `###` heading in `docs/api.md` (and every heading there must be an export). `package.json` `exports` stays the root
+   entry plus `./package.json`: no subpaths, no deep imports.
+2. **Boundary.** `src/` and `test/` import only the package itself, `node:*`, `zod`, `yaml` and (tests) `vitest`.
+   No file anywhere (source, tests, docs, examples, manifest, assets) names a messaging platform or a product; example
+   channels are `console`, `chat` or `forum`.
+3. **No content policy in `src/`.** What a persona may say belongs to the application. The shipped safeguards (stop
+   handling, the opt-in minors safeguard `Channel.adult`) may only get stricter, never weaker.
+4. **Prompt text only in `src/prompts.ts`** (fixed messages in `src/safety.ts`). No other file writes text for the model.
+5. **Injected time, chance, files, model.** Anything depending on them takes `now`, `rng`, a file reader or an `Llm`
+   parameter. No bare `Date.now()` / `Math.random()` inside logic; tests never touch the network.
+6. **No new runtime dependency** without a strong reason: use `node:*` first.
+7. **Build must work in ESM and CJS.** No `import.meta.*`, top-level await or `__dirname` in `src/`. `node:sqlite` is
+   loaded with `process.getBuiltinModule` (see `src/store.ts`), which works in both formats.
+8. **Docs are tested.** `test/docs.test.ts` checks every `file.ts:NN` reference (it must point at lines that exist and
+   at the code span written just before it), the export/heading match and every relative link. When you move lines in
+   `src/`, update the references that point at them.
+9. **Tests next to the behaviour:** `src/foo.ts` is tested in `test/foo.test.ts`; use `:memory:` stores.
+10. **CHANGELOG.** Anything a user would notice gets a line under `[Unreleased]` in `CHANGELOG.md`.
+
+## Style
+
+- Tabs for indentation (TypeScript and JSON); 2 spaces in YAML and Markdown. LF line endings (`.gitattributes`);
+  keep each file's existing endings.
+- Comments say what a thing is for and why, in plain sentences. Every export has a doc comment.
+- Strict TypeScript with `noUncheckedIndexedAccess`; relative imports use `.js` specifiers for `.ts` files.
+
+## Workflow
+
+```sh
+npm install              # once
+npm test                 # vitest run (includes the docs tests)
+npm run type-check       # tsc --noEmit over src, test, examples
+npm run build            # tsdown -> dist/
+npm run lint:pkg         # publint + are-the-types-wrong against the packed tarball
+npm run check            # all of it, in order: run this before you say you are done
+npx tsx examples/console-chat.ts   # the example must still run, offline
+```
+
+1. Read the code you will change and its test file first.
+2. Make the smallest change that does the job, with its test, docs and CHANGELOG line.
+3. Run `npm run check`. Report failures as they are; do not claim a pass you did not see.
+4. `dist/` is build output and is git-ignored: never edit or commit it.
+5. Commit on a branch or `main` as the maintainer prefers, with a short imperative subject. Do not push, tag or
+   publish unless asked.
+6. Packaging changes (`package.json`, `tsdown.config.ts`, `tsconfig.json`): also check `npm pack --dry-run` lists only
+   `dist`, `assets`, `README.md`, `LICENSE`, `CHANGELOG.md`, `package.json`.
+
+## CI and releases
+
+- Versions follow SemVer. While in beta they are prereleases `0.x.y-beta.N` (first release: `0.1.0-beta.0`, tag `v0.1.0-beta.0`), published on the `beta` dist-tag. `1.0.0` is the first stable version.
+- `.github/workflows/ci.yml` runs `npm run check` plus a CJS/ESM smoke test on Node 22.13, 22, 24 (Linux) and 22 on
+  Windows and macOS.
+- Releasing is maintainer-only: move the CHANGELOG notes under the new version, `npm version <x.y.z>
+  --no-git-tag-version`, commit, then push a `vX.Y.Z` tag. `.github/workflows/release.yml` verifies the tag against
+  `package.json`, runs `npm run check`, publishes (`beta` dist-tag for versions with a suffix) and creates the GitHub
+  release. Agents must not tag or publish.

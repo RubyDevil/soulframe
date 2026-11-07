@@ -4,11 +4,13 @@
 
 **AI personas that keep hours, remember people and chat at a human pace, on any channel you plug in.**
 
-[![status: beta](https://img.shields.io/badge/status-beta-7c5cff)](#status-beta-not-yet-published)
-[![npm: unreleased](https://img.shields.io/badge/npm-unreleased-lightgrey)](#status-beta-not-yet-published)
+[![npm](https://img.shields.io/npm/v/soulframe?color=cb3837&logo=npm)](https://www.npmjs.com/package/soulframe)
+[![CI](https://github.com/RubyDevil/soulframe/actions/workflows/ci.yml/badge.svg)](https://github.com/RubyDevil/soulframe/actions/workflows/ci.yml)
+[![status: beta](https://img.shields.io/badge/status-beta-7c5cff)](#status-beta)
 [![node: >=22.13](https://img.shields.io/badge/node-%3E%3D22.13-5fa04e?logo=node.js&logoColor=white)](https://nodejs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-source-3178c6?logo=typescript&logoColor=white)](./src/index.ts)
-[![license: not chosen](https://img.shields.io/badge/license-not%20chosen-ff6f91)](#license)
+[![types: included](https://img.shields.io/badge/types-included-3178c6?logo=typescript&logoColor=white)](./src/index.ts)
+[![module: ESM + CJS](https://img.shields.io/badge/module-ESM%20%2B%20CJS-f7df1e)](#install)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 
 </div>
 
@@ -57,38 +59,29 @@ safe for work (`sfw: true`).
 - **Testable.** Clock, randomness, file reading and the model are all injected; a canned model and `:memory:` stores
   run everything offline.
 
-## Status: beta, not yet published
+## Status: beta
 
 > [!IMPORTANT]
-> soulframe is **beta** software and **has not been published to npm**: `npm install soulframe` does not install it.
-> The API may still change before 1.0. It ships as TypeScript source (no build step), so you need a TypeScript-aware
-> runtime or bundler, such as [`tsx`](https://tsx.is/), Vite or Vitest (its imports use `.js` specifiers for `.ts`
-> files, which Node's own type stripping does not resolve).
-
-Today you use it as a **workspace dependency**:
-
-1. Put the package in your project's `packages/` folder: clone
-   [the repository](https://github.com/RubyDevil/soulframe) there
-   (`git clone https://github.com/RubyDevil/soulframe packages/soulframe`), copy it there, or add it as a git
-   submodule at that path.
-2. Declare it in your root `package.json` and install:
-
-   ```json
-   {
-   	"workspaces": ["packages/soulframe"],
-   	"dependencies": { "soulframe": "0.1.0-beta.0" }
-   }
-   ```
-
-   A `"soulframe": "file:./path/to/soulframe"` dependency works too.
+> soulframe is **beta** software: the API may still change before 1.0. Releases are SemVer prereleases (`0.1.0-beta.N`) on the `beta` dist-tag, so install with `soulframe@beta` and pin the exact version you test with.
 
 ## Install
 
 ```sh
-npm install
+npm install soulframe@beta
 ```
 
-That links the workspace. soulframe needs **Node.js 22.13 or newer** (for `node:sqlite` without a flag) and depends on
+It ships compiled JavaScript with type declarations, as both ESM and CommonJS, so it works from TypeScript, `import`
+and `require` alike:
+
+```ts
+import { createBrain } from 'soulframe'; // ESM or TypeScript
+```
+
+```js
+const { createBrain } = require('soulframe'); // CommonJS
+```
+
+soulframe needs **Node.js 22.13 or newer** (for `node:sqlite` without a flag) and depends on
 [`zod`](https://zod.dev/) and [`yaml`](https://eemeli.org/yaml/) only.
 
 ## Quick start
@@ -202,17 +195,12 @@ minors safeguard on channels you mark `adult: true`; no persona config turns the
 Yes. A person has one account per channel (`Person.ids`); `store.link` attaches another, and the history, notes and
 relationship are shared across them.
 
-**Why TypeScript source and no build?**
-The package grew inside a `tsx` service; publishing compiled output is on the roadmap.
-
 **Where are the secrets?**
 Never in the config: settings only name the environment variables that hold keys (`apiKeyEnv`), and your code reads
 them (`apiKeyOf`).
 
 ## Roadmap to 1.0
 
-- Choose a license and publish to npm.
-- Ship compiled JavaScript and type declarations alongside the source.
 - Export the test helpers (a scripted Decisions client, a seeded random source) and the error classes a custom model
   client needs to signal a spent budget or an outage.
 - Freeze the public API and the database layout; document the migration policy.
@@ -226,8 +214,4 @@ Issues and pull requests are welcome at
 
 ## License
 
-**No license has been chosen yet.** Until one is, the code is published for reading only: no permission to use, copy,
-modify or distribute it is granted (`"license": "UNLICENSED"` in `package.json`). The license will be decided before
-the first release.
-
-Copyright (c) RubyDevil.
+[MIT](./LICENSE) © RubyDevil.

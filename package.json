@@ -1,7 +1,6 @@
 {
 	"name": "soulframe",
 	"version": "0.1.0-beta.0",
-	"private": true,
 	"description": "Build AI personas that feel human, for any purpose and any messaging channel: character, daily agenda, mood, human-paced replies, memory and opt-in safeguards.",
 	"keywords": [
 		"ai",
@@ -18,7 +17,7 @@
 		"typescript"
 	],
 	"author": "RubyDevil",
-	"license": "UNLICENSED",
+	"license": "MIT",
 	"homepage": "https://github.com/RubyDevil/soulframe#readme",
 	"repository": {
 		"type": "git",
@@ -31,26 +30,48 @@
 	"engines": {
 		"node": ">=22.13"
 	},
+	"sideEffects": false,
+	"main": "./dist/index.cjs",
+	"module": "./dist/index.mjs",
+	"types": "./dist/index.d.mts",
 	"exports": {
-		".": "./src/index.ts"
+		".": {
+			"import": {
+				"types": "./dist/index.d.mts",
+				"default": "./dist/index.mjs"
+			},
+			"require": {
+				"types": "./dist/index.d.cts",
+				"default": "./dist/index.cjs"
+			}
+		},
+		"./package.json": "./package.json"
 	},
 	"scripts": {
+		"build": "tsdown",
 		"test": "vitest run",
-		"type-check": "tsc --noEmit"
+		"type-check": "tsc --noEmit",
+		"lint:pkg": "publint && attw --pack . --profile node16",
+		"check": "npm run type-check && npm test && npm run build && npm run lint:pkg",
+		"prepublishOnly": "npm run check"
 	},
 	"files": [
-		"src",
-		"README.md",
-		"CHANGELOG.md",
+		"dist",
 		"assets",
-		"docs"
+		"CHANGELOG.md"
 	],
+	"publishConfig": {
+		"access": "public"
+	},
 	"dependencies": {
 		"yaml": "^2.6.0",
 		"zod": "^3.23.8"
 	},
 	"devDependencies": {
-		"@types/node": "^22.10.1",
+		"@arethetypeswrong/cli": "^0.18.5",
+		"@types/node": "^22.20.5",
+		"publint": "^0.3.25",
+		"tsdown": "^0.23.7",
 		"tsx": "^4.19.2",
 		"typescript": "^5.6.3",
 		"vitest": "^2.1.8"

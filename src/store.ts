@@ -1,10 +1,10 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { createRequire } from 'node:module';
 import type { ChannelId } from './channel.js';
 
-// Loaded through Node's own require: Vite (under the tests) doesn't know node:sqlite yet and fails to resolve it
-const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
+// Loaded at run time, not imported: Vite (under the tests) doesn't know node:sqlite yet and fails to resolve it, and
+// getBuiltinModule works the same in the ESM and the CJS build (import.meta.url would not exist in CJS)
+const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
 
 /** `stopped`: they asked to stop or can't be reached; `blocked`: the persona blocked them; `denied`: deny-listed (`store.deny`, with its reason). */
 export type PersonState = 'active' | 'stopped' | 'blocked' | 'denied';

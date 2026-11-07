@@ -15,7 +15,7 @@ const linesOf = (text: string) => text.split(/\r?\n/);
 
 /** The package's Markdown, by path from its root: the README and docs/ carry the code references; links are checked in all of it. */
 const REFERENCING = ['README.md', ...readdirSync(join(ROOT, 'docs')).filter((name) => name.endsWith('.md')).map((name) => `docs/${name}`)];
-const MARKDOWN = [...REFERENCING, 'CHANGELOG.md', 'CONTRIBUTING.md'];
+const MARKDOWN = [...REFERENCING, 'CHANGELOG.md', 'CONTRIBUTING.md', 'AGENTS.md'];
 
 /** A Markdown file's lines, those of fenced code blocks blanked (line numbers kept): code samples are not prose. */
 const proseOf = (text: string) => {

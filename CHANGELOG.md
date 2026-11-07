@@ -7,11 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-The first beta, `0.1.0-beta.0`: a general-purpose persona framework that knows no messaging channel and no product. Not published to npm yet; no
-license has been chosen.
+The first beta, `0.1.0-beta.0`: a general-purpose persona framework that knows no messaging channel and no product. First published to npm with this release, under the MIT license.
 
 ### Added
 
+- **Published as compiled JavaScript.** `npm install soulframe` gives ESM (`dist/index.mjs`) and CommonJS (`dist/index.cjs`) builds with matching
+  type declarations, behind a conditional `exports` map; `src/store.ts` loads `node:sqlite` with `process.getBuiltinModule`, which works in both.
+- **MIT license.**
 - **Reading time.** Before it types, a persona spends as long as it takes to read what they wrote (the unread messages
   together): `pacing.readingCharsPerSecond` (default `[15, 25]`) within `pacing.readingDurationSeconds` (default
   `[1, 20]`), with or without `markRead`. It replaces `pacing.readBeforeTypingSeconds`, a flat pause only on a
