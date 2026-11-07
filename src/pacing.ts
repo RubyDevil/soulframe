@@ -44,8 +44,15 @@ export function typingPlan(text: string, rng: Rng, pacing: Pacing = DEFAULT_SETT
 	return { typing: Array.from({ length: count + 1 }, (_, i) => (i < count ? stretch : total - stretch * count)), pauses };
 }
 
-/** The pause after showing their messages read, before typing (`pacing.readBeforeTypingSeconds`). */
-export const readPauseMs = (rng: Rng, pacing: Pacing = DEFAULT_SETTINGS.pacing) => msIn(rng, pacing.readBeforeTypingSeconds);
+/**
+ * How long reading `chars` characters takes before the reply is typed: proportional to their length, within
+ * `readingDurationSeconds`; nothing, and no draw, when there is nothing to read.
+ */
+export function readingMs(chars: number, rng: Rng, pacing: Pacing = DEFAULT_SETTINGS.pacing): number {
+	if (chars <= 0) return 0;
+	const ms = (chars / between(rng, ...pacing.readingCharsPerSecond)) * SECOND;
+	return Math.round(Math.min(pacing.readingDurationSeconds[1] * SECOND, Math.max(pacing.readingDurationSeconds[0] * SECOND, ms)));
+}
 
 /** A pause between two messages of the same reply. */
 export const betweenMessagesMs = (rng: Rng, pacing: Pacing = DEFAULT_SETTINGS.pacing) => msIn(rng, pacing.betweenReplyMessagesSeconds);

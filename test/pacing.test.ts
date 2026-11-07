@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { betweenMessagesMs, fitDelay, quickReplyMs, readPauseMs, replyDelayMs, splitReply, typingMs, typingPlan } from '../src/pacing.js';
+import { describe, expect, it, vi } from 'vitest';
+import { betweenMessagesMs, fitDelay, quickReplyMs, readingMs, replyDelayMs, splitReply, typingMs, typingPlan } from '../src/pacing.js';
 import { seededRng } from '../src/rng.js';
 import { DEFAULT_SETTINGS, SettingsSchema, type Settings } from '../src/settings.js';
 
@@ -55,24 +55,29 @@ describe('typingPlan', () => {
 	});
 });
 
-describe('readPauseMs', () => {
-	it('gives whole milliseconds within readBeforeTypingSeconds', () => {
-		const rng = seededRng('read');
-		for (let sample = 0; sample < 100; sample++) {
-			const pause = readPauseMs(rng);
-			expect(Number.isInteger(pause)).toBe(true);
-			expect(pause).toBeGreaterThanOrEqual(1_000);
-			expect(pause).toBeLessThanOrEqual(3_000);
-		}
+describe('readingMs', () => {
+	it('is proportional to the length, within readingDurationSeconds', () => {
+		// 25 characters a second at the top of the range, 15 at the bottom
+		expect(readingMs(300, () => 1)).toBe(12_000);
+		expect(readingMs(300, () => 0)).toBe(20_000);
+		expect(readingMs(5, () => 0)).toBe(1_000);
+		expect(readingMs(5_000, () => 0)).toBe(20_000);
+	});
+	it('gives whole milliseconds, and nothing without a draw when there is nothing to read', () => {
+		const rng = vi.fn(seededRng('read'));
+		for (let sample = 0; sample < 100; sample++) expect(Number.isInteger(readingMs(1 + sample * 7, rng))).toBe(true);
+		const draws = rng.mock.calls.length;
+		expect(readingMs(0, rng)).toBe(0);
+		expect(rng).toHaveBeenCalledTimes(draws);
 	});
 });
 
 describe('the typing settings', () => {
-	it('default to no thinking pause and a short read pause, and refuse an unknown or out-of-range key', () => {
-		expect(DEFAULT_SETTINGS.pacing).toMatchObject({ readBeforeTypingSeconds: [1, 3], thinkingPauses: { chance: 0, minChars: 120, max: 2, seconds: [2, 6] } });
+	it('default to no thinking pause and a human reading speed, and refuse an unknown or out-of-range key', () => {
+		expect(DEFAULT_SETTINGS.pacing).toMatchObject({ readingCharsPerSecond: [15, 25], readingDurationSeconds: [1, 20], thinkingPauses: { chance: 0, minChars: 120, max: 2, seconds: [2, 6] } });
 		expect(() => SettingsSchema.parse({ pacing: { thinkingPauses: { chanse: 0.2 } } })).toThrow();
 		expect(() => SettingsSchema.parse({ pacing: { thinkingPauses: { max: 4 } } })).toThrow();
-		expect(() => SettingsSchema.parse({ pacing: { readBeforeTypingSeconds: [3, 1] } })).toThrow();
+		expect(() => SettingsSchema.parse({ pacing: { readingCharsPerSecond: [25, 15] } })).toThrow();
 	});
 });
 

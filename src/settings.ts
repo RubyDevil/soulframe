@@ -206,11 +206,10 @@ export const SettingsSchema = z
 				typingCharsPerSecond: range(3.5, 7, 0.5),
 				/** The shortest and longest the typing indicator shows for one message, in seconds (thinking pauses come on top). */
 				typingDurationSeconds: range(1.5, 45),
-				/**
-				 * Seconds between showing that their messages were read (`Conversation.markRead`) and starting to type the reply;
-				 * only on a conversation that has `markRead`.
-				 */
-				readBeforeTypingSeconds: range(1, 3),
+				/** Reading speed, in characters per second: before it types, it spends as long as it takes to read what they wrote (the unread messages together). */
+				readingCharsPerSecond: range(15, 25, 1),
+				/** The shortest and longest the reading takes, in seconds. */
+				readingDurationSeconds: range(1, 20),
 				/** Pauses while typing a long message: the indicator goes off a moment, as when someone stops to think, then on again. */
 				thinkingPauses: z
 					.object({

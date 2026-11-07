@@ -42,7 +42,7 @@ export function createChatAdapter({ persona, brain, queue, runtime, client }: { 
 		},
 		// This platform shows typing for 5 seconds per signal: the queue signals again every 4 while it types
 		typingRefreshMs: 4_000,
-		// Their messages show as read when the reply starts, pacing.readBeforeTypingSeconds before the typing
+		// Their messages show as read when the reply starts; it reads them (pacing.readingCharsPerSecond) before it types
 		markRead: () => client.markRead(userId).catch(() => undefined),
 		async send(text) {
 			try {
@@ -167,8 +167,8 @@ described above: one `typing(true)` per message, the typing time, the send, one 
   until the message is sent. It checks the halt switch, `queue.stop()` and the person's state at each one, so a reply
   cut short stops typing then, not at the end of the typing time.
 - **`markRead()`**: shows the person their messages were read (a read receipt). The queue calls it once per reply,
-  before the first message is typed, then waits `pacing.readBeforeTypingSeconds` (1 to 3 seconds by default) before
-  typing starts. A reply halted or cancelled before then types nothing. A rejection counts as a failed delivery, as
+  when the reading starts, then waits as long as reading what they wrote takes (15 to 25 characters a second by
+  default, 1 to 20 seconds) before typing starts. That wait happens without `markRead` too. A reply halted or cancelled before then types nothing. A rejection counts as a failed delivery, as
   for `typing`: swallow it if a missing receipt doesn't matter. A turn the persona leaves on read sends no receipt.
 - **Thinking pauses** are the persona's setting, not the adapter's (`pacing.thinkingPauses`, off by default): a long
   message may stop typing a moment (`typing(false)`) and start again (`typing(true)`), as when someone stops to think.
