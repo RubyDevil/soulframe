@@ -252,3 +252,51 @@ describe('forgetting and resetting', () => {
 		expect(store.auditLog('robin')).toEqual([]);
 	});
 });
+
+describe('blocking and unblocking by hand', () => {
+	it('blocks an active person, audited, and unblocks them or someone who asked to stop; nothing else', () => {
+		const store = memoryStore(() => 5_000);
+		const ana = store.createPerson('robin', 'forum', 'ana', 'Ana');
+		expect(store.block(ana.id)).toBe(true);
+		expect(store.personById(ana.id).state).toBe('blocked');
+		expect(store.auditLog('robin')[0]).toMatchObject({ kind: 'blocked', detail: { personId: ana.id, source: 'manual' } });
+		// Already ended, or nobody
+		expect(store.block(ana.id)).toBe(false);
+		expect(store.block(99)).toBe(false);
+		expect(store.unblock(ana.id)).toBe(true);
+		expect(store.personById(ana.id).state).toBe('active');
+		expect(store.auditLog('robin')[0]).toMatchObject({ kind: 'unblocked', detail: { personId: ana.id, from: 'blocked', source: 'manual' } });
+		store.updatePerson(ana.id, { state: 'stopped' });
+		expect(store.unblock(ana.id)).toBe(true);
+		// Active already; denied is lifted by undeny
+		expect(store.unblock(ana.id)).toBe(false);
+		store.deny('forum', 'ana', 'minor');
+		expect(store.unblock(ana.id)).toBe(false);
+		expect(store.personById(ana.id).state).toBe('denied');
+	});
+
+	it('takes an account off the deny list and makes its people active, unless another account of theirs is still listed', () => {
+		const store = memoryStore(() => 5_000);
+		const ana = store.createPerson('robin', 'forum', 'ana', 'Ana');
+		store.link(ana.id, 'chat', 'ana-chat');
+		store.deny('forum', 'ana', 'minor');
+		store.deny('chat', 'ana-chat', 'minor');
+		expect(store.personById(ana.id).state).toBe('denied');
+		expect(store.undeny('forum', 'ana')).toBe(true);
+		expect(store.isDenied('forum', 'ana')).toBe(false);
+		// The other account is still listed
+		expect(store.personById(ana.id).state).toBe('denied');
+		expect(store.undeny('chat', 'ana-chat')).toBe(true);
+		expect(store.personById(ana.id).state).toBe('active');
+		expect(store.auditLog('robin')[0]).toMatchObject({ kind: 'undenied', detail: { personId: ana.id, platform: 'chat', source: 'manual' } });
+		expect(store.undeny('chat', 'ana-chat')).toBe(false);
+	});
+
+	it('clears a minor-caution flag once, and says if there was none', () => {
+		const store = memoryStore();
+		store.cautionMinor('forum', 'ana', 0.6);
+		expect(store.clearMinorCaution('forum', 'ana')).toBe(true);
+		expect(store.isMinorCautioned('forum', 'ana')).toBe(false);
+		expect(store.clearMinorCaution('forum', 'ana')).toBe(false);
+	});
+});

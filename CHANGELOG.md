@@ -61,6 +61,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `docs/attention.md`: when a persona answers, who goes first, how it gets to know people, every setting of it
   explained in plain terms, and what to change coming from `0.1.0-beta.0`.
 
+- `store.block(id)`, `unblock(id)`, `undeny(channel, id)` and `clearMinorCaution(channel, id)`: block and unblock people by
+  hand, and lift a deny-list entry or a minor flag you checked, each audited with `source: 'manual'`.
 - `store.forgetPerson(id)` and `store.resetPersona(persona)`: delete one person, or everything one persona knows, in one
   transaction. The deny list and minor flags are kept, and so are people who asked to stop or were blocked unless
   `{ includeEnded: true }`.

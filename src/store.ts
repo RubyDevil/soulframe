@@ -326,6 +326,55 @@ export function createStore(db: Database, now: () => number = Date.now) {
 			db.prepare('DELETE FROM audit WHERE at < ?').run(before);
 		},
 		/**
+		 * By hand, an operator's: the persona stops answering this person and ignores what they write (`blocked`, audited
+		 * with `source: 'manual'`). Only the store: nothing is done on the platform (the app's `act` blocks there). A
+		 * reply under way to them is cut. Answers whether it changed anything (false: no such person, or already ended).
+		 */
+		block(personId: number): boolean {
+			const row = db.prepare('SELECT persona, state FROM people WHERE id = ?').get(personId) as unknown as { persona: string; state: PersonState } | undefined;
+			if (!row || row.state !== 'active') return false;
+			db.prepare("UPDATE people SET state = 'blocked', updated_at = ? WHERE id = ?").run(now(), personId);
+			db.prepare('INSERT INTO audit (at, persona, kind, detail) VALUES (?, ?, ?, ?)').run(now(), row.persona, 'blocked', JSON.stringify({ personId, source: 'manual' }));
+			return true;
+		},
+		/**
+		 * By hand: a person who asked to stop (`stopped`) or was blocked (`blocked`) is `active` again, audited with
+		 * `source: 'manual'`. Someone deny-listed is not: `undeny` lifts that. Answers whether it changed anything.
+		 */
+		unblock(personId: number): boolean {
+			const row = db.prepare('SELECT persona, state FROM people WHERE id = ?').get(personId) as unknown as { persona: string; state: PersonState } | undefined;
+			if (!row || (row.state !== 'stopped' && row.state !== 'blocked')) return false;
+			db.prepare("UPDATE people SET state = 'active', updated_at = ? WHERE id = ?").run(now(), personId);
+			db.prepare('INSERT INTO audit (at, persona, kind, detail) VALUES (?, ?, ?, ?)').run(now(), row.persona, 'unblocked', JSON.stringify({ personId, from: row.state, source: 'manual' }));
+			return true;
+		},
+		/**
+		 * By hand: takes an account off the deny list, shared by every persona. Each person with that account who was
+		 * `denied` is `active` again unless another of their accounts is still on the list. Audited for each persona with
+		 * `source: 'manual'`. Answers whether the account was on the list.
+		 */
+		undeny(channel: ChannelId, externalId: string): boolean {
+			return inTransaction(db, () => {
+				if (db.prepare('DELETE FROM deny WHERE channel = ? AND external_id = ?').run(channel, externalId).changes === 0) return false;
+				const people = db
+					.prepare(`SELECT p.id, p.persona FROM people p JOIN identities i ON i.person_id = p.id WHERE i.channel = ? AND i.external_id = ? AND p.state = 'denied'`)
+					.all(channel, externalId) as unknown as { id: number; persona: string }[];
+				for (const { id, persona } of people) {
+					const stillDenied = db
+						.prepare('SELECT 1 FROM identities i JOIN deny d ON d.channel = i.channel AND d.external_id = i.external_id WHERE i.person_id = ?')
+						.get(id);
+					if (stillDenied) continue;
+					db.prepare("UPDATE people SET state = 'active', updated_at = ? WHERE id = ?").run(now(), id);
+					db.prepare('INSERT INTO audit (at, persona, kind, detail) VALUES (?, ?, ?, ?)').run(now(), persona, 'undenied', JSON.stringify({ personId: id, platform: channel, source: 'manual' }));
+				}
+				return true;
+			});
+		},
+		/** By hand: takes the minor-caution flag off an account (the flag is otherwise never cleared by the code). Answers whether it was set. */
+		clearMinorCaution(channel: ChannelId, externalId: string): boolean {
+			return db.prepare("DELETE FROM kv WHERE persona = '*' AND key = ?").run(minorCautionKey(channel, externalId)).changes > 0;
+		},
+		/**
 		 * Forgets one person: their messages, notes, familiarity and affinity, accounts, the relationship levels shown to
 		 * them and the audit lines about them. The deny list and minor flags (keyed by account, shared by every persona) are
 		 * kept, so a forgotten account that was deny-listed stays so. Someone who asked to stop, was blocked or denied

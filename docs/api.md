@@ -713,6 +713,10 @@ interface Store {
 	audit(persona: string, kind: string, detail?: Record<string, unknown>): void;
 	auditLog(persona?: string, limit?: number): { at: number; persona: string; kind: string; detail: Record<string, unknown> }[];
 	sweep(before: number): void;
+	block(personId: number): boolean;
+	unblock(personId: number): boolean;
+	undeny(channel: ChannelId, externalId: string): boolean;
+	clearMinorCaution(channel: ChannelId, externalId: string): boolean;
 	forgetPerson(personId: number, options?: { includeEnded?: boolean }): boolean;
 	resetPersona(persona: string, options?: { includeEnded?: boolean }): { people: number; messages: number };
 }
@@ -735,6 +739,15 @@ interface Store {
   `lastOnlineAt` per persona, and the persona `'*'` for token counts and minor flags.
 - **`audit`**, **`auditLog`**: the audit log (newest first, default 50, for one persona or all).
 - **`sweep`**: deletes messages and audit lines older than `before`. The application sweeps its own tables.
+- **`block`**, **`unblock`**: by hand, for an operator. `block` makes an active person `blocked`: the persona ignores
+  what they write and cuts a reply under way. `unblock` makes someone `stopped` (they asked to stop) or `blocked`
+  `active` again. Both are audited with `source: 'manual'`, answer whether anything changed, and only touch the store:
+  blocking on the platform itself is the application's (`act`), and unblocking someone who asked to stop is your call,
+  not the persona's.
+- **`undeny`**, **`clearMinorCaution`**: by hand, the other way for the safety lists: `undeny` takes an account off the
+  deny list and makes the people with it `active` again, unless another of their accounts is still listed;
+  `clearMinorCaution` takes the flag off an account. They answer whether the account was on the list, and `undeny` is
+  audited for each persona. These lists protect people: use them for a mistake you checked, not as routine.
 - **`forgetPerson`**: deletes one person (their messages, notes, familiarity and affinity, accounts and the audit lines
   about them) in one transaction. The deny list and minor flags are kept, so a deny-listed account stays so. Someone
   who asked to stop, was blocked or denied is kept too, since forgetting them would let the persona answer them
