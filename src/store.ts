@@ -325,5 +325,50 @@ export function createStore(db: Database, now: () => number = Date.now) {
 			db.prepare('DELETE FROM messages WHERE at < ?').run(before);
 			db.prepare('DELETE FROM audit WHERE at < ?').run(before);
 		},
+		/**
+		 * Forgets one person: their messages, notes, familiarity and affinity, accounts, the relationship levels shown to
+		 * them and the audit lines about them. The deny list and minor flags (keyed by account, shared by every persona) are
+		 * kept, so a forgotten account that was deny-listed stays so. Someone who asked to stop, was blocked or denied
+		 * (`state` not `active`) is kept too, since forgetting them would let the persona answer them again, unless
+		 * `includeEnded`. Answers whether anyone was forgotten (false: no such person, or they were kept).
+		 */
+		forgetPerson(personId: number, { includeEnded = false }: { includeEnded?: boolean } = {}): boolean {
+			const row = db.prepare('SELECT persona, state FROM people WHERE id = ?').get(personId) as unknown as { persona: string; state: PersonState } | undefined;
+			if (!row || (row.state !== 'active' && !includeEnded)) return false;
+			inTransaction(db, () => {
+				db.prepare('DELETE FROM messages WHERE person_id = ?').run(personId);
+				db.prepare('DELETE FROM identities WHERE person_id = ?').run(personId);
+				db.prepare('DELETE FROM kv WHERE persona = ? AND key = ?').run(row.persona, `relationship:${personId}`);
+				db.prepare("DELETE FROM audit WHERE persona = ? AND json_extract(detail, '$.personId') = ?").run(row.persona, personId);
+				db.prepare('DELETE FROM people WHERE id = ?').run(personId);
+			});
+			return true;
+		},
+		/**
+		 * Forgets everything one persona knows: all its people (as `forgetPerson`, so those who asked to stop, were blocked
+		 * or denied are kept unless `includeEnded`), with their messages, and its own kv (self notes, when it was last
+		 * online, the levels shown) and audit lines. Another persona's data, the deny list and the minor flags are untouched.
+		 * Answers how many people and messages were deleted. A persona with ended people kept keeps their audit lines too.
+		 */
+		resetPersona(persona: string, { includeEnded = false }: { includeEnded?: boolean } = {}): { people: number; messages: number } {
+			return inTransaction(db, () => {
+				const ids = (db.prepare(`SELECT id FROM people WHERE persona = ?${includeEnded ? '' : " AND state = 'active'"}`).all(persona) as unknown as { id: number }[]).map((p) => p.id);
+				const kept = (db.prepare("SELECT COUNT(*) AS n FROM people WHERE persona = ? AND state != 'active'").get(persona) as unknown as { n: number }).n;
+				let messages = 0;
+				for (const id of ids) {
+					messages += Number(db.prepare('DELETE FROM messages WHERE person_id = ?').run(id).changes);
+					db.prepare('DELETE FROM identities WHERE person_id = ?').run(id);
+					db.prepare('DELETE FROM people WHERE id = ?').run(id);
+				}
+				db.prepare('DELETE FROM kv WHERE persona = ?').run(persona);
+				if (includeEnded || kept === 0) db.prepare('DELETE FROM audit WHERE persona = ?').run(persona);
+				else {
+					// Those about people kept stay; so do none about anyone forgotten
+					const keep = (db.prepare("SELECT id FROM people WHERE persona = ? AND state != 'active'").all(persona) as unknown as { id: number }[]).map((p) => p.id);
+					db.prepare(`DELETE FROM audit WHERE persona = ? AND (json_extract(detail, '$.personId') IS NULL OR json_extract(detail, '$.personId') NOT IN (${keep.map(() => '?').join(', ')}))`).run(persona, ...keep);
+				}
+				return { people: ids.length, messages };
+			});
+		},
 	};
 }

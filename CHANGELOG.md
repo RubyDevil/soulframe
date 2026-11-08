@@ -61,6 +61,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `docs/attention.md`: when a persona answers, who goes first, how it gets to know people, every setting of it
   explained in plain terms, and what to change coming from `0.1.0-beta.0`.
 
+- `store.forgetPerson(id)` and `store.resetPersona(persona)`: delete one person, or everything one persona knows, in one
+  transaction. The deny list and minor flags are kept, and so are people who asked to stop or were blocked unless
+  `{ includeEnded: true }`.
+
 ### Changed
 
 - **Drawn ranges have a shape.** Each setting a value is drawn from each time (typing and reading speeds, the burst

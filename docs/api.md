@@ -713,6 +713,8 @@ interface Store {
 	audit(persona: string, kind: string, detail?: Record<string, unknown>): void;
 	auditLog(persona?: string, limit?: number): { at: number; persona: string; kind: string; detail: Record<string, unknown> }[];
 	sweep(before: number): void;
+	forgetPerson(personId: number, options?: { includeEnded?: boolean }): boolean;
+	resetPersona(persona: string, options?: { includeEnded?: boolean }): { people: number; messages: number };
 }
 ```
 
@@ -733,6 +735,14 @@ interface Store {
   `lastOnlineAt` per persona, and the persona `'*'` for token counts and minor flags.
 - **`audit`**, **`auditLog`**: the audit log (newest first, default 50, for one persona or all).
 - **`sweep`**: deletes messages and audit lines older than `before`. The application sweeps its own tables.
+- **`forgetPerson`**: deletes one person (their messages, notes, familiarity and affinity, accounts and the audit lines
+  about them) in one transaction. The deny list and minor flags are kept, so a deny-listed account stays so. Someone
+  who asked to stop, was blocked or denied is kept too, since forgetting them would let the persona answer them
+  again; `{ includeEnded: true }` forgets them as well. Answers whether anyone was forgotten.
+- **`resetPersona`**: deletes everything one persona knows: its people and their messages (ended people kept, as
+  above), its kv (self notes, when it was last online) and its audit lines (kept for ended people kept). Other personas,
+  the deny list and the minor flags are untouched. Answers how many people and messages went. For a fresh start in
+  development, or a persona retired and brought back; nothing asks for confirmation, so guard it in your tooling.
 
 ### `Person`
 
