@@ -2,12 +2,15 @@
 // - every `file.ts:NN` (or `src/file.ts:NN`, a range `:NN-MM`, a list `file.ts:NN, :MM`) in the README and docs/
 //   points at lines that exist, and at what the code span written just before it names;
 // - every export of src/index.ts has its heading in docs/api.md, and every heading there is an export;
-// - every relative link and anchor in the package's Markdown resolves.
+// - every relative link and anchor in the package's Markdown resolves;
+// - every setting is in docs/configuration.md, the timing and relationship ones are explained in docs/attention.md too,
+//   and no removed setting is left in the configuration reference.
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import * as api from '../src/index.js';
+import { DEFAULT_SETTINGS } from '../src/settings.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (path: string) => readFileSync(join(ROOT, path), 'utf8');
@@ -220,5 +223,55 @@ describe('links in the docs', () => {
 		expect(slugOf('Decisions: optional typed checks')).toBe('decisions-optional-typed-checks');
 		expect(linkProblem('README.md', './docs/nope.md')).toBe('docs/nope.md does not exist');
 		expect(linkProblem('README.md', '#no-such-heading')).toBe('README.md has no heading #no-such-heading');
+	});
+});
+
+// --- Settings ---------------------------------------------------------------------------------------------------
+
+/** Every setting's dotted path in the defaults, a drawn range (`{ range, shape }`) and a list taken whole. */
+const settingPaths = () => {
+	const paths: string[] = [];
+	const walk = (value: unknown, path: string[]) => {
+		const plain = typeof value === 'object' && value !== null && !Array.isArray(value);
+		const drawn = plain && 'range' in value && 'shape' in value;
+		if (plain && !drawn) for (const [key, inner] of Object.entries(value)) walk(inner, [...path, key]);
+		else paths.push(path.join('.'));
+	};
+	walk(DEFAULT_SETTINGS, []);
+	return paths;
+};
+/** How the configuration reference names a setting: without its group (`pacing.`), and a model's without its task. */
+const documentedAs = (path: string) => {
+	const [group, ...rest] = path.split('.');
+	return group === 'models' ? rest.at(-1)! : rest.join('.');
+};
+/** Settings that were removed: they may be in the CHANGELOG and the migration notes, nowhere else. */
+const REMOVED = ['singlePresence', 'quickReplyChance', 'slowReplyChance', 'quickReplyDelaySeconds', 'slowReplyDelaySeconds', 'busyReplyDelaySeconds', 'relationshipAfter'];
+
+describe('settings in the docs', () => {
+	it('lists every setting of the defaults in the configuration reference', () => {
+		const reference = read('docs/configuration.md');
+		const paths = settingPaths();
+		expect(paths.length).toBeGreaterThan(60);
+		expect(paths.filter((path) => !reference.includes(`\`${documentedAs(path)}\``))).toEqual([]);
+	});
+
+	it('explains every timing and relationship setting in the attention guide', () => {
+		const guide = read('docs/attention.md');
+		const explained = settingPaths().filter((path) => /^(relationship|pacing\.(watching|glance|interruptions|priority|burst))\./.test(path));
+		expect(explained.length).toBeGreaterThanOrEqual(25);
+		// Named as the guide's tables do: relationship's with their sub-group (`familiarity.growth`), pacing's by their own name (`medianSeconds`)
+		const names = (path: string) => (path.startsWith('relationship.') ? [path.slice('relationship.'.length)] : [path.split('.').slice(2).join('.')]);
+		expect(explained.filter((path) => !names(path).some((name) => guide.includes(`\`${name}\``)))).toEqual([]);
+	});
+
+	it('leaves no removed setting in the docs but the notes on moving from the first beta', () => {
+		const files = ['README.md', 'docs/api.md', 'docs/channels.md', 'docs/concepts.md', 'docs/configuration.md', 'docs/testing.md', 'docs/prompts.md'];
+		expect(files.flatMap((file) => REMOVED.filter((name) => read(file).includes(name)).map((name) => `${file}: ${name}`))).toEqual([]);
+		// The guide names them only after its migration heading
+		const guide = read('docs/attention.md');
+		const before = guide.slice(0, guide.indexOf('## Coming from 0.1.0-beta.0'));
+		expect(REMOVED.filter((name) => before.includes(name))).toEqual([]);
+		expect(REMOVED.filter((name) => !guide.includes(name))).toEqual([]);
 	});
 });

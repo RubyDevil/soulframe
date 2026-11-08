@@ -9,7 +9,7 @@ import { createScriptedDecisions, type Decisions } from '../src/decisions.js';
 import { LlmBudgetError, ModelNotConfiguredError, ProviderUnavailableError } from '../src/llm.js';
 import { STOP_QUESTION } from '../src/prompts.js';
 import { interruptionsOn } from '../src/pacing.js';
-import { sleep, type Rng } from '../src/rng.js';
+import { seededRng, sleep, type Rng } from '../src/rng.js';
 import { createReplyQueue, createRuntime, UnreachableError, watchSpans, type Conversation } from '../src/runtime.js';
 import { MINOR_EXIT, STOP_ACK } from '../src/safety.js';
 import { MINUTE, SettingsSchema } from '../src/settings.js';
@@ -430,6 +430,37 @@ describe('a stopped queue (a start that failed, then its retry)', () => {
 			second.queue.stop();
 		} finally {
 			first.close();
+		}
+	});
+
+	it('leaves no timer behind when stopped while waiting for its next look, with its quiet running', async () => {
+		const { queue, message, close } = start({ rng: () => 0.9 });
+		try {
+			await message('hey', 'ana');
+			await message('hi', 'bo');
+			// The tick, the quiet after each message, and the one look both wait for
+			expect(vi.getTimerCount()).toBe(4);
+			queue.stop();
+			expect(vi.getTimerCount()).toBe(0);
+			await vi.advanceTimersByTimeAsync(60 * MINUTE);
+		} finally {
+			close();
+		}
+	});
+
+	it('leaves no timer behind when stopped during an interruption', async () => {
+		const persona = utc.personas[0]!;
+		const [, interruption] = interruptionsOn(persona, { year: 2026, month: 10, day: 14 }, persona.settings.pacing);
+		const { log, queue, close } = start({ now: interruption!.start - 5_000 });
+		try {
+			await vi.advanceTimersByTimeAsync(40_000);
+			// The tick met it, and a timer brings it back
+			expect(logged(log, 'away')).toHaveLength(1);
+			expect(vi.getTimerCount()).toBe(2);
+			queue.stop();
+			expect(vi.getTimerCount()).toBe(0);
+		} finally {
+			close();
 		}
 	});
 
@@ -1824,5 +1855,151 @@ describe('who goes first when several are due (pacing.priority)', () => {
 		} finally {
 			run.close();
 		}
+	});
+});
+
+describe('people waiting in line', () => {
+	/** Ana's turn is under way and held by the test until `gate` is resolved; `order` lists who composed. */
+	const busyWithAna = async (run: ReturnType<typeof start>) => {
+		const gate = held<void>();
+		const order: [number, number][] = [];
+		vi.spyOn(run.brain, 'compose').mockImplementation(async (personId) => {
+			order.push([personId, Date.now() - EVENING]);
+			if (personId === 1) await gate.promise;
+			return { messages: ['ok'], action: 'none' };
+		});
+		await run.message('hi', 'ana');
+		await vi.advanceTimersByTimeAsync(10_000);
+		expect(order).toEqual([[1, 4_000]]);
+		return { gate, order };
+	};
+
+	it('sends someone due who writes again back to their quiet, and answers both messages in one reply', async () => {
+		const run = start();
+		const { gate, order } = await busyWithAna(run);
+		try {
+			// Bo is due at 12 s, in line behind Ana
+			await run.message('hey', 'bo');
+			await vi.advanceTimersByTimeAsync(2_000);
+			// He writes again at 14 s: his quiet runs to 16 s. Ana's reply ends at 15 s
+			await vi.advanceTimersByTimeAsync(2_000);
+			await run.message('also', 'bo');
+			gate.resolve();
+			await vi.advanceTimersByTimeAsync(10_000);
+			expect(order).toEqual([[1, 4_000], [2, 16_000]]);
+			expect(run.store.personById(2).handledAt).toBe(run.store.personById(2).lastInAt);
+			expect(sentTo(run.store, 2)).toEqual(['ok']);
+		} finally {
+			run.close();
+		}
+	});
+
+	it("parks everyone in line when the halt switch goes on, and answers them from the backlog once it is off", async () => {
+		const run = start();
+		const { gate } = await busyWithAna(run);
+		try {
+			await run.message('hey', 'bo');
+			await vi.advanceTimersByTimeAsync(4_000);
+			run.halt(true);
+			gate.resolve();
+			await vi.advanceTimersByTimeAsync(5_000);
+			// Nothing went out; both wait for HALT to end
+			expect(run.conversation.send).not.toHaveBeenCalled();
+			expect(logged(run.log, 'reply_waiting').map((detail) => [detail.personId, detail.reason])).toEqual([[1, 'halt_switch'], [2, 'halt_switch']]);
+			run.halt(false);
+			await vi.advanceTimersByTimeAsync(10 * MINUTE);
+			expect(sentTo(run.store, 1)).toEqual(['ok']);
+			expect(sentTo(run.store, 2)).toEqual(['ok']);
+		} finally {
+			run.close();
+		}
+	});
+
+	it('does not write a reply again for someone who asks to stop meanwhile, and only says goodbye', async () => {
+		const run = start();
+		const gate = held<void>();
+		const compose = vi.spyOn(run.brain, 'compose').mockImplementation(async () => {
+			await gate.promise;
+			return { messages: ['the draft'], action: 'none' };
+		});
+		try {
+			await run.message('hi');
+			await vi.advanceTimersByTimeAsync(6_000);
+			// It will start over for this one…
+			await run.message('wait');
+			// …but they ask to stop before it does
+			const goodbye = run.message('please stop messaging me');
+			gate.resolve();
+			await vi.advanceTimersByTimeAsync(MINUTE);
+			await goodbye;
+			expect(compose).toHaveBeenCalledTimes(1);
+			expect(run.conversation.send.mock.calls).toEqual([[STOP_ACK]]);
+			expect(run.store.personById(1).state).toBe('stopped');
+		} finally {
+			run.close();
+		}
+	});
+
+	it('keeps a draft it dropped owed through the halt switch, and writes the reply again after it', async () => {
+		const run = start();
+		const gate = held<void>();
+		const compose = vi.spyOn(run.brain, 'compose').mockImplementation(async () => {
+			if (compose.mock.calls.length === 1) await gate.promise;
+			return { messages: [`draft ${compose.mock.calls.length}`], action: 'none' };
+		});
+		try {
+			await run.message('hi');
+			await vi.advanceTimersByTimeAsync(6_000);
+			await run.message('wait');
+			run.halt(true);
+			gate.resolve();
+			await vi.advanceTimersByTimeAsync(2 * MINUTE);
+			// Nothing of the first draft went out, and nothing new started while halted
+			expect(run.conversation.send).not.toHaveBeenCalled();
+			expect(compose).toHaveBeenCalledTimes(1);
+			run.halt(false);
+			await vi.advanceTimersByTimeAsync(10 * MINUTE);
+			expect(sentTo(run.store)).toEqual(['draft 2']);
+			expect(run.store.personById(1).handledAt).toBe(run.store.personById(1).lastInAt);
+		} finally {
+			run.close();
+		}
+	});
+
+	it('draws the next in line in proportion to their weight: a conversation that matters goes first about two times in three', async () => {
+		// Bo rated 3 (weighs about 3.9 after a couple of minutes), Cy 1 (weighs 2); everything else is equal
+		const persona = personasOf({ test: testPersona({ settings: { pacing: { glance: { delaySeconds: [4, 60] }, interruptions: { meanMinutes: 0 }, burst: { settleSeconds: [0, 0] } } } }) }, { prompt: 'A friendly persona.' })[0]!;
+		let bo = 0;
+		const trials = 300;
+		for (let trial = 0; trial < trials; trial++) {
+			const run = start({ persona, rng: seededRng(`pick-${trial}`) });
+			const gate = held<void>();
+			const order: number[] = [];
+			vi.spyOn(run.brain, 'compose').mockImplementation(async (personId) => {
+				order.push(personId);
+				if (personId === 1) await gate.promise;
+				return { messages: [], action: 'none' };
+			});
+			try {
+				await run.message('hi', 'ana');
+				while (!order.length) await vi.advanceTimersByTimeAsync(1_000);
+				// It is on its phone with Ana: both are noticed within seconds, while her turn goes on
+				await run.message('hey', 'bo');
+				await run.message('hey', 'cy');
+				run.store.updatePerson(2, { importance: 3, importanceAt: Date.now() });
+				run.store.updatePerson(3, { importance: 1, importanceAt: Date.now() });
+				await vi.advanceTimersByTimeAsync(2 * MINUTE);
+				gate.resolve();
+				await vi.advanceTimersByTimeAsync(5_000);
+				expect(order.slice(0, 2).length).toBe(2);
+				if (order[1] === 2) bo++;
+			} finally {
+				run.close();
+			}
+			vi.useRealTimers();
+		}
+		// 0.66 expected, 0.027 a standard deviation
+		expect(bo / trials).toBeGreaterThan(0.57);
+		expect(bo / trials).toBeLessThan(0.75);
 	});
 });

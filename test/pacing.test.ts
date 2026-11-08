@@ -276,6 +276,50 @@ describe('drawIn and the shapes of drawn ranges', () => {
 	});
 });
 
+describe('the draws, as properties', () => {
+	const unit = Array.from({ length: 999 }, (_, i) => (i + 0.5) / 999);
+
+	it('never go backwards as the draw rises, in any shape, and stay within the range', () => {
+		for (const shape of ['uniform', 'normal', 'lognormal'] as const) {
+			for (const range of [[10, 30], [0, 10], [0.8, 3.5], [5, 5]] as [number, number][]) {
+				const values = unit.map((u) => drawIn(() => u, { range, shape }));
+				for (let i = 1; i < values.length; i++) expect(values[i]!, `${shape} ${range} at ${unit[i]}`).toBeGreaterThanOrEqual(values[i - 1]!);
+				expect(Math.min(...values)).toBeGreaterThanOrEqual(range[0]);
+				expect(Math.max(...values)).toBeLessThanOrEqual(range[1]);
+			}
+		}
+	});
+
+	it('skew the same way for the same draw: lognormal below normal below uniform at the low end, the median at the middle', () => {
+		const at = (shape: 'uniform' | 'normal' | 'lognormal', u: number) => drawIn(() => u, { range: [10, 90], shape });
+		// Lognormal's median is the geometric middle (30), below the arithmetic one (50) the others have
+		expect(at('lognormal', 0.5)).toBeCloseTo(30, 6);
+		expect(at('normal', 0.5)).toBeCloseTo(50, 6);
+		expect(at('uniform', 0.5)).toBeCloseTo(50, 6);
+		// And its tail runs further above its median than its head below it
+		expect(at('lognormal', 0.95) - at('lognormal', 0.5)).toBeGreaterThan(at('lognormal', 0.5) - at('lognormal', 0.05));
+	});
+
+	it('read the normal quantile as its own inverse: symmetric, increasing, and 1.96 at the 97.5th percentile', () => {
+		for (const p of unit.slice(0, 499)) expect(normalQuantile(p) + normalQuantile(1 - p)).toBeCloseTo(0, 7);
+		const z = unit.map(normalQuantile);
+		for (let i = 1; i < z.length; i++) expect(z[i]!).toBeGreaterThan(z[i - 1]!);
+		expect(normalQuantile(0.975)).toBeCloseTo(1.959964, 5);
+		expect(normalQuantile(0)).toBe(-Infinity);
+		expect(normalQuantile(1)).toBe(Infinity);
+	});
+
+	it('give a log-normal reply delay that holds its median and its 90th percentile over many draws', () => {
+		const rng = seededRng('lognormal-delays');
+		const shape = { medianSeconds: 40, p90Seconds: 150, delaySeconds: [1, 100_000] as const };
+		const draws = Array.from({ length: 20_000 }, () => skewedMs(rng, shape) / 1000).sort((a, b) => a - b);
+		expect(draws[10_000]!).toBeGreaterThan(37);
+		expect(draws[10_000]!).toBeLessThan(43);
+		expect(draws[18_000]!).toBeGreaterThan(140);
+		expect(draws[18_000]!).toBeLessThan(160);
+	});
+});
+
 describe('splitReply', () => {
 	it('sends the lines the model wrote apart, three at most', () => {
 		expect(splitReply('one\n\ntwo\nthree\nfour', seededRng('x'))).toEqual(['one', 'two', 'three four']);

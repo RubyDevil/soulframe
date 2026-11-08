@@ -6,6 +6,7 @@ import { DEFAULT_SETTINGS, HOUR, MINUTE, SettingsSchema } from '../src/settings.
 import { ScheduleSchema } from '../src/config/hours.js';
 import type { Llm, LlmMessage } from '../src/llm.js';
 import { ADULTS_ONLY_RULE, AWARE_PROMPT, BREAK_INVITE_PROMPT, dateTimeText, directMessageTimePrompt, dmCheckInput, identityPrompt, MINOR_CAUTION_PROMPT, moodText, rulesPrompt, SFW_RULE } from '../src/prompts.js';
+import { seededRng } from '../src/rng.js';
 import { MINOR_EXIT, STOP_ACK } from '../src/safety.js';
 import { addDays, parseClock, zonedToUtc } from '../src/schedule.js';
 import type { Person, Store } from '../src/store.js';
@@ -877,6 +878,31 @@ describe('persona settings, character and relationship', () => {
 		expect(await post('just a long and chatty post about late nights and good conversations with anyone')).toBe('just a long and chatty post about late…');
 		expect(await post('around today, say hi')).toBe('around today, say hi');
 		expect(await post('  ')).toBeNull();
+	});
+
+	it('obeys its rule for any run of values: up at once, down only past the margin, and always a level that exists', () => {
+		const levels = Array.from({ length: 7 }, (_, i) => ({ from: [0, 0.08, 0.18, 0.32, 0.48, 0.65, 0.82][i]!, text: `l${i}` }));
+		const margin = 0.05;
+		const luck = seededRng('levels');
+		for (let run = 0; run < 200; run++) {
+			let shown = -1;
+			let value = luck();
+			for (let step = 0; step < 40; step++) {
+				value = Math.min(1, Math.max(0, value + (luck() - 0.5) * 0.3));
+				const pure = levels.reduce((best, level, i) => (value >= level.from ? i : best), 0);
+				const next = levelIndex(levels, value, shown, margin);
+				expect(next).toBeGreaterThanOrEqual(pure);
+				expect(next).toBeLessThan(levels.length);
+				// Higher than the value deserves only by holding the level shown, which the value is within the margin of
+				if (next > pure) {
+					expect(next).toBe(shown);
+					expect(value).toBeGreaterThanOrEqual(levels[shown]!.from - margin);
+				}
+				// Never up by more than the value reaches
+				expect(next).toBeLessThanOrEqual(Math.max(pure, shown));
+				shown = next;
+			}
+		}
 	});
 
 	it('reads the level of a value, going down only past the margin', () => {
