@@ -349,7 +349,7 @@ Per persona. Unknown keys here are refused.
 | `watching.medianSeconds` | number, 0.1 to 600 | `4` | The lag before it answers while watching (also every delay on a short break, when it is on its phone anyway): half are shorter. |
 | `watching.p90Seconds` | number, 0.1 to 3600 | `8` | Nine in ten are shorter; above `medianSeconds`. |
 | `watching.delaySeconds` | range | `[2, 20]` | The shortest and longest lag. |
-| `glance.medianSeconds` | number, 1 to 3600 | `40` | Not watching: the time until it next glances at its messages. Half its glances come sooner. |
+| `glance.medianSeconds` | number, 1 to 3600 | `40` | Off its phone: the time until it next looks at its messages, drawn when the first message comes in; everyone who writes before that look is noticed at it, together. Half its looks come sooner. |
 | `glance.p90Seconds` | number, 1 to 7200 | `150` | Nine in ten come sooner; above `medianSeconds`: how long the tail is. |
 | `glance.delaySeconds` | range | `[4, 900]` | The shortest and longest of those; the least is also the shortest time a reply must still fit in its span. |
 | `interruptions.meanMinutes` | `0`, or a number from 1 to 1440 | `40` | Now and then while online (not on a short break) something takes it away from its messages: on average once every this many minutes of online time. `0` for none. |

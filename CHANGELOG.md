@@ -22,8 +22,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   after, it is on its phone (`pacing.watching`: the chance halves every `halfLifeSeconds`, default 90) and notices a
   new message from anyone after a short lag (`medianSeconds` 4, `p90Seconds` 8, within `delaySeconds` `[2, 20]`), so
   a live conversation stays live and doesn't leave anyone else waiting for its next glance. Off its phone, it notices
-  a message when it next glances at its messages (`pacing.glance`: `medianSeconds` 40, `p90Seconds` 150, within
-  `[4, 900]`); once it picks up its phone for someone's turn, whatever else was waiting is noticed too. Both delays
+  a message when it next looks at its messages (`pacing.glance`: `medianSeconds` 40, `p90Seconds` 150, within
+  `[4, 900]`), one look for everyone: whoever wrote before it is noticed at once, and picked among by weight; once it
+  picks up its phone for someone's turn, whatever else was waiting is noticed too. Both delays
   are drawn from a log-normal distribution, the skewed shape of real answer times. Whether it still has one person's
   chat open (`chatHalfLifeSeconds`, default 90) only weighs who goes first. On a short break it is on its phone.
   `reply_scheduled` logs `watching`.

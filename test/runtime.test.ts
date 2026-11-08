@@ -1623,16 +1623,35 @@ describe('attention: watching a chat, glancing, interruptions', () => {
 		}
 	});
 
-	it("notices what waited for its next glance as soon as it picks up its phone for someone's turn", async () => {
-		// rng 0.9: its next glance would come after 150 s; Bo's turn, due sooner (his message is from earlier), picks up the phone
+	it('notices everyone who wrote before its next look at its messages at once, then picks among them', async () => {
+		// rng 0.9: its next look comes 150 s after Bo's message; Ana writes 100 s in and waits for the same look
 		const { log, message, close } = start({ rng: () => 0.9 });
 		try {
 			await message('hey', 'bo');
 			await vi.advanceTimersByTimeAsync(100_000);
 			await message('hi', 'ana');
-			expect(logged(log, 'reply_scheduled').at(-1)).toMatchObject({ personId: 2, delayMs: 150_000, watching: false });
+			expect(logged(log, 'reply_scheduled').map((detail) => [detail.personId, detail.delayMs, detail.dueAt])).toEqual([
+				[1, 150_000, new Date(EVENING + 150_000).toISOString()],
+				[2, 50_000, new Date(EVENING + 150_000).toISOString()],
+			]);
 			await vi.advanceTimersByTimeAsync(60_000);
-			// Bo's turn started at 150 s: Ana's message was noticed then, after the lag (8 s, its 90th percentile)
+			expect(logged(log, 'reply_picked')[0]).toMatchObject({ among: 2 });
+		} finally {
+			close();
+		}
+	});
+
+	it("notices what waited for its next look as soon as it picks up its phone for someone's backlog turn", async () => {
+		// Bo wrote while it was offline; the span opens at 19:00, and his backlog turn starts after the gap (113.5 s) from the next tick, 19:00:20
+		const { log, message, close } = start({ now: at(18, 59, 50), rng: () => 0.9 });
+		try {
+			await message('hey', 'bo');
+			await vi.advanceTimersByTimeAsync(at(19, 0, 5) - Date.now());
+			// Ana writes once it is online: off its phone, its next look 150 s away
+			await message('hi', 'ana');
+			expect(logged(log, 'reply_scheduled').at(-1)).toMatchObject({ personId: 2, delayMs: 150_000, watching: false });
+			await vi.advanceTimersByTimeAsync(at(19, 2, 20) - Date.now());
+			// Bo's turn picked up the phone at 19:02:13, before its look at 19:02:35: Ana's message was noticed then, after the lag (8 s, its 90th percentile)
 			expect(logged(log, 'reply_scheduled').at(-1)).toMatchObject({ personId: 2, delayMs: 8_000, watching: true });
 		} finally {
 			close();
@@ -1745,8 +1764,8 @@ describe('attention: watching a chat, glancing, interruptions', () => {
 
 describe('who goes first when several are due (pacing.priority)', () => {
 	/**
-	 * Ana writes at 20:00 and her turn is held until the test lets it go; Bo writes 10 s later, Cy 20 s later. With rng
-	 * 0.6 each turn is due 52 s after their message, so Bo and Cy are both due while Ana's turn is under way.
+	 * Ana writes at 20:00 and her turn, due 52 s later (rng 0.6), is held until the test lets it go; Bo writes at 60 s,
+	 * Cy at 70 s, while it is on its phone with her: both are due within seconds, while Ana's turn is under way.
 	 */
 	const three = async ({ persona = utc.personas[0]!, decisions }: { persona?: PersonaConfig; decisions?: Decisions } = {}) => {
 		const run = start({ persona, decisions, rng: () => 0.6 });
@@ -1757,7 +1776,7 @@ describe('who goes first when several are due (pacing.priority)', () => {
 			if (personId === 1) await gate.promise;
 			return { messages: [], action: 'none' };
 		});
-		for (const [from, after] of [['ana', 0], ['bo', 10_000], ['cy', 20_000]] as const) {
+		for (const [from, after] of [['ana', 0], ['bo', 60_000], ['cy', 70_000]] as const) {
 			await vi.advanceTimersByTimeAsync(EVENING + after - Date.now());
 			await run.message('hi', from);
 		}

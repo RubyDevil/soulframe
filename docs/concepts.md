@@ -149,8 +149,9 @@ delivers:
   while after, it is on its phone (`pacing.watching`: the chance starts at 1 and halves every 90 seconds by default),
   and a new message from anyone is noticed after a short lag: a live conversation with one person doesn't leave
   another waiting for its next glance (they still wait for the reply under way, one person at a time). Otherwise it
-  notices a message when it next glances at its messages, and once it picks up its phone for someone's turn it
-  notices whatever else was waiting (`pacing.glance`: skewed like
+  notices a message when it next looks at its messages, one look for everyone: whoever wrote before it is noticed
+  then, together, and picked among by weight; and once it picks up its phone for someone's turn it notices whatever
+  else was waiting (`pacing.glance`: skewed like
   real answer times, around a median of 40 seconds by default, a few taking minutes). On a `break` it is on its phone: only the short lag. A turn is always due at least
   90 seconds before its span ends.
 - **Interruptions.** Now and then while online, something takes it away from its messages for a few minutes

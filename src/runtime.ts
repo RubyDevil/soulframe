@@ -4,7 +4,7 @@ import { unhandled, type Brain, type Decision, type PersonAction, type Turn } fr
 import type { Channel, ChannelId } from './channel.js';
 import { LlmBudgetError, ModelNotConfiguredError, ProviderUnavailableError } from './llm.js';
 import type { PersonaConfig } from './config/personas.js';
-import { betweenMessagesMs, drawIn, fitDelay, interruptionAt, quietMs, readingMs, replyDelay, typingPlan, watchingChance, watchingMs, type Interruption } from './pacing.js';
+import { betweenMessagesMs, drawIn, fitDelay, glanceMs, interruptionAt, quietMs, readingMs, typingPlan, watchingChance, watchingMs, type Interruption } from './pacing.js';
 import { between, sleep, weightedPick, type Rng } from './rng.js';
 import { nextSpan, spanAt, type Hours, type Span } from './schedule.js';
 import { MINUTE, SECOND } from './settings.js';
@@ -181,6 +181,12 @@ export function createReplyQueue({
 	const pendingWhy = new Map<number, { why: 'pacing' | 'retry' | 'backlog'; at: number; conversation: Conversation }>();
 	/** When its last turn with anyone ended: while that is recent it is on its phone (`pacing.watching`). */
 	let lastActive: number | undefined;
+	/**
+	 * Off its phone, its next look at its messages (`pacing.glance`): one for everyone, drawn when the first message comes
+	 * in, and everyone who wrote before it is noticed then, together; with its timer, and who waits for it.
+	 */
+	let nextGlance: { at: number; timer: NodeJS.Timeout } | null = null;
+	const glancing = new Map<number, Conversation>();
 	/** When each person due first came due, kept while they write again: how long they waited (`pacing.priority`). */
 	const firstDue = new Map<number, number>();
 	/** The backlog turn in progress (one at a time), and the start of the span it was taken in. */
@@ -212,7 +218,7 @@ export function createReplyQueue({
 	const holder = (now: number) => {
 		const { holdAtImportance, calmMinutes } = pacing.interruptions;
 		if (holdAtImportance > 3) return null;
-		const soon = [...pending.keys()].filter((personId) => pendingWhy.get(personId)?.why !== 'retry');
+		const soon = [...[...pending.keys()].filter((personId) => pendingWhy.get(personId)?.why !== 'retry'), ...glancing.keys()];
 		const coming = new Set([...active.keys(), ...ready.keys(), ...settling.keys(), ...soon]);
 		for (const [personId, last] of lastWith) if (now - last < calmMinutes * MINUTE) coming.add(personId);
 		for (const personId of coming) {
@@ -435,7 +441,7 @@ export function createReplyQueue({
 	};
 
 	/** A turn that is due: while a span is open on its channel, ready once they stopped writing; else back into the backlog. */
-	const due = (personId: number, conversation: Conversation) => {
+	const due = (personId: number, conversation: Conversation, startNext = true) => {
 		pending.delete(personId);
 		if (runtime.halted()) return haltPark(personId, conversation);
 		if (!spanAt(persona, runtime.now(), conversation.channel.id)) return park(personId, conversation, 'offline');
@@ -455,6 +461,15 @@ export function createReplyQueue({
 		}
 		// An earlier turn of theirs is still under way (stuck): the backlog moves on meanwhile
 		if (active.has(personId)) release(personId);
+		if (startNext) next();
+	};
+
+	/** It looks at its messages: everyone who waited for this look is noticed at once, then the next turn is picked among them. */
+	const glance = () => {
+		nextGlance = null;
+		const noticed = [...glancing];
+		glancing.clear();
+		for (const [personId, conversation] of noticed) due(personId, conversation, false);
 		next();
 	};
 
@@ -517,6 +532,12 @@ export function createReplyQueue({
 	 */
 	const noticeWaiting = (answering: number) => {
 		const now = runtime.now();
+		// The look it was going to take is this one
+		if (nextGlance) clearTimeout(nextGlance.timer);
+		nextGlance = null;
+		const looking = [...glancing].filter(([personId]) => personId !== answering);
+		glancing.clear();
+		for (const [personId, conversation] of looking) timeReply(personId, conversation, watchingMs(runtime.rng, pacing), 'pacing', true);
 		for (const [personId, { why, at, conversation }] of pendingWhy) {
 			if (why !== 'pacing' || personId === answering || !pending.has(personId)) continue;
 			const lag = watchingMs(runtime.rng, pacing);
@@ -766,7 +787,7 @@ export function createReplyQueue({
 	};
 
 	/** Their turn is already coming: timed, due, or in the backlog. */
-	const queued = (personId: number) => pending.has(personId) || waiting.has(personId) || settling.has(personId) || ready.has(personId);
+	const queued = (personId: number) => pending.has(personId) || glancing.has(personId) || waiting.has(personId) || settling.has(personId) || ready.has(personId);
 
 	/**
 	 * Times their turn: after `delay` when given (a retry), else as pacing says while a span is open on their channel, else
@@ -796,11 +817,17 @@ export function createReplyQueue({
 		if (!span) return park(personId, conversation, 'offline');
 		// On its phone while it writes a reply to anyone, and for a while after, unless it was away since; on a short break it is on it anyway
 		const since = occupied() ? 0 : lastActive !== undefined && !awaySince(lastActive) ? now - lastActive : null;
-		const timing = span.kind === 'break' ? { ms: watchingMs(runtime.rng, pacing), watching: true } : replyDelay(runtime.rng, since, pacing);
-		// Always due before the span ends
-		const wait = fitDelay(timing.ms, span.end - SPAN_END_MARGIN - now, pacing.glance.delaySeconds[0] * SECOND);
-		if (wait === null) park(personId, conversation, 'span_ending');
-		else timeReply(personId, conversation, wait, 'pacing', timing.watching);
+		const onPhone = span.kind === 'break' || (since !== null && runtime.rng() < watchingChance(since, pacing));
+		// Off it, they wait for its next look, which everyone shares: drawn now unless one is coming
+		const glanceAt = onPhone ? null : (nextGlance?.at ?? now + glanceMs(runtime.rng, pacing));
+		const ms = glanceAt === null ? watchingMs(runtime.rng, pacing) : glanceAt - now;
+		// Always due before the span ends: one its look would come too late for gets a time of its own
+		const wait = fitDelay(ms, span.end - SPAN_END_MARGIN - now, pacing.glance.delaySeconds[0] * SECOND);
+		if (wait === null) return park(personId, conversation, 'span_ending');
+		if (glanceAt === null || wait < ms || stopped) return timeReply(personId, conversation, wait, 'pacing', onPhone);
+		if (!nextGlance) nextGlance = { at: glanceAt, timer: setTimeout(glance, ms) };
+		glancing.set(personId, conversation);
+		runtime.log(persona.id, 'reply_scheduled', { personId, platform: conversation.channel.id, delayMs: Math.round(ms), dueAt: new Date(glanceAt).toISOString(), reason: 'pacing', watching: false });
 	};
 
 	return {
@@ -827,6 +854,7 @@ export function createReplyQueue({
 				for (const resolve of entry?.ended ?? []) resolve();
 				clearTimeout(pending.get(personId));
 				pending.delete(personId);
+				glancing.delete(personId);
 				firstDue.delete(personId);
 				// A backlog turn it cancelled lets the next one start (one under way does as it ends)
 				if (!active.has(personId)) release(personId);
@@ -869,6 +897,9 @@ export function createReplyQueue({
 			clearInterval(tick);
 			clearTimeout(lease);
 			clearTimeout(comeback);
+			if (nextGlance) clearTimeout(nextGlance.timer);
+			nextGlance = null;
+			glancing.clear();
 			for (const timer of pending.values()) clearTimeout(timer);
 			pending.clear();
 			// A turn waiting for someone's quiet goes on, to find the queue stopped
