@@ -1,11 +1,35 @@
 import { between, seededRng, type Rng } from './rng.js';
 import { addDays, agendaOn, localDateOf, type Hours, type LocalDate } from './schedule.js';
-import { DEFAULT_SETTINGS, MINUTE, SECOND, type Settings } from './settings.js';
+import { DEFAULT_SETTINGS, MINUTE, SECOND, type Settings, type Shape } from './settings.js';
 
 type Pacing = Settings['pacing'];
 
-/** Whole milliseconds drawn in a range of seconds. */
-const msIn = (rng: Rng, [from, to]: readonly [number, number]) => Math.round(between(rng, from * SECOND, to * SECOND));
+/** A drawn range of a setting (settings.ts `drawn`): its least and most, and the shape of its draws. */
+export interface Drawn {
+	range: readonly [number, number];
+	shape: Shape;
+}
+
+/**
+ * A value drawn from `range` with its `shape`, in the range's own unit, always within it, from one draw of `rng` (0 the
+ * least, as close to 1 as it goes the most): `uniform` evenly; `normal` centred on the middle, a quarter of the range
+ * per standard deviation (about 95% inside, the rest at the ends); `lognormal` with its median at the geometric middle
+ * of the range (from a tenth of the most when the least is 0) and the same spread on a log scale, so most are near a
+ * typical value and a few reach the most.
+ */
+export function drawIn(rng: Rng, { range: [least, most], shape }: Drawn): number {
+	const u = rng();
+	if (shape === 'uniform' || most <= least) return least + u * (most - least);
+	const z = normalQuantile(u);
+	const within = (value: number) => Math.min(most, Math.max(least, value));
+	if (shape === 'normal') return within((least + most) / 2 + ((most - least) / 4) * z);
+	const low = least > 0 ? least : most / 10;
+	const median = Math.sqrt(low * most);
+	return within(median * Math.exp((Math.log(most / median) / 1.959963984540054) * z));
+}
+
+/** Whole milliseconds drawn from a range of seconds. */
+const msIn = (rng: Rng, spec: Drawn) => Math.round(drawIn(rng, spec) * SECOND);
 
 /** A draw of a memoryless clock with this mean: most come soon, a few take a while (an exponential distribution). */
 const memoryless = (rng: Rng, mean: number) => -Math.log(1 - rng()) * mean;
@@ -91,7 +115,7 @@ export function interruptionsOn(hours: Hours, date: LocalDate, pacing: Pacing = 
 	const found: Interruption[] = [];
 	for (const online of onlineTimeOf(hours, date)) {
 		for (let at = online.start + memoryless(rng, meanMinutes * MINUTE); at < online.end; ) {
-			const end = Math.min(online.end, at + between(rng, ...minutes) * MINUTE);
+			const end = Math.min(online.end, at + drawIn(rng, minutes) * MINUTE);
 			found.push({ start: Math.round(at), end: Math.round(end) });
 			at = end + memoryless(rng, meanMinutes * MINUTE);
 		}
@@ -110,14 +134,14 @@ export const interruptionAt = (hours: Hours, at: number, pacing: Pacing = DEFAUL
 	pacing.interruptions.meanMinutes > 0 ? (interruptionsNear(hours, at, pacing).find((away) => away.start <= at && at < away.end) ?? null) : null;
 
 /** The quiet it waits for after someone's newest message before it starts the reply (`pacing.burst.settleSeconds`); 0, and no draw, when there is none. */
-export const quietMs = (rng: Rng, pacing: Pacing = DEFAULT_SETTINGS.pacing) => (pacing.burst.settleSeconds[1] > 0 ? msIn(rng, pacing.burst.settleSeconds) : 0);
+export const quietMs = (rng: Rng, pacing: Pacing = DEFAULT_SETTINGS.pacing) => (pacing.burst.settleSeconds.range[1] > 0 ? msIn(rng, pacing.burst.settleSeconds) : 0);
 
 /** The delay, cut to the `leftMs` its span has left; null when not even `floorMs` fits (it waits for the next span). */
 export const fitDelay = (delayMs: number, leftMs: number, floorMs: number): number | null => (leftMs < floorMs ? null : Math.min(delayMs, leftMs));
 
 /** How long the typing indicator shows for a message: proportional to its length, within `typingDurationSeconds`. */
 export function typingMs(text: string, rng: Rng, pacing: Pacing = DEFAULT_SETTINGS.pacing): number {
-	const charsPerSecond = between(rng, ...pacing.typingCharsPerSecond);
+	const charsPerSecond = drawIn(rng, pacing.typingCharsPerSecond);
 	const ms = (text.length / charsPerSecond) * SECOND + between(rng, 400, 1500);
 	return Math.round(Math.min(pacing.typingDurationSeconds[1] * SECOND, Math.max(pacing.typingDurationSeconds[0] * SECOND, ms)));
 }
@@ -142,7 +166,7 @@ export function typingPlan(text: string, rng: Rng, pacing: Pacing = DEFAULT_SETT
  */
 export function readingMs(chars: number, rng: Rng, pacing: Pacing = DEFAULT_SETTINGS.pacing): number {
 	if (chars <= 0) return 0;
-	const ms = (chars / between(rng, ...pacing.readingCharsPerSecond)) * SECOND;
+	const ms = (chars / drawIn(rng, pacing.readingCharsPerSecond)) * SECOND;
 	return Math.round(Math.min(pacing.readingDurationSeconds[1] * SECOND, Math.max(pacing.readingDurationSeconds[0] * SECOND, ms)));
 }
 

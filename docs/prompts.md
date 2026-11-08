@@ -959,7 +959,7 @@ not instructions)". Everything else is inserted as it is, without quotes or deli
 
 ## What switches parts on and off
 
-### `settings.context` (settings.ts:381-397)
+### `settings.context` (settings.ts:410-426)
 
 "false leaves that text out of the prompt, and nothing else changes". All default to `true`.
 
@@ -973,7 +973,7 @@ not instructions)". Everything else is inserted as it is, without quotes or deli
 
 With `situation`, `upcoming` and (in a DM turn) the away line all absent, `AWARE_PROMPT` goes too.
 
-### `settings.memory` (settings.ts:202-252)
+### `settings.memory` (settings.ts:225-275)
 
 - `personNotes` (280), `selfNotes` (800): the numbers in the answer format's notes and self lines.
 - `historyMessages` (20): how many `user` and `assistant` messages follow a DM turn's system prompt.
@@ -982,11 +982,11 @@ With `situation`, `upcoming` and (in a DM turn) the away line all absent, `AWARE
   steps and fading, and the hysteresis margin; `affinity.enabled: false` takes affinity out of the answer format and
   the relationship line.
 
-### `settings.models` (settings.ts:100-109)
+### `settings.models` (settings.ts:123-132)
 
 The model, provider, `maxTokens`, `temperature` and `jsonMode` per task. No text changes.
 
-### `settings.decisions` (settings.ts:121-199)
+### `settings.decisions` (settings.ts:144-222)
 
 Off by default (`enabled: false`). When on:
 

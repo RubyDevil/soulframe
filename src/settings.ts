@@ -22,6 +22,29 @@ export const range = (min: number, max: number, floor = 0) =>
 		.refine(([low, high]) => low <= high, 'the first number must not be above the second');
 
 /**
+ * How the values of a drawn range spread between its least and its most: `uniform`, any value as likely as any other;
+ * `normal`, most near the middle (a bell curve, about 95% inside the range), for a speed someone keeps close to;
+ * `lognormal`, skewed like the times people take (most near a typical value, a few much longer), its median the
+ * geometric middle of the range (pacing.ts drawIn).
+ */
+export const SHAPES = ['uniform', 'normal', 'lognormal'] as const;
+export type Shape = (typeof SHAPES)[number];
+
+/**
+ * A range a value is drawn from each time, with the shape of its draws: `[least, most]` keeps this setting's own shape,
+ * `{ range: [least, most], shape }` sets it. Read as `{ range, shape }` either way.
+ */
+export const drawn = (min: number, max: number, shape: Shape, floor = 0) => {
+	const pair = z
+		.tuple([z.number().min(floor), z.number().min(floor)])
+		.refine(([low, high]) => low <= high, 'the first number must not be above the second');
+	return z
+		.union([pair, z.object({ range: pair, shape: z.enum(SHAPES).default(shape) }).strict()])
+		.default([min, max])
+		.transform((value): { range: [number, number]; shape: Shape } => (Array.isArray(value) ? { range: value, shape } : value));
+};
+
+/**
  * A probability up to 1 at or above which a check acts. The floor (0.3 unless given) keeps one mistyped
  * value from making a check hit everyone: at 0, even a probability of 0 would count.
  */
@@ -302,7 +325,7 @@ export const SettingsSchema = z
 						/** Minutes of online time between two, on average (they come at random moments: a memoryless clock); 0 for none. */
 						meanMinutes: z.number().min(0).max(1440).default(40),
 						/** How long each lasts, in minutes (never past the end of its span). */
-						minutes: range(2, 8),
+						minutes: drawn(2, 8, 'lognormal'),
 						/**
 						 * The importance (0 small talk to 3 something that matters a lot) at or above which a conversation holds an
 						 * interruption off: 2, something personal, by default; 4 never holds one off.
@@ -330,11 +353,11 @@ export const SettingsSchema = z
 					.strict()
 					.default({}),
 				/** Typing speed, in characters per second; the typing indicator shows for as long as the message would take. */
-				typingCharsPerSecond: range(3.5, 7, 0.5),
+				typingCharsPerSecond: drawn(3.5, 7, 'normal', 0.5),
 				/** The shortest and longest the typing indicator shows for one message, in seconds (thinking pauses come on top). */
 				typingDurationSeconds: range(1.5, 45),
 				/** Reading speed, in characters per second: before it types, it spends as long as it takes to read what they wrote (the unread messages together). */
-				readingCharsPerSecond: range(15, 25, 1),
+				readingCharsPerSecond: drawn(15, 25, 'normal', 1),
 				/** The shortest and longest the reading takes, in seconds. */
 				readingDurationSeconds: range(1, 20),
 				/** Pauses while typing a long message: the indicator goes off a moment, as when someone stops to think, then on again. */
@@ -347,7 +370,7 @@ export const SettingsSchema = z
 						/** The most pauses in one message. */
 						max: z.number().int().min(1).max(3).default(2),
 						/** How long each pause lasts, typing off. */
-						seconds: range(2, 6),
+						seconds: drawn(2, 6, 'lognormal'),
 					})
 					.strict()
 					.default({}),
@@ -358,7 +381,7 @@ export const SettingsSchema = z
 				burst: z
 					.object({
 						/** Seconds of quiet after their newest message before it starts writing the reply; a message in that time starts the wait again. [0, 0] for none. */
-						settleSeconds: range(2, 5),
+						settleSeconds: drawn(2, 5, 'lognormal'),
 						/** The most messages that may start the wait again; past them it starts writing anyway, so someone who never stops still gets a reply. */
 						maxSettleResets: z.number().int().min(0).max(20).default(3),
 						/**
@@ -372,13 +395,13 @@ export const SettingsSchema = z
 					.strict()
 					.default({}),
 				/** Seconds between two messages of the same reply. */
-				betweenReplyMessagesSeconds: range(0.8, 3.5),
+				betweenReplyMessagesSeconds: drawn(0.8, 3.5, 'lognormal'),
 				/** Chance that a long reply (over 90 characters) is sent as two messages. */
 				replySplitChance: z.number().min(0).max(1).default(0.35),
 				/** Extra minutes after a span opens, before the first backlog reply of that span; [0, 0] disables the extra wait. */
-				returnOnlineReplyDelayMinutes: range(0, 0),
+				returnOnlineReplyDelayMinutes: drawn(0, 0, 'lognormal'),
 				/** Seconds before each backlog conversation: messages that came in offline are answered one person at a time, oldest first. */
-				backlogGapSeconds: range(30, 150),
+				backlogGapSeconds: drawn(30, 150, 'lognormal'),
 			})
 			.strict()
 			.default({}),
@@ -408,7 +431,7 @@ export const SettingsSchema = z
 				/** Failed tries at one answer before giving up (the person can write again); a spent budget or a provider outage counts none. */
 				attempts: z.number().int().min(1).max(10).default(3),
 				/** Minutes before the next try (times the attempt number); while the provider is down, doubled after each try, up to 16 times. */
-				delayMinutes: range(1, 4),
+				delayMinutes: drawn(1, 4, 'uniform'),
 				/** While the day's tokens are spent, minutes between checks. */
 				budgetCheckMinutes: z.number().min(1).default(60),
 			})

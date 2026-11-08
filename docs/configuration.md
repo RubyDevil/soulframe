@@ -207,8 +207,25 @@ A mood is a string of 1 to 80 characters (weight 1) or `{ mood, weight }`, `weig
 Every setting has a default; leave out what you don't change. Settings never hold secrets, only the names of the
 environment variables that hold them (`apiKeyEnv`): your code reads them (`apiKeyOf`).
 
-A **range** is `[least, most]`, two numbers at or above its floor (0 unless noted), the first not above the second; a
-random value between them is picked each time.
+A **range** is `[least, most]`, two numbers at or above its floor (0 unless noted), the first not above the second.
+Where it is a limit (`typingDurationSeconds`, `glance.delaySeconds`, …) a value is kept inside it; where a value is
+**drawn** from it each time (a **drawn range** below), the draws also have a **shape**:
+
+- `uniform`: any value as likely as any other;
+- `normal`: most near the middle, a bell curve with about 95% of the draws inside the range (the rest at its ends): for
+  a speed someone keeps close to (typing, reading);
+- `lognormal`: skewed like the time people take, most near a typical value (the geometric middle of the range, from a
+  tenth of the most when the least is 0) and a few out to the most: for waits and pauses.
+
+`[least, most]` keeps the setting's own shape (given with its default below); `{ range: [least, most], shape: normal }`
+sets one:
+
+```yaml
+settings:
+  pacing:
+    backlogGapSeconds: [20, 90]                              # still lognormal
+    typingCharsPerSecond: { range: [4, 8], shape: uniform }
+```
 
 ### `llm`
 
@@ -335,28 +352,28 @@ Per persona. Unknown keys here are refused.
 | `glance.p90Seconds` | number, 1 to 7200 | `150` | Nine in ten come sooner; above `medianSeconds`: how long the tail is. |
 | `glance.delaySeconds` | range | `[4, 900]` | The shortest and longest of those; the least is also the shortest time a reply must still fit in its span. |
 | `interruptions.meanMinutes` | number, 0 to 1440 | `40` | Now and then while online (not on a short break) something takes it away from its messages: on average once every this many minutes of online time. `0` for none. |
-| `interruptions.minutes` | range | `[2, 8]` | How long each lasts. |
+| `interruptions.minutes` | drawn range, lognormal | `[2, 8]` | How long each lasts. |
 | `interruptions.holdAtImportance` | number, 0 to 4 | `2` | A conversation whose importance is at least this (0 small talk, 1 ordinary, 2 personal, 3 matters a lot) holds an interruption off while it goes on; `4` never holds one off. |
 | `interruptions.calmMinutes` | number, 0.5 to 120 | `5` | Minutes without an exchange after which such a conversation has calmed down: a held interruption comes then, for the time it had left (never past the end of its online time). Unknown keys under `watching`, `glance` and `interruptions` are refused too. |
 | `priority.weighted` | boolean | `true` | When several are due at once: picked at random by weight (closeness, how much their conversation matters now, whether it still watches their chat, how long they waited). `false`: in the order they came due. |
 | `priority.agingMinutes` | number, 0.1 to 120 | `2` | Minutes of waiting that add their whole weight again (1 + waited / agingMinutes): nobody waits forever. |
 | `priority.importanceHalfLifeMinutes` | number, 1 to 1440 | `30` | Minutes over which the importance of their conversation fades halfway back to an ordinary chat's. |
-| `typingCharsPerSecond` | range, floor 0.5 | `[3.5, 7]` | The typing indicator shows for as long as the message would take. |
+| `typingCharsPerSecond` | drawn range, floor 0.5, normal | `[3.5, 7]` | The typing indicator shows for as long as the message would take. |
 | `typingDurationSeconds` | range | `[1.5, 45]` | The shortest and longest typing time for one message (thinking pauses come on top). |
-| `readingCharsPerSecond` | range, floor 1 | `[15, 25]` | How fast it reads: before typing it waits as long as their unread messages (together) take to read, with or without a `markRead` receipt (see [channels](./channels.md#typing-read-receipts-and-thinking-pauses)). |
+| `readingCharsPerSecond` | drawn range, floor 1, normal | `[15, 25]` | How fast it reads: before typing it waits as long as their unread messages (together) take to read, with or without a `markRead` receipt (see [channels](./channels.md#typing-read-receipts-and-thinking-pauses)). |
 | `readingDurationSeconds` | range | `[1, 20]` | The shortest and longest that reading takes. |
 | `thinkingPauses.chance` | number, 0 to 1 | `0` | The chance of each pause while a long message is typed (typing off a moment, then on again); `0`: none. |
 | `thinkingPauses.minChars` | integer, 1 or more | `120` | The shortest message, in characters, that may have a pause. |
 | `thinkingPauses.max` | integer, 1 to 3 | `2` | The most pauses in one message. |
-| `thinkingPauses.seconds` | range | `[2, 6]` | How long each pause lasts; it adds to the typing time. Unknown keys under `thinkingPauses` are refused too. |
-| `burst.settleSeconds` | range | `[2, 5]` | Quiet after their newest message before it starts writing the reply: a message in that time starts the wait again. `[0, 0]` for none. |
+| `thinkingPauses.seconds` | drawn range, lognormal | `[2, 6]` | How long each pause lasts; it adds to the typing time. Unknown keys under `thinkingPauses` are refused too. |
+| `burst.settleSeconds` | drawn range, lognormal | `[2, 5]` | Quiet after their newest message before it starts writing the reply: a message in that time starts the wait again. `[0, 0]` for none. |
 | `burst.maxSettleResets` | integer, 0 to 20 | `3` | The most messages that may start that wait again; past them it starts writing anyway. |
 | `burst.restartOnNewMessage` | boolean | `true` | A message that comes in while it writes the reply, before the reply's first message is sent, drops the draft: it is written again with that message read. `false`: that message gets a turn of its own once this one is sent. |
 | `burst.maxRestarts` | integer, 1 to 5 | `1` | The most times in a row one reply may be written again so. Each dropped draft was paid for (a whole DM turn of tokens): `personaWarnings` warns above 1. Unknown keys under `burst` are refused too. |
-| `betweenReplyMessagesSeconds` | range | `[0.8, 3.5]` | Between two messages of the same reply. |
+| `betweenReplyMessagesSeconds` | drawn range, lognormal | `[0.8, 3.5]` | Between two messages of the same reply. |
 | `replySplitChance` | number, 0 to 1 | `0.35` | Chance that a single reply over 90 characters is sent as two messages. |
-| `returnOnlineReplyDelayMinutes` | range | `[0, 0]` | Extra wait after a span opens, before its first backlog reply; `[0, 0]` for none. |
-| `backlogGapSeconds` | range | `[30, 150]` | Before each backlog conversation. |
+| `returnOnlineReplyDelayMinutes` | drawn range, lognormal | `[0, 0]` | Extra wait after a span opens, before its first backlog reply; `[0, 0]` for none. |
+| `backlogGapSeconds` | drawn range, lognormal | `[30, 150]` | Before each backlog conversation. |
 
 How a persona types is its own, like the rest of `pacing`: a quick typist gets `typingCharsPerSecond: [6, 9]` in its
 file, a slow and careful one `[2.5, 4]` with a few thinking pauses:
@@ -428,7 +445,7 @@ Per persona.
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `attempts` | integer, 1 to 10 | `3` | Failed tries at one answer before giving up (the person can write again). A spent budget or a provider outage counts none. |
-| `delayMinutes` | range | `[1, 4]` | Before the next try, times the attempt number; through an outage, doubled after each try, up to 16 times. |
+| `delayMinutes` | drawn range, uniform | `[1, 4]` | Before the next try, times the attempt number; through an outage, doubled after each try, up to 16 times. |
 | `budgetCheckMinutes` | number, 1 or more | `60` | While the day's tokens are spent, minutes between checks. |
 
 ## Errors and warnings

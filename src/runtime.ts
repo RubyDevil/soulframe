@@ -4,7 +4,7 @@ import { unhandled, type Brain, type Decision, type PersonAction, type Turn } fr
 import type { Channel, ChannelId } from './channel.js';
 import { LlmBudgetError, ModelNotConfiguredError, ProviderUnavailableError } from './llm.js';
 import type { PersonaConfig } from './config/personas.js';
-import { betweenMessagesMs, fitDelay, interruptionAt, quietMs, readingMs, replyDelay, typingPlan, watchingChance, watchingMs, type Interruption } from './pacing.js';
+import { betweenMessagesMs, drawIn, fitDelay, interruptionAt, quietMs, readingMs, replyDelay, typingPlan, watchingChance, watchingMs, type Interruption } from './pacing.js';
 import { between, sleep, weightedPick, type Rng } from './rng.js';
 import { nextSpan, spanAt, type Hours, type Span } from './schedule.js';
 import { MINUTE, SECOND } from './settings.js';
@@ -644,14 +644,14 @@ export function createReplyQueue({
 			const waits = providerWaits.get(personId) ?? 0;
 			providerWaits.set(personId, waits + 1);
 			runtime.log(persona.id, 'reply_waiting_provider', { personId, error: String(error) });
-			return schedule(personId, conversation, between(runtime.rng, ...retries.delayMinutes) * MINUTE * Math.min(2 ** waits, 16));
+			return schedule(personId, conversation, drawIn(runtime.rng, retries.delayMinutes) * MINUTE * Math.min(2 ** waits, 16));
 		}
 		const attempt = (failures.get(personId) ?? 0) + 1;
 		runtime.log(persona.id, 'reply_failed', { personId, attempt, error: String(error) });
 		const unconfigured = error instanceof ModelNotConfiguredError;
 		if (attempt < retries.attempts && !unconfigured) {
 			failures.set(personId, attempt);
-			schedule(personId, conversation, between(runtime.rng, ...retries.delayMinutes) * MINUTE * attempt);
+			schedule(personId, conversation, drawIn(runtime.rng, retries.delayMinutes) * MINUTE * attempt);
 		} else {
 			failures.delete(personId);
 			providerWaits.delete(personId);
@@ -694,8 +694,8 @@ export function createReplyQueue({
 			const span = spanAt(persona, now, conversation.channel.id);
 			if (!span) continue;
 			// The first backlog reply of a span may wait longer, as someone just back
-			const first = span.start !== drainSpanStart ? between(runtime.rng, ...pacing.returnOnlineReplyDelayMinutes) * MINUTE : 0;
-			const delay = between(runtime.rng, ...pacing.backlogGapSeconds) * SECOND + first;
+			const first = span.start !== drainSpanStart ? drawIn(runtime.rng, pacing.returnOnlineReplyDelayMinutes) * MINUTE : 0;
+			const delay = drawIn(runtime.rng, pacing.backlogGapSeconds) * SECOND + first;
 			if (now + delay > span.end - SPAN_END_MARGIN) continue;
 			waiting.delete(personId);
 			drainingId = personId;

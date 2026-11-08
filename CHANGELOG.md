@@ -55,6 +55,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **Drawn ranges have a shape.** Each setting a value is drawn from each time (typing and reading speeds, the burst
+  quiet, pauses between and inside messages, backlog gaps, interruption lengths, retry waits) is drawn `uniform`,
+  `normal` (a bell curve, about 95% inside the range) or `lognormal` (skewed like the time people take, around the
+  range's geometric middle), still within the range, from one draw. The defaults follow what each one is: speeds
+  `normal`, waits and pauses `lognormal`, retry waits `uniform`. `[least, most]` keeps a setting's own shape;
+  `{ range: [least, most], shape }` sets it. Read back as `{ range, shape }` in `Settings`.
+
 - **One person at a time, always**, with no polling: turns that came due wait in the order they came due and the first
   starts the moment the persona is free (they used to be checked again every 5 seconds, in no set order). A turn under
   way for over 10 minutes still stops holding the others back.

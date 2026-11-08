@@ -261,9 +261,9 @@ describe('SettingsSchema', () => {
 		expect(parsed.context).toEqual({ situation: true, upcoming: true, awayContext: true, relationship: true, timeSince: true });
 		expect(parsed.pacing.watching).toEqual({ halfLifeSeconds: 90, medianSeconds: 4, p90Seconds: 8, delaySeconds: [2, 20] });
 		expect(parsed.pacing.glance).toEqual({ medianSeconds: 40, p90Seconds: 150, delaySeconds: [4, 900] });
-		expect(parsed.pacing.interruptions).toEqual({ meanMinutes: 40, minutes: [2, 8], holdAtImportance: 2, calmMinutes: 5 });
-		expect(parsed.pacing.returnOnlineReplyDelayMinutes).toEqual([0, 0]);
-		expect(parsed.pacing.backlogGapSeconds).toEqual([30, 150]);
+		expect(parsed.pacing.interruptions).toEqual({ meanMinutes: 40, minutes: { range: [2, 8], shape: 'lognormal' }, holdAtImportance: 2, calmMinutes: 5 });
+		expect(parsed.pacing.returnOnlineReplyDelayMinutes).toEqual({ range: [0, 0], shape: 'lognormal' });
+		expect(parsed.pacing.backlogGapSeconds).toEqual({ range: [30, 150], shape: 'lognormal' });
 		expect(parsed.models.directMessage.maxTokens).toBe(400);
 		expect(parsed.llm).toMatchObject({ dailyTokens: 200_000, directMessageReserve: 0.3, concurrency: 4 });
 	});
