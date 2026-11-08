@@ -251,6 +251,25 @@ them (`apiKeyOf`).
 - Freeze the public API and the database layout; document the migration policy.
 - More channel adapter examples.
 
+### Planned: realism
+
+- **Interruptions with a reason, told to the model.** Each interruption gets a reason fitting how long it lasts
+  (reasons are configured with the lengths they suit, so a 3-minute absence is never "took a shower"), and the next
+  DM turn's time line says it: "You were away for 3 minutes (a phone call)", so the persona can say "sorry, got
+  pulled away" instead of carrying on as if nothing happened.
+- **Reactions instead of replies.** An optional `Conversation.react(emoji)`: where the platform has reactions, a DM
+  turn may answer "ok", "lol" or a photo with one, as it can leave a message on read now.
+- **Their typing indicator.** An optional `queue.typing(personId)` an adapter calls when the platform shows the person
+  typing: the wait for the end of their burst (`pacing.burst`) goes on while they type, so it never answers
+  mid-sentence.
+- **False starts.** Now and then typing shows, stops, and nothing is sent yet; now and then a message is read and only
+  answered a while later. Each rare, with its own setting.
+- **Typos and corrections, made by the code.** Opt-in: a sent message now and then carries a plausible typo (a
+  neighbouring key, a swapped or doubled letter), drawn by the code, never asked of the model. The queue keeps what
+  was meant: where the channel can edit a sent message (an optional `Conversation.edit`), the persona edits it back a
+  few seconds later; elsewhere it sends a short correction ("*tomorrow"), in a style the settings choose (the word
+  with an asterisk, or nothing at all).
+
 ## Contributing
 
 Issues and pull requests are welcome at
