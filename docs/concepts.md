@@ -139,9 +139,15 @@ delivers:
   a row). Nothing of a dropped draft is sent or stored: a turn's notes, block or action are kept only with the turn
   (`Turn.keep`). Too late for that (something was sent already, or the restarts are spent), the message gets a turn of
   its own once this one ends (`reply_after_turn`).
-- **Inside an open span**, a turn is timed with a random delay from `settings.pacing`: usually quick, sometimes slow,
-  now and then a long "busy" gap. On a `break` only the quick delay is used. A turn is always due at least 90 seconds
-  before its span ends.
+- **Inside an open span**, a turn is timed by what the persona is doing. Right after a turn with someone it may still
+  have their chat open (`pacing.watching`: the chance starts at 1 and halves every 90 seconds by default), and
+  answers after a short lag; otherwise it answers when it next glances at its messages (`pacing.glance`, a memoryless
+  clock: usually within a minute). On a `break` it is on its phone: only the short lag. A turn is always due at least
+  90 seconds before its span ends.
+- **Interruptions.** Now and then while online, something takes it away from its messages for a few minutes
+  (`pacing.interruptions`, drawn per day from a seed, like the agenda; `personaReport` lists today's). No turn starts
+  until it is back, a reply it was typing is finished first, and it watches no chat when it comes back. Being busy
+  with others needs no roll of its own: their turns, one at a time, are what keeps someone waiting.
 - **Otherwise it waits in the backlog.** When a span opens on its channel, the backlog is answered one person at a
   time, oldest first, with `backlogGapSeconds` before each (and `returnOnlineReplyDelayMinutes` more before the first
   one of a span).

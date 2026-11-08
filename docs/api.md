@@ -169,7 +169,7 @@ Thrown by an application that refuses a config; its message lists the issues ("`
 function describe(path: readonly (string | number)[], message: string, got: unknown): string;
 ```
 
-A problem as shown: `"settings.pacing.quickReplyChance: <message> (got 1.5)"`. `got` undefined shows no value; a long
+A problem as shown: `"settings.pacing.replySplitChance: <message> (got 1.5)"`. `got` undefined shows no value; a long
 one is cut at 40 characters.
 
 ### `suggest`
@@ -258,7 +258,7 @@ const DAY = 86_400_000;
 function diffPaths(a: unknown, b: unknown, prefix?: string): string[];
 ```
 
-The dotted paths where `b` differs from `a` (leaves and arrays compared whole), e.g. `['pacing.quickReplyChance']`.
+The dotted paths where `b` differs from `a` (leaves and arrays compared whole), e.g. `['pacing.watching.halfLifeSeconds']`.
 
 ### `isPlainObject`
 

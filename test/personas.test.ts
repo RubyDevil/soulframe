@@ -137,12 +137,14 @@ describe('settings', () => {
 	});
 
 	it("report a problem of _shared.yaml's once, there, and an unknown key with a suggestion", () => {
-		expect(issuesOf({ test: testPersona() }, { shared: { settings: { pacing: { quickReplyChanse: 0.5 }, memory: { personNotes: -1 } } } })).toEqual([
-			'_shared.yaml › settings.pacing.quickReplyChanse: unknown key (did you mean "quickReplyChance"?)',
+		expect(issuesOf({ test: testPersona() }, { shared: { settings: { pacing: { glanse: { meanSeconds: 30 } }, memory: { personNotes: -1 } } } })).toEqual([
+			'_shared.yaml › settings.pacing.glanse: unknown key (did you mean "glance"?)',
 			'_shared.yaml › settings.memory.personNotes: Number must be greater than or equal to 0 (got -1)',
 		]);
-		const pacing = { quickReplyChance: 0.8, slowReplyChance: 0.5 };
-		expect(issuesOf({ test: testPersona(), other: testPersona({ name: 'Other' }) }, { shared: { settings: { pacing } } })).toEqual(['_shared.yaml › settings.pacing: quickReplyChance and slowReplyChance add up to more than 1']);
+		const llm = { baseUrl: 'https://llm.example/v1' };
+		expect(issuesOf({ test: testPersona(), other: testPersona({ name: 'Other' }) }, { shared: { settings: { llm } } })).toEqual(
+			['directMessage', 'groupChat', 'post'].map((task) => `_shared.yaml › settings.models.${task}: no model named (set it, or settings.llm.model)`),
+		);
 	});
 
 	it("report a persona's own problem in its file, and a null of its own clears the shared value", () => {

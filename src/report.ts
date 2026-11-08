@@ -10,6 +10,7 @@ import type { PersonaConfig } from './config/personas.js';
 import { providerSet, type Llm, type LlmMessage } from './llm.js';
 import { diffPaths, valueAt } from './merge.js';
 import { moodOf } from './mood.js';
+import { interruptionsOn } from './pacing.js';
 import { clockText } from './prompts.js';
 import { addDays, agendaOn, isOn, localDateOf, nextSpan, onlineMinutesByWeekday, spanAt, weekdayOf, WEEKDAYS, type DayAgenda, type LocalDate } from './schedule.js';
 import { DAY, MINUTE, type Settings } from './settings.js';
@@ -79,7 +80,8 @@ const short = (value: unknown) => JSON.stringify(value) ?? 'undefined';
 
 /**
  * A config check's lines on one persona, after the app's header line: prompt, now (`status` in place of what its hours
- * say, when the app gives one), today, tomorrow, overrides of `shared`, models, character and today's mood.
+ * say, when the app gives one), today, tomorrow, today's interruptions (`pacing.interruptions`), overrides of `shared`,
+ * models, character and today's mood.
  */
 export function personaReport(persona: PersonaConfig, { shared, now, status }: { shared: Settings; now: number; status?: string }): string[] {
 	const today = localDateOf(now, persona.timezone);
@@ -92,6 +94,7 @@ export function personaReport(persona: PersonaConfig, { shared, now, status }: {
 		`  now: ${status ?? nowText(persona, now)}`,
 		`  today (${dayKey(today)}, ${persona.timezone}, ${offsetText(now, persona.timezone)}): ${agendaText(agendaOn(persona, today), persona.timezone)}`,
 		`  tomorrow (${dayKey(tomorrow)}): ${agendaText(agendaOn(persona, tomorrow), persona.timezone)}`,
+		`  interruptions today: ${interruptionsOn(persona, today, persona.settings.pacing).map((away) => `${clockText(away.start, persona.timezone)} to ${clockText(away.end, persona.timezone)}`).join(', ') || 'none'}`,
 		`  overrides:${overrides.length ? '' : ' none'}`,
 		...overrides.map((at) => `    ${at}: ${short(valueAt(shared, at.split('.')))} → ${short(valueAt(persona.settings, at.split('.')))}`),
 		`  models: ${Object.entries(persona.settings.models)

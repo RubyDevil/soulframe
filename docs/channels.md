@@ -307,7 +307,8 @@ DMs.
 
 The reply queue and `watchSpans` report through `runtime.log(persona, event, detail)` (the brain logs nothing: what it
 decides goes to the store's audit log). Events include `dm_received`,
-`reply_scheduled`, `reply_batched`, `reply_waiting` (in the backlog, with the next opening), `reply_processing`,
+`reply_scheduled` (with `watching`: timed as it still had their chat open), `reply_batched`, `reply_waiting` (in the
+backlog, with the next opening), `away` (an interruption, with its end), `reply_processing`,
 `reply_superseded` (a message that makes the draft start over), `reply_restarted`, `reply_after_turn` (a message that
 gets a turn of its own once this one ends),
 `dm_sent`, `reply_sent`, `reply_skipped` (left on read), `reply_failed`, `reply_waiting_budget`,

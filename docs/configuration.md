@@ -83,8 +83,8 @@ character:
       weight: 0.5
 settings:
   pacing:
-    quickReplyChance: 0.5
-    slowReplyChance: 0.4
+    glance:
+      meanSeconds: 120   # checks its messages less often than most
 ```
 
 `robin.md` holds Robin's voice and background in plain prose.
@@ -97,7 +97,7 @@ Each persona's values are built in three layers, each over the one before:
 settings defaults  →  _shared.yaml  →  <id>.yaml
 ```
 
-- **Plain objects merge key by key.** `settings.pacing.quickReplyChance` in a persona's file changes that key only.
+- **Plain objects merge key by key.** `settings.pacing.glance.meanSeconds` in a persona's file changes that key only.
 - **Lists, `[least, most]` ranges and plain values replace** what the layer below set.
 - **`null` removes** an inherited value: the key goes back to the schema's default (or to nothing).
 - **`character.boundaries` add up**: `_shared.yaml`'s first, then the persona's own, without duplicates. A persona can't
@@ -295,11 +295,12 @@ Per persona. Unknown keys here are refused.
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `quickReplyChance` | number, 0 to 1 | `0.65` | Probability of the quick delay. |
-| `slowReplyChance` | number, 0 to 1 | `0.27` | Probability of the slow delay; the rest uses the busy delay. With `quickReplyChance`, at most 1. |
-| `quickReplyDelaySeconds` | range | `[4, 45]` | Also the only delay on a short break; its least is the shortest time a reply must still fit in its span. |
-| `slowReplyDelaySeconds` | range | `[60, 240]` | |
-| `busyReplyDelaySeconds` | range | `[300, 900]` | |
+| `watching.halfLifeSeconds` | number, 1 to 3600 | `90` | After a turn with someone it may still have their chat open: the chance starts at 1 and halves every this many seconds (an interruption since ends it). |
+| `watching.replyDelaySeconds` | range | `[2, 10]` | The lag before it answers while watching; also every delay on a short break, when it is on its phone anyway. |
+| `glance.meanSeconds` | number, 1 to 3600 | `60` | Not watching: the average time until it next glances at its messages, on a memoryless clock (most glances come soon, a few take a while). |
+| `glance.delaySeconds` | range | `[4, 900]` | The shortest and longest of those; the least is also the shortest time a reply must still fit in its span. |
+| `interruptions.meanMinutes` | number, 0 to 1440 | `40` | Now and then while online (not on a short break) something takes it away from its messages: on average once every this many minutes of online time. `0` for none. |
+| `interruptions.minutes` | range | `[2, 8]` | How long each lasts. Unknown keys under `watching`, `glance` and `interruptions` are refused too. |
 | `typingCharsPerSecond` | range, floor 0.5 | `[3.5, 7]` | The typing indicator shows for as long as the message would take. |
 | `typingDurationSeconds` | range | `[1.5, 45]` | The shortest and longest typing time for one message (thinking pauses come on top). |
 | `readingCharsPerSecond` | range, floor 1 | `[15, 25]` | How fast it reads: before typing it waits as long as their unread messages (together) take to read, with or without a `markRead` receipt (see [channels](./channels.md#typing-read-receipts-and-thinking-pauses)). |
@@ -327,6 +328,23 @@ settings:
     thinkingPauses:
       chance: 0.4
       seconds: [3, 8]
+```
+
+How soon it answers depends on what it is doing, not on a roll per message. Right after a turn with someone it may
+still have their chat open: a quick back-and-forth gets answers within seconds (`watching`), and the longer they take
+to write back, the likelier it put the phone down. Not watching, it answers when it next glances at its messages
+(`glance`): usually within a minute, now and then a few. Now and then something takes it away for a few minutes
+(`interruptions`, drawn per day from a seed like the agenda, and listed by the config check): nobody's turn starts
+then (one it is typing is finished first), and it watches no chat when it comes back.
+
+```yaml
+settings:
+  pacing:
+    watching:
+      halfLifeSeconds: 180    # stays on a chat longer
+    interruptions:
+      meanMinutes: 20         # easily distracted
+      minutes: [1, 4]
 ```
 
 A persona answers one person at a time, always: while it writes or sends a reply to someone, the others' turns wait,
@@ -383,7 +401,7 @@ What is valid but probably wrong is not their concern: [`personaWarnings`](#chec
 Each issue names its file and path, and the value it got when that helps:
 
 ```text
-robin.yaml › settings.pacing.quickReplyChance: Number must be less than or equal to 1 (got 1.5)
+robin.yaml › settings.pacing.replySplitChance: Number must be less than or equal to 1 (got 1.5)
 robin.yaml › settings.pacng: not a setting (did you mean "pacing"?)
 robin.yaml › settings.llm: cannot be set per persona: the text provider and its daily cap are shared (a persona may name its own models in settings.models)
 robin.yaml › schedule.days: no plan for sat, sun (add them, or "sat,sun: {}" for days with nothing)

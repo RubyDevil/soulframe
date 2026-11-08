@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { AWARE_PROMPT } from '../src/prompts.js';
+import { interruptionsOn } from '../src/pacing.js';
+import { AWARE_PROMPT, clockText } from '../src/prompts.js';
 import { personaReport, personaWarnings, samplePrompt } from '../src/report.js';
 import { DEFAULT_SETTINGS } from '../src/settings.js';
 import { NOTED_DM, personasOf, TEST_IDENTITY, TEST_POLICY, TEST_STYLE, testPersona } from './fixtures.js';
@@ -21,6 +22,15 @@ const nowOf = (fields: Record<string, unknown>) => reportOf(fields).find((line) 
 const agendaOf = (fields: Record<string, unknown>) => reportOf(fields).filter((line) => /^ {2}(today|tomorrow) /.test(line));
 
 describe('the report on a persona', () => {
+	it("lists today's interruptions, as the queue meets them", () => {
+		const lineOf = (fields: Record<string, unknown>) => reportOf(fields).find((line) => line.startsWith('  interruptions today: '));
+		const own = persona({ window: evening });
+		const today = interruptionsOn(own, { year: 2026, month: 11, day: 5 }, own.settings.pacing);
+		expect(today.length).toBeGreaterThan(0);
+		expect(lineOf({ window: evening })).toBe(`  interruptions today: ${today.map((away) => `${clockText(away.start, 'UTC')} to ${clockText(away.end, 'UTC')}`).join(', ')}`);
+		expect(lineOf({ window: evening, settings: { pacing: { interruptions: { meanMinutes: 0 } } } })).toBe('  interruptions today: none');
+	});
+
 	it("shows today's and tomorrow's agenda", () => {
 		expect(agendaOf({ window: { start: ['19:00', '19:00'], end: ['01:30', '01:30'] } })).toEqual(['  today (thu, UTC, UTC): online 7:00 PM to 1:30 AM', '  tomorrow (fri): online 7:00 PM to 1:30 AM']);
 		expect(agendaOf({ window: { ...evening, skipDayChance: 0.9 } })).toEqual(['  today (thu, UTC, UTC): skipped', '  tomorrow (fri): skipped']);

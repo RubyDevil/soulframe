@@ -18,6 +18,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `reply_superseded`, `reply_restarted` and `reply_after_turn`.
 - `Turn.keep()`: stores what a DM turn wrote and decided (its notes on the person and on itself, a block, an action),
   once; the reply queue calls it when it keeps the turn, never for a dropped draft.
+- **It answers by what it is doing, not by a roll per message.** Right after a turn with someone it may still have
+  their chat open (`pacing.watching`: the chance halves every `halfLifeSeconds`, default 90) and answers after
+  `replyDelaySeconds` (default `[2, 10]`), so a quick back-and-forth stays live. Not watching, it answers when it next
+  glances at its messages (`pacing.glance`: a memoryless clock with `meanSeconds` 60, within `delaySeconds`
+  `[4, 900]`). On a short break it answers as if watching. `reply_scheduled` logs `watching`.
+- **Interruptions** (`pacing.interruptions`): now and then while online, something takes the persona away from its
+  messages for a few minutes (on average once every `meanMinutes`, default 40, of online time, for `minutes`, default
+  `[2, 8]`; `0` for none). Drawn per day from a seed, like the agenda, so a restart finds the same ones. Nobody's turn
+  starts until it is back (a reply it was typing is finished), and it watches no chat then. Logged as `away`;
+  `personaReport` lists today's.
 
 ### Changed
 
@@ -33,6 +43,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Removed
 
+- **BREAKING: the per-message delay rolls** `pacing.quickReplyChance`, `slowReplyChance`, `quickReplyDelaySeconds`,
+  `slowReplyDelaySeconds` and `busyReplyDelaySeconds`. Each reply had a chance of a slow or busy delay however live the
+  conversation was. `watching`, `glance` and `interruptions` time replies now, and others' turns are what keeps
+  someone waiting while it is busy; a config that still sets the old keys fails to load (`unknown key`). Roughly:
+  a faster or slower persona sets `glance.meanSeconds`, and a long busy gap becomes `interruptions.minutes`.
 - **BREAKING: `pacing.singlePresence`.** Answering one person at a time is no longer optional: with it off, turns for
   different people could overwrite each other's self notes. A config that still sets it fails to load with
   `settings.pacing.singlePresence: unknown key`: delete the line.

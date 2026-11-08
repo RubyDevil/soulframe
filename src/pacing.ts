@@ -1,24 +1,88 @@
-import { between, type Rng } from './rng.js';
-import { DEFAULT_SETTINGS, SECOND, type Settings } from './settings.js';
+import { between, seededRng, type Rng } from './rng.js';
+import { addDays, agendaOn, localDateOf, type Hours, type LocalDate } from './schedule.js';
+import { DEFAULT_SETTINGS, MINUTE, SECOND, type Settings } from './settings.js';
 
 type Pacing = Settings['pacing'];
 
 /** Whole milliseconds drawn in a range of seconds. */
 const msIn = (rng: Rng, [from, to]: readonly [number, number]) => Math.round(between(rng, from * SECOND, to * SECOND));
 
-/**
- * How long before answering: usually under a minute, sometimes a few minutes, now and then a long gap,
- * as when someone is busy (the shares and ranges are `settings.pacing`).
- */
-export function replyDelayMs(rng: Rng, pacing: Pacing = DEFAULT_SETTINGS.pacing): number {
-	const roll = rng();
-	if (roll < pacing.quickReplyChance) return quickReplyMs(rng, pacing);
-	if (roll < pacing.quickReplyChance + pacing.slowReplyChance) return msIn(rng, pacing.slowReplyDelaySeconds);
-	return msIn(rng, pacing.busyReplyDelaySeconds);
+/** A draw of a memoryless clock with this mean: most come soon, a few take a while (an exponential distribution). */
+const memoryless = (rng: Rng, mean: number) => -Math.log(1 - rng()) * mean;
+
+/** The chance that it still has someone's chat open `sinceMs` after its last turn with them: 1 at once, halving every `watching.halfLifeSeconds`. */
+export const watchingChance = (sinceMs: number, pacing: Pacing = DEFAULT_SETTINGS.pacing) => 0.5 ** (Math.max(0, sinceMs) / (pacing.watching.halfLifeSeconds * SECOND));
+
+/** The lag before it answers while it is watching their chat (`watching.replyDelaySeconds`): the only delay on a short break. */
+export const watchingMs = (rng: Rng, pacing: Pacing = DEFAULT_SETTINGS.pacing) => msIn(rng, pacing.watching.replyDelaySeconds);
+
+/** The time until it next glances at its messages (`glance`): memoryless, with mean `meanSeconds`, within `delaySeconds`. */
+export function glanceMs(rng: Rng, pacing: Pacing = DEFAULT_SETTINGS.pacing): number {
+	const [least, most] = pacing.glance.delaySeconds;
+	return Math.round(Math.min(most, Math.max(least, memoryless(rng, pacing.glance.meanSeconds))) * SECOND);
 }
 
-/** The quick delay alone: the only one on a short break. */
-export const quickReplyMs = (rng: Rng, pacing: Pacing = DEFAULT_SETTINGS.pacing) => msIn(rng, pacing.quickReplyDelaySeconds);
+/**
+ * How long before it answers someone's message, and whether it was watching their chat. `sinceMs`: how long ago its
+ * last turn with them ended, or null when there was none (or it was away since). While it may still be watching
+ * (`watchingChance`), a short lag; else the time until it next glances at its messages. Draws once for the chance
+ * (with a turn to go by), then the delay.
+ */
+export function replyDelay(rng: Rng, sinceMs: number | null, pacing: Pacing = DEFAULT_SETTINGS.pacing): { ms: number; watching: boolean } {
+	const watching = sinceMs !== null && rng() < watchingChance(sinceMs, pacing);
+	return { ms: watching ? watchingMs(rng, pacing) : glanceMs(rng, pacing), watching };
+}
+
+/** A time something took the persona away from its messages, while online (`pacing.interruptions`). */
+export interface Interruption {
+	start: number;
+	end: number;
+}
+
+/** The online time of a day: its online spans (not its breaks), the ones that overlap (on different channels) merged. */
+const onlineTimeOf = (hours: Hours, date: LocalDate) => {
+	const merged: { start: number; end: number }[] = [];
+	for (const span of agendaOn(hours, date).spans.filter((span) => span.kind === 'online')) {
+		const last = merged.at(-1);
+		if (last && span.start <= last.end) last.end = Math.max(last.end, span.end);
+		else merged.push({ start: span.start, end: span.end });
+	}
+	return merged;
+};
+
+/**
+ * The interruptions of one agenda day (`pacing.interruptions`): inside its online time, on average one every
+ * `meanMinutes` of it (a memoryless clock), each lasting `minutes`, never past the end of its span. Seeded by the
+ * persona and the day, as its agenda is, so a restart finds the same ones; none with `meanMinutes` 0.
+ */
+export function interruptionsOn(hours: Hours, date: LocalDate, pacing: Pacing = DEFAULT_SETTINGS.pacing): Interruption[] {
+	const { meanMinutes, minutes } = pacing.interruptions;
+	if (meanMinutes <= 0) return [];
+	const rng = seededRng(`${hours.id}:interruptions:${date.year}-${date.month}-${date.day}`);
+	const found: Interruption[] = [];
+	for (const online of onlineTimeOf(hours, date)) {
+		for (let at = online.start + memoryless(rng, meanMinutes * MINUTE); at < online.end; ) {
+			const end = Math.min(online.end, at + between(rng, ...minutes) * MINUTE);
+			found.push({ start: Math.round(at), end: Math.round(end) });
+			at = end + memoryless(rng, meanMinutes * MINUTE);
+		}
+	}
+	return found;
+}
+
+/** The interruptions of the agenda days around `at` (yesterday's, for a span past midnight, to tomorrow's). */
+const interruptionsNear = (hours: Hours, at: number, pacing: Pacing) => {
+	const today = localDateOf(at, hours.timezone);
+	return [-1, 0, 1].flatMap((days) => interruptionsOn(hours, addDays(today, days), pacing));
+};
+
+/** The interruption the persona is in at `at`, else null. */
+export const interruptionAt = (hours: Hours, at: number, pacing: Pacing = DEFAULT_SETTINGS.pacing): Interruption | null =>
+	pacing.interruptions.meanMinutes > 0 ? (interruptionsNear(hours, at, pacing).find((away) => away.start <= at && at < away.end) ?? null) : null;
+
+/** Whether an interruption began after `from` and by `to`: it looked away from every chat in between. */
+export const interruptedBetween = (hours: Hours, from: number, to: number, pacing: Pacing = DEFAULT_SETTINGS.pacing) =>
+	pacing.interruptions.meanMinutes > 0 && interruptionsNear(hours, to, pacing).some((away) => away.start > from && away.start <= to);
 
 /** The quiet it waits for after someone's newest message before it starts the reply (`pacing.burst.settleSeconds`); 0, and no draw, when there is none. */
 export const quietMs = (rng: Rng, pacing: Pacing = DEFAULT_SETTINGS.pacing) => (pacing.burst.settleSeconds[1] > 0 ? msIn(rng, pacing.burst.settleSeconds) : 0);

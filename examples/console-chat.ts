@@ -45,9 +45,9 @@ const loaded = parsePersonas({
 				// Human pacing (seconds to minutes before a reply), made instant for the demo
 				settings: {
 					pacing: {
-						quickReplyChance: 1,
-						slowReplyChance: 0,
-						quickReplyDelaySeconds: [0, 0],
+						glance: { delaySeconds: [0, 0] },
+						watching: { replyDelaySeconds: [0, 0] },
+						interruptions: { meanMinutes: 0 },
 						readingDurationSeconds: [0, 0],
 						typingDurationSeconds: [0, 0],
 						betweenReplyMessagesSeconds: [0, 0],

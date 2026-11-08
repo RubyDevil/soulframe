@@ -4,7 +4,7 @@ import { unhandled, type Brain, type Decision, type PersonAction, type Turn } fr
 import type { Channel, ChannelId } from './channel.js';
 import { LlmBudgetError, ModelNotConfiguredError, ProviderUnavailableError } from './llm.js';
 import type { PersonaConfig } from './config/personas.js';
-import { betweenMessagesMs, fitDelay, quickReplyMs, quietMs, readingMs, replyDelayMs, typingPlan } from './pacing.js';
+import { betweenMessagesMs, fitDelay, interruptedBetween, interruptionAt, quietMs, readingMs, replyDelay, typingPlan, watchingMs } from './pacing.js';
 import { between, sleep, type Rng } from './rng.js';
 import { nextSpan, spanAt, type Hours, type Span } from './schedule.js';
 import { MINUTE, SECOND } from './settings.js';
@@ -159,6 +159,11 @@ export function createReplyQueue({
 	let lease: NodeJS.Timeout | undefined;
 	/** A message that came in during their turn, too late for it to start over: their next turn comes once this one ends. */
 	const owedAfter = new Map<number, Conversation>();
+	/** When its last turn with each person ended: it may still be watching their chat (`pacing.watching`). */
+	const lastWith = new Map<number, number>();
+	/** The start of the interruption it was last found in (`pacing.interruptions`), and the timer that moves the queue on as it ends. */
+	let awayFrom: number | null = null;
+	let comeback: NodeJS.Timeout | undefined;
 	/** The backlog turn in progress (one at a time), and the start of the span it was taken in. */
 	let drainingId: number | null = null;
 	let drainSpanStart: number | null = null;
@@ -176,6 +181,26 @@ export function createReplyQueue({
 	const paused = () => (stopped ? 'stopped' : runtime.halted() ? 'halt_switch' : null);
 	/** A turn is under way, and not for so long that it must be stuck (it stops holding the others back after PRESENCE_LEASE). */
 	const occupied = () => present !== null && runtime.now() - present.since < PRESENCE_LEASE;
+
+	/**
+	 * Whether something took it away from its messages now (`pacing.interruptions`): no turn starts until it is back.
+	 * The first time an interruption is found it is logged, and the queue moves on as it ends.
+	 */
+	const away = () => {
+		const now = runtime.now();
+		const interruption = interruptionAt(persona, now, pacing);
+		if (!interruption) return false;
+		if (awayFrom !== interruption.start) {
+			awayFrom = interruption.start;
+			runtime.log(persona.id, 'away', { until: new Date(interruption.end).toISOString() });
+			clearTimeout(comeback);
+			comeback = setTimeout(() => {
+				drain();
+				next();
+			}, interruption.end - now);
+		}
+		return true;
+	};
 
 	/** A send or read receipt that failed: someone it can no longer reach is stopped for good, anything else logged. */
 	const failedDelivery = (error: unknown, personId: number, channel: ChannelId, sent: number): 'unreachable' | 'failed' => {
@@ -357,7 +382,7 @@ export function createReplyQueue({
 	 * their quiet once more.
 	 */
 	const next = () => {
-		if (stopped || occupied()) return;
+		if (stopped || occupied() || (ready.size && away())) return;
 		for (const [personId, conversation] of ready) {
 			// Their earlier turn, stuck past PRESENCE_LEASE, is still under way: this one waits for it to end
 			if (active.has(personId)) continue;
@@ -382,6 +407,7 @@ export function createReplyQueue({
 			runtime.log(persona.id, 'delivery_failed', { personId, error: String(error) });
 		} finally {
 			active.delete(personId);
+			lastWith.set(personId, runtime.now());
 			if (present === state) {
 				present = null;
 				clearTimeout(lease);
@@ -542,13 +568,20 @@ export function createReplyQueue({
 		}
 	};
 
-	/** Their turn comes after `wait` ms (never once stopped). */
-	const timeReply = (personId: number, conversation: Conversation, wait: number, reason: 'pacing' | 'retry' | 'backlog') => {
+	/** Their turn comes after `wait` ms (never once stopped); `watching`: timed as it still had their chat open. */
+	const timeReply = (personId: number, conversation: Conversation, wait: number, reason: 'pacing' | 'retry' | 'backlog', watching?: boolean) => {
 		if (stopped) return;
 		// setTimeout holds at most about 24.8 days
 		const delayMs = Math.round(Math.min(wait, 2_000_000_000));
 		pending.set(personId, setTimeout(() => due(personId, conversation), delayMs));
-		runtime.log(persona.id, 'reply_scheduled', { personId, platform: conversation.channel.id, delayMs, dueAt: new Date(runtime.now() + delayMs).toISOString(), reason });
+		runtime.log(persona.id, 'reply_scheduled', {
+			personId,
+			platform: conversation.channel.id,
+			delayMs,
+			dueAt: new Date(runtime.now() + delayMs).toISOString(),
+			reason,
+			...(watching !== undefined && { watching }),
+		});
 	};
 
 	/** Into the backlog: answered once a span with time for it is open on their channel (`drain`); never once stopped. A backlog turn parked again lets the next one start. */
@@ -562,7 +595,7 @@ export function createReplyQueue({
 
 	/** Starts the next backlog turn unless one is in progress: the oldest waiting person whose channel has a span open with time left for it. */
 	const drain = () => {
-		if (drainingId !== null || runtime.halted() || occupied()) return;
+		if (drainingId !== null || runtime.halted() || occupied() || (waiting.size && away())) return;
 		const now = runtime.now();
 		for (const [personId, conversation] of waiting) {
 			const span = spanAt(persona, now, conversation.channel.id);
@@ -613,16 +646,15 @@ export function createReplyQueue({
 		}
 		const now = runtime.now();
 		const span = spanAt(persona, now, conversation.channel.id);
-		// Only quick replies on a short break, and always due before the span ends
-		const wait =
-			span &&
-			fitDelay(
-				span.kind === 'break' ? quickReplyMs(runtime.rng, pacing) : replyDelayMs(runtime.rng, pacing),
-				span.end - SPAN_END_MARGIN - now,
-				pacing.quickReplyDelaySeconds[0] * SECOND,
-			);
-		if (wait === null) park(personId, conversation, span ? 'span_ending' : 'offline');
-		else timeReply(personId, conversation, wait, 'pacing');
+		if (!span) return park(personId, conversation, 'offline');
+		// It may still be watching their chat after its last turn with them, unless it was away since; on a short break it is on its phone anyway
+		const last = lastWith.get(personId);
+		const since = last !== undefined && !interruptedBetween(persona, last, now, pacing) ? now - last : null;
+		const timing = span.kind === 'break' ? { ms: watchingMs(runtime.rng, pacing), watching: true } : replyDelay(runtime.rng, since, pacing);
+		// Always due before the span ends
+		const wait = fitDelay(timing.ms, span.end - SPAN_END_MARGIN - now, pacing.glance.delaySeconds[0] * SECOND);
+		if (wait === null) park(personId, conversation, 'span_ending');
+		else timeReply(personId, conversation, wait, 'pacing', timing.watching);
 	};
 
 	return {
@@ -688,6 +720,7 @@ export function createReplyQueue({
 			stopped = true;
 			clearInterval(tick);
 			clearTimeout(lease);
+			clearTimeout(comeback);
 			for (const timer of pending.values()) clearTimeout(timer);
 			pending.clear();
 			// A turn waiting for someone's quiet goes on, to find the queue stopped

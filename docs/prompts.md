@@ -259,8 +259,8 @@ The brain fills it in at brain.ts:371-398. Each slot:
 | `personNotes` | `person.summary`, written by the model |
 | `channel` | the `Channel` (its `invitations` and `actions`) |
 | `memory` | `settings.memory` (`personNotes`, `selfNotes`) |
-| `extraLines` | `options.extraLines?.(person) ?? []`: the reply queue passes `Conversation.extraLines` (runtime.ts:447) |
-| `invitation` | `options.invitation` where `channel.invitations`, else nothing (brain.ts:368); the queue passes the name of `Conversation.invitation` (runtime.ts:428, :447) |
+| `extraLines` | `options.extraLines?.(person) ?? []`: the reply queue passes `Conversation.extraLines` (runtime.ts:473) |
+| `invitation` | `options.invitation` where `channel.invitations`, else nothing (brain.ts:368); the queue passes the name of `Conversation.invitation` (runtime.ts:454, :473) |
 | `joinNow` | `fullyOnline(persona, channel.id, now())`: a full online span is open on the channel (brain.ts:367) |
 | `time` | `directMessageTimePrompt` |
 | `minorCaution` | `!!channel.adult && minorCautioned(person)` (brain.ts:365) |
@@ -383,7 +383,7 @@ export const BREAK_INVITE_PROMPT = "You're only on for a few minutes, so you can
 
 DM turn only. Present when the channel has `invitations` and a name is passed: the app attaches
 `Conversation.invitation` (`{ name, join }`, runtime.ts:82) to the conversation, the reply queue keeps it from the
-incoming message (runtime.ts:659) and passes its `name` to `compose` where `channel.invitations` (runtime.ts:428, :447). The
+incoming message (runtime.ts:691) and passes its `name` to `compose` where `channel.invitations` (runtime.ts:454, :473). The
 name is the app's data, quoted as a JSON string. With a full online span open on the channel (`joinNow`) the line asks
 for a decision; on a break `BREAK_INVITE_PROMPT` takes its place, and the turn reports `inviteWaits` (brain.ts:412).
 Rendered (`joinNow` true, name `Friday "movie" night`):
@@ -886,7 +886,7 @@ not instructions)". Everything else is inserted as it is, without quotes or deli
 
 ## What switches parts on and off
 
-### `settings.context` (settings.ts:254-270)
+### `settings.context` (settings.ts:290-306)
 
 "false leaves that text out of the prompt, and nothing else changes". All default to `true`.
 
@@ -977,7 +977,7 @@ It is Saturday, November 7, 8:00 PM for you. Their last message was just now. Yo
 hey, how was your day?
 ```
 
-`samplePrompt({ persona, channel, now })` (report.ts:109) returns the same system prompt: it runs the same brain on a
+`samplePrompt({ persona, channel, now })` (report.ts:112) returns the same system prompt: it runs the same brain on a
 throwaway store, with a person "Sam" who wrote "hey".
 
 ### Group-chat line

@@ -1,13 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
-import { betweenMessagesMs, fitDelay, quickReplyMs, quietMs, readingMs, replyDelayMs, splitReply, typingMs, typingPlan } from '../src/pacing.js';
+import { betweenMessagesMs, fitDelay, glanceMs, interruptedBetween, interruptionAt, interruptionsOn, quietMs, readingMs, replyDelay, splitReply, typingMs, typingPlan, watchingChance, watchingMs } from '../src/pacing.js';
 import { seededRng } from '../src/rng.js';
+import { ScheduleSchema } from '../src/config/hours.js';
 import { DEFAULT_SETTINGS, SettingsSchema, type Settings } from '../src/settings.js';
 
 describe('millisecond durations', () => {
 	it('returns whole milliseconds for replies, typing and pauses', () => {
 		const rng = seededRng('whole-milliseconds');
 		for (let sample = 0; sample < 200; sample++) {
-			expect(Number.isInteger(replyDelayMs(rng))).toBe(true);
+			expect(Number.isInteger(replyDelay(rng, null).ms)).toBe(true);
+			expect(Number.isInteger(replyDelay(rng, 30_000).ms)).toBe(true);
 			expect(Number.isInteger(typingMs('A message long enough to avoid the minimum typing duration.', rng))).toBe(true);
 			expect(Number.isInteger(betweenMessagesMs(rng))).toBe(true);
 		}
@@ -102,35 +104,108 @@ describe('the typing settings', () => {
 	});
 });
 
-describe('replyDelayMs', () => {
-	it('is mostly under a minute, sometimes minutes, never over 15', () => {
+describe('replyDelay', () => {
+	it('is the time until it next glances at its messages without a turn to go by: mostly under a minute, never under 4 s or over 15 min', () => {
 		const rng = seededRng('delays');
-		const delays = Array.from({ length: 2000 }, () => replyDelayMs(rng));
-		const quick = delays.filter((d) => d < 60_000).length / delays.length;
-		expect(quick).toBeGreaterThan(0.55);
-		expect(quick).toBeLessThan(0.75);
-		expect(delays.some((d) => d > 5 * 60_000)).toBe(true);
-		expect(Math.max(...delays)).toBeLessThanOrEqual(15 * 60_000);
+		const delays = Array.from({ length: 4000 }, () => replyDelay(rng, null));
+		expect(delays.every((delay) => !delay.watching)).toBe(true);
+		const quick = delays.filter((delay) => delay.ms < 60_000).length / delays.length;
+		// A memoryless clock with a 60 s mean: 1 - 1/e of them come within the minute
+		expect(quick).toBeGreaterThan(0.58);
+		expect(quick).toBeLessThan(0.68);
+		expect(delays.some((delay) => delay.ms > 4 * 60_000)).toBe(true);
+		expect(Math.min(...delays.map((delay) => delay.ms))).toBeGreaterThanOrEqual(4_000);
+		expect(Math.max(...delays.map((delay) => delay.ms))).toBeLessThanOrEqual(15 * 60_000);
 	});
-});
 
-describe('quickReplyMs', () => {
-	it('gives whole milliseconds within quickReplyDelaySeconds', () => {
-		const rng = seededRng('quick');
-		const pacing = { ...DEFAULT_SETTINGS.pacing, quickReplyDelaySeconds: [10, 20] as [number, number] };
+	it('is a short lag while it is still watching their chat, likelier the sooner they answer', () => {
+		const rng = seededRng('watching');
+		const shareWatching = (sinceMs: number) => Array.from({ length: 4000 }, () => replyDelay(rng, sinceMs)).filter((delay) => delay.watching).length / 4000;
+		expect(shareWatching(0)).toBe(1);
+		expect(shareWatching(90_000)).toBeGreaterThan(0.45);
+		expect(shareWatching(90_000)).toBeLessThan(0.55);
+		expect(shareWatching(15 * 60_000)).toBeLessThan(0.01);
 		for (let sample = 0; sample < 200; sample++) {
-			const delay = quickReplyMs(rng, pacing);
-			expect(Number.isInteger(delay)).toBe(true);
-			expect(delay).toBeGreaterThanOrEqual(10_000);
-			expect(delay).toBeLessThanOrEqual(20_000);
+			const delay = replyDelay(rng, 0);
+			expect(delay.ms).toBeGreaterThanOrEqual(2_000);
+			expect(delay.ms).toBeLessThanOrEqual(10_000);
 		}
 	});
 
-	it("is replyDelayMs's quick branch, with the same draws", () => {
-		const quick = { ...DEFAULT_SETTINGS.pacing, quickReplyChance: 1, slowReplyChance: 0 };
-		const draws = seededRng('same');
-		draws();
-		expect(replyDelayMs(seededRng('same'), quick)).toBe(quickReplyMs(draws, quick));
+	it('draws the chance only with a turn to go by, then the delay', () => {
+		const rng = vi.fn(() => 0);
+		expect(replyDelay(rng, null)).toEqual({ ms: 4_000, watching: false });
+		expect(rng).toHaveBeenCalledTimes(1);
+		expect(replyDelay(rng, 10_000)).toEqual({ ms: 2_000, watching: true });
+		expect(rng).toHaveBeenCalledTimes(3);
+	});
+});
+
+describe('watchingChance, watchingMs and glanceMs', () => {
+	const pacing = (settings: Record<string, unknown>) => SettingsSchema.parse({ pacing: settings }).pacing;
+
+	it('halves the chance that it still watches every halfLifeSeconds', () => {
+		expect([0, 90_000, 180_000].map((ms) => watchingChance(ms))).toEqual([1, 0.5, 0.25]);
+		expect(watchingChance(10_000, pacing({ watching: { halfLifeSeconds: 10 } }))).toBe(0.5);
+	});
+
+	it('gives whole milliseconds within their ranges', () => {
+		const rng = seededRng('ranges');
+		const own = pacing({ watching: { replyDelaySeconds: [1, 3] }, glance: { meanSeconds: 30, delaySeconds: [10, 40] } });
+		for (let sample = 0; sample < 500; sample++) {
+			const watching = watchingMs(rng, own);
+			const glance = glanceMs(rng, own);
+			expect(Number.isInteger(watching) && Number.isInteger(glance)).toBe(true);
+			expect(watching).toBeGreaterThanOrEqual(1_000);
+			expect(watching).toBeLessThanOrEqual(3_000);
+			expect(glance).toBeGreaterThanOrEqual(10_000);
+			expect(glance).toBeLessThanOrEqual(40_000);
+		}
+	});
+
+	it('glances after meanSeconds on average', () => {
+		const rng = seededRng('mean');
+		const own = pacing({ glance: { meanSeconds: 100, delaySeconds: [0, 3600] } });
+		const mean = Array.from({ length: 8000 }, () => glanceMs(rng, own)).reduce((sum, ms) => sum + ms, 0) / 8000;
+		expect(mean).toBeGreaterThan(95_000);
+		expect(mean).toBeLessThan(105_000);
+	});
+});
+
+describe('interruptions', () => {
+	// Online 19:00 to 23:00 UTC every day, with a 10-minute break at 12:30
+	const persona = { id: 'robin', timezone: 'UTC', schedule: ScheduleSchema.parse({ days: { 'mon-sun': { online: [{ start: ['19:00', '19:00'], end: ['23:00', '23:00'] }], breaks: [{ start: ['12:30', '12:30'], minutes: [10, 10] }] } } }) };
+	const day = { year: 2026, month: 10, day: 14 };
+	const often = SettingsSchema.parse({ pacing: { interruptions: { meanMinutes: 20, minutes: [2, 8] } } }).pacing;
+
+	it('come now and then inside its online time, never on a break, each 2 to 8 minutes, the same on every draw', () => {
+		const found = interruptionsOn(persona, day, often);
+		expect(found.length).toBeGreaterThan(0);
+		expect(interruptionsOn(persona, day, often)).toEqual(found);
+		for (const { start, end } of found) {
+			expect(start).toBeGreaterThanOrEqual(Date.UTC(2026, 9, 14, 19));
+			expect(end).toBeLessThanOrEqual(Date.UTC(2026, 9, 14, 23));
+			expect(end - start).toBeLessThanOrEqual(8 * 60_000);
+		}
+		// One every 20 minutes of online time on average, over many days
+		const days = Array.from({ length: 60 }, (_, i) => ({ year: 2026, month: 1 + Math.floor(i / 28), day: 1 + (i % 28) }));
+		const perDay = days.reduce((sum, date) => sum + interruptionsOn(persona, date, often).length, 0) / days.length;
+		expect(perDay).toBeGreaterThan(8);
+		expect(perDay).toBeLessThan(11);
+	});
+
+	it('are none with meanMinutes 0', () => {
+		const none = SettingsSchema.parse({ pacing: { interruptions: { meanMinutes: 0 } } }).pacing;
+		expect(interruptionsOn(persona, day, none)).toEqual([]);
+		expect(interruptionAt(persona, Date.UTC(2026, 9, 14, 20), none)).toBeNull();
+	});
+
+	it('say when it is away, and whether it was away in between', () => {
+		const [first] = interruptionsOn(persona, day, often);
+		expect(interruptionAt(persona, first!.start, often)).toEqual(first);
+		expect(interruptionAt(persona, first!.end, often)).not.toEqual(first);
+		expect(interruptedBetween(persona, first!.start - 1, first!.start, often)).toBe(true);
+		expect(interruptedBetween(persona, first!.start, first!.end, often)).toBe(false);
 	});
 });
 

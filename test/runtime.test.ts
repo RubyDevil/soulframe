@@ -8,6 +8,7 @@ import type { PersonaConfig } from '../src/config/personas.js';
 import { createScriptedDecisions, type Decisions } from '../src/decisions.js';
 import { LlmBudgetError, ModelNotConfiguredError, ProviderUnavailableError } from '../src/llm.js';
 import { STOP_QUESTION } from '../src/prompts.js';
+import { interruptionsOn } from '../src/pacing.js';
 import { sleep, type Rng } from '../src/rng.js';
 import { createReplyQueue, createRuntime, UnreachableError, watchSpans, type Conversation } from '../src/runtime.js';
 import { MINOR_EXIT, STOP_ACK } from '../src/safety.js';
@@ -28,7 +29,7 @@ const personaOf = (id: string, extra: Record<string, unknown> = {}) => ({
 
 const config = {
 	personas: personasOf(
-		{ robin: personaOf('robin', { settings: { retries: { attempts: 1 }, pacing: { quickReplyChance: 1, slowReplyChance: 0, quickReplyDelaySeconds: [1, 1] } } }), sky: personaOf('sky') },
+		{ robin: personaOf('robin', { settings: { retries: { attempts: 1 }, pacing: { glance: { delaySeconds: [1, 1] } } } }), sky: personaOf('sky') },
 		{ shared: { settings: { retries: { attempts: 3 } } } },
 	),
 };
@@ -962,20 +963,20 @@ describe('the backlog', () => {
 		}
 	});
 
-	it('answers with quick delays on a short break, due 90 s before it ends, else in the next span', async () => {
-		// With this rng a quick delay is 44.59 s, where a full span would draw a busy one (894 s)
+	it('answers on a short break as if watching, due 90 s before it ends, else in the next span', async () => {
+		// On its phone: with this rng the watching lag is 9.92 s, where a full span would glance at its messages after 15 minutes
 		const { log, message, close } = start({ now: at(12, 35), persona: withBreak(), rng: () => 0.99 });
 		try {
 			await message('quick one?', 'ana');
-			await vi.advanceTimersByTimeAsync(3 * MINUTE);
-			// 2 minutes left: cut to be due at 12:38:30
+			await vi.advanceTimersByTimeAsync(3 * MINUTE + 25_000);
+			// 1 minute 35 s left: cut to be due at 12:38:30
 			await message('still there?', 'bo');
 			await vi.advanceTimersByTimeAsync(MINUTE);
-			// 1 minute left: not even the quickest reply fits
+			// Under 90 s left: not even the quickest reply fits
 			await message('and me?', 'cy');
-			expect(logged(log, 'reply_scheduled').map((detail) => [detail.personId, detail.delayMs, detail.dueAt])).toEqual([
-				[1, 44_590, '2026-10-14T12:35:44.590Z'],
-				[2, 30_000, '2026-10-14T12:38:30.000Z'],
+			expect(logged(log, 'reply_scheduled').map((detail) => [detail.personId, detail.delayMs, detail.dueAt, detail.watching])).toEqual([
+				[1, 9_920, '2026-10-14T12:35:09.920Z', true],
+				[2, 5_000, '2026-10-14T12:38:30.000Z', true],
 			]);
 			expect(logged(log, 'reply_waiting')).toEqual([{ personId: 3, platform: 'forum', reason: 'span_ending', backlog: 1, nextOpenAt: '2026-10-14T19:00:00.000Z' }]);
 			await vi.advanceTimersByTimeAsync(at(19, 10) - Date.now());
@@ -1110,7 +1111,8 @@ describe('the backlog', () => {
 				await vi.advanceTimersByTimeAsync(at(19, 1, 10) - Date.now());
 				// Her draft is to start over once the model answers: she never waits in the backlog, and Bo's turn is its first
 				expect(logged(log, 'reply_superseded')).toEqual([{ personId: 1, platform: 'forum' }]);
-				expect(timeline(seen)).toEqual([[1, at(12, 38, 4)], [2, at(19, 0, 30)]]);
+				// On the break it answers as if watching: 2 s with this rng
+				expect(timeline(seen)).toEqual([[1, at(12, 38, 2)], [2, at(19, 0, 30)]]);
 			} finally {
 				close();
 			}
@@ -1208,8 +1210,9 @@ describe('typing realism', () => {
 			await hi(run, conversation);
 			await vi.advanceTimersByTimeAsync(MINUTE);
 			expect(events).toEqual(['typing on @0', 'send hey you @2400', 'typing off @2400']);
-			// The reply delay (two draws), the quiet after their message (one), the reading speed (one) and the typing time (two): nothing for what the conversation and settings leave out
-			expect(rng).toHaveBeenCalledTimes(6);
+			// The reply delay (one: no turn with them yet that it could still be watching), the quiet after their message (one), the
+			// reading speed (one) and the typing time (two): nothing for what the conversation and settings leave out
+			expect(rng).toHaveBeenCalledTimes(5);
 		} finally {
 			run.close();
 		}
@@ -1530,6 +1533,99 @@ describe('someone who writes in bursts (pacing.burst)', () => {
 			expect(sentTo(run.store)).toEqual(['hey you']);
 		} finally {
 			run.close();
+		}
+	});
+});
+
+describe('attention: watching a chat, glancing, interruptions', () => {
+	const persona = utc.personas[0]!;
+	/** The interruptions of its Oct 14 (`pacing.interruptions`): the second runs from about 20:51:37 to 20:56:35. */
+	const [, away] = interruptionsOn(persona, { year: 2026, month: 10, day: 14 }, persona.settings.pacing);
+	/** Who wrote when, from what reply_scheduled logged. */
+	const timed = (log: ReturnType<typeof start>['log']) => logged(log, 'reply_scheduled').map((detail) => [detail.personId, detail.delayMs, detail.watching]);
+
+	it('answers within seconds while it still watches their chat, and glances later when it does not', async () => {
+		// rng 0: a turn to go by means watching (the chance is never 0), its lag 2 s; without one, the next glance in 4 s
+		const { log, conversation, message, close } = start();
+		try {
+			await message('hey');
+			await vi.advanceTimersByTimeAsync(10_000);
+			expect(conversation.send).toHaveBeenCalledTimes(1);
+			await message('how are you?');
+			expect(timed(log)).toEqual([
+				[1, 4_000, false],
+				[1, 2_000, true],
+			]);
+		} finally {
+			close();
+		}
+	});
+
+	it.each([
+		[30_000, true],
+		[3 * MINUTE, false],
+	])('watches their chat %i ms after its turn with them: %s (the chance halves every 90 s, rng 0.4)', async (after, watching) => {
+		// 0.79 after 30 s, 0.25 after 3 minutes
+		const { log, conversation, message, close } = start({ rng: () => 0.4 });
+		let sentAt = 0;
+		conversation.send.mockImplementation(async () => void (sentAt = Date.now()));
+		try {
+			await message('hey');
+			await vi.advanceTimersByTimeAsync(MINUTE);
+			expect(sentAt).toBeGreaterThan(0);
+			await vi.advanceTimersByTimeAsync(sentAt + after - Date.now());
+			await message('and you?');
+			expect(logged(log, 'reply_scheduled').at(-1)!.watching).toBe(watching);
+		} finally {
+			close();
+		}
+	});
+
+	it('starts no turn while something took it away, answers them in order once it is back, and watches no chat then', async () => {
+		const { log, brain, conversation, message, close } = start({ now: away!.start - 20_000 });
+		const starts: [number, number][] = [];
+		const real = brain.compose.bind(brain);
+		vi.spyOn(brain, 'compose').mockImplementation(async (personId, channel, options) => {
+			starts.push([personId, Date.now()]);
+			return real(personId, channel, options);
+		});
+		try {
+			// Answered just before it is called away
+			await message('quick question', 'ana');
+			await vi.advanceTimersByTimeAsync(15_000);
+			expect(conversation.send).toHaveBeenCalledTimes(1);
+			await vi.advanceTimersByTimeAsync(away!.start + 30_000 - Date.now());
+			await message('still there?', 'ana');
+			await message('hi!', 'bo');
+			await vi.advanceTimersByTimeAsync(MINUTE);
+			// Due a few seconds later, inside the interruption: nothing starts
+			expect(starts).toHaveLength(1);
+			expect(logged(log, 'away')).toEqual([{ until: new Date(away!.end).toISOString() }]);
+			await vi.advanceTimersByTimeAsync(away!.end + MINUTE - Date.now());
+			expect(starts.slice(1)).toEqual([
+				[1, away!.end],
+				[2, expect.any(Number)],
+			]);
+			// Ana's newer message was timed as not watching: it was called away since its turn with her
+			expect(logged(log, 'reply_scheduled').filter((detail) => detail.personId === 1).map((detail) => detail.watching)).toEqual([false, false]);
+		} finally {
+			close();
+		}
+	});
+
+	it('finishes a reply it was typing when it is called away', async () => {
+		const { brain, conversation, message, close } = start({ now: away!.start - 10_000 });
+		vi.spyOn(brain, 'compose').mockResolvedValue({ messages: ['x'.repeat(70)], action: 'none' });
+		let sentAt = 0;
+		conversation.send.mockImplementation(async () => void (sentAt = Date.now()));
+		try {
+			// Due 4 s later, read for 1 s, typed for 20.4 s: sent after the interruption began
+			await message('hi');
+			await vi.advanceTimersByTimeAsync(MINUTE);
+			expect(sentAt).toBe(away!.start - 10_000 + 25_400);
+			expect(sentAt).toBeGreaterThan(away!.start);
+		} finally {
+			close();
 		}
 	});
 });

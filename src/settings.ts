@@ -196,12 +196,48 @@ export const SettingsSchema = z
 		/** How fast it answers and types. */
 		pacing: z
 			.object({
-				/** Probability of the quick delay; slow has its own probability and the remainder uses the busy delay. */
-				quickReplyChance: z.number().min(0).max(1).default(0.65),
-				slowReplyChance: z.number().min(0).max(1).default(0.27),
-				quickReplyDelaySeconds: range(4, 45),
-				slowReplyDelaySeconds: range(60, 240),
-				busyReplyDelaySeconds: range(300, 900),
+				/**
+				 * Right after a turn with someone it may still have their chat open: their next message is then answered after
+				 * a short lag. The chance it is still watching starts at 1 and halves every `halfLifeSeconds`, so a quick
+				 * back-and-forth stays live and a pause of a few minutes means it put the phone down. An interruption since
+				 * then (`interruptions`) means it looked away.
+				 */
+				watching: z
+					.object({
+						/** Seconds after its last turn with them over which the chance that it is still watching halves. */
+						halfLifeSeconds: z.number().min(1).max(3600).default(90),
+						/** Seconds before it answers while watching; also every delay on a short break, when it is on its phone anyway. */
+						replyDelaySeconds: range(2, 10),
+					})
+					.strict()
+					.default({}),
+				/**
+				 * Not watching: the time until it next glances at its messages. A memoryless clock (how long it has waited says
+				 * nothing of when it looks), so most glances come soon and a few take a while.
+				 */
+				glance: z
+					.object({
+						/** The average seconds until it next looks. */
+						meanSeconds: z.number().min(1).max(3600).default(60),
+						/** The shortest and longest, in seconds; the least is also the shortest time a reply must still fit in its span. */
+						delaySeconds: range(4, 900),
+					})
+					.strict()
+					.default({}),
+				/**
+				 * Now and then, while online (not on a short break), something takes it away from its messages for a few
+				 * minutes: nobody's turn starts until it is back (one under way is finished first), and it is watching no chat
+				 * when it comes back. Drawn per day from a seed, like its agenda, so a restart finds the same ones.
+				 */
+				interruptions: z
+					.object({
+						/** Minutes of online time between two, on average (a memoryless clock); 0 for none. */
+						meanMinutes: z.number().min(0).max(1440).default(40),
+						/** How long each lasts, in minutes (never past the end of its span). */
+						minutes: range(2, 8),
+					})
+					.strict()
+					.default({}),
 				/** Typing speed, in characters per second; the typing indicator shows for as long as the message would take. */
 				typingCharsPerSecond: range(3.5, 7, 0.5),
 				/** The shortest and longest the typing indicator shows for one message, in seconds (thinking pauses come on top). */
@@ -310,8 +346,7 @@ export const SETTINGS_CLASSIFIED: [Unclassified] extends [never] ? true : never 
 /** Rules across settings that the schema can't express. */
 export function checkSettings(settings: Settings): { path: (string | number)[]; message: string }[] {
 	const issues: { path: (string | number)[]; message: string }[] = [];
-	const { pacing, llm, models } = settings;
-	if (pacing.quickReplyChance + pacing.slowReplyChance > 1) issues.push({ path: ['pacing'], message: 'quickReplyChance and slowReplyChance add up to more than 1' });
+	const { llm, models } = settings;
 	for (const [task, model] of Object.entries(models)) {
 		if (llm.baseUrl === undefined && model.baseUrl === undefined) continue;
 		if (!model.model && !llm.model) issues.push({ path: ['models', task], message: 'no model named (set it, or settings.llm.model)' });
