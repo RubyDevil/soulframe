@@ -12,7 +12,7 @@ export type { Channel, ChannelAction, ChannelId } from './channel.js';
 
 // The brain, its reply queue, hours
 export { createBrain, type Brain, type Decision, type GroupChatLine, type PersonAction, type Policy } from './brain.js';
-export { createReplyQueue, createRuntime, watchSpans, UnreachableError, type Conversation, type Presence, type ReplyQueue, type Runtime } from './runtime.js';
+export { createReplyQueue, createRuntime, watchSpans, UnreachableError, type Conversation, type ReplyQueue, type Runtime } from './runtime.js';
 export { spanAt, fullyOnline, type Span } from './schedule.js';
 
 // Memory: one SQLite file; the app opens it, and its own tables (and their migrations) live beside the package's

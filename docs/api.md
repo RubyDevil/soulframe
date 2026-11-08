@@ -541,37 +541,11 @@ function createReplyQueue(options: {
 	brain: Brain;
 	runtime: Runtime;
 	act: (personId: number, action: PersonAction) => Promise<void>;  // never 'none'
-	presence?: { channels: readonly ChannelId[]; onChange: (channel: ChannelId, presence: Presence) => void | Promise<void> };
 }): ReplyQueue;
 ```
 
 Answers people at a human pace, one person at a time (see [concepts](./concepts.md#the-reply-queue-and-the-backlog)).
 `act` carries out a block, or one of the channel's `actions`, that the persona chose, routed by the person's identities.
-`presence`, when given, is told the persona's `Presence` on each of `channels` once at `start` and then on every
-change, to set the platform's own status; it is never awaited, and a throw or rejection is only logged
-(`presence_failed`).
-
-### `Presence`
-
-```ts
-interface Presence {
-	status: 'active' | 'online' | 'away' | 'busy' | 'offline';
-	reason?: string;   // a busy block's reason ("at work"), with `busy`
-	until?: number;    // when it is due to change, as far as its agenda says
-}
-```
-
-What the persona looks like to others on a channel right now:
-
-- `active`: writing a reply to anyone, and for `pacing.watching.halfLifeSeconds` after its last one (on a short break
-  too: it is on its phone);
-- `online`: the rest of its online time there;
-- `away`: an interruption (`pacing.interruptions`);
-- `busy`: offline because of a busy block, with its `reason`;
-- `offline`: anything else, and while halted.
-
-A change is told within 30 seconds at worst (the queue's tick), and at once for those its own turns and interruptions
-make. `until` may come sooner than said: a message can make it `active`.
 
 ### `ReplyQueue`
 

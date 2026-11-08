@@ -259,33 +259,6 @@ should check them:
 - **Group chats, posts and joining a group chat** only in full online time: `fullyOnline(persona, channelId, runtime.now())`.
 - **DMs** in any span, breaks included: `spanAt(persona, runtime.now(), channelId)`.
 
-### A status on the platform: the queue's `presence`
-
-Where the platform shows a status, give the reply queue a `presence` hook: it is told the persona's `Presence` on each
-channel you list, once at `start` and then whenever it changes, and maps it to whatever the platform has:
-
-```ts
-const queue = createReplyQueue({
-	persona,
-	brain,
-	runtime,
-	act,
-	presence: {
-		channels: ['chat'],
-		onChange: (_channel, { status, reason }) =>
-			client.setStatus(
-				status === 'active' || status === 'online' ? 'online' : status === 'away' ? 'idle' : status === 'busy' ? 'dnd' : 'invisible',
-				reason ?? null,
-			),
-	},
-});
-```
-
-`active` (writing a reply, or just did: on its phone) and `online` (its online time, phone put down) both mean
-reachable; a platform with one "online" maps both to it, one with an "active now" dot can tell them apart. `away` is an
-interruption, `busy` a busy block (with its reason, for a status text), `offline` the rest. The hook is never awaited
-and its failures are only logged, so a slow platform call holds nothing up.
-
 ## Group chats
 
 The brain writes; the adapter decides when to ask. A typical loop for a group chat, in full online time:
@@ -335,7 +308,7 @@ DMs.
 The reply queue and `watchSpans` report through `runtime.log(persona, event, detail)` (the brain logs nothing: what it
 decides goes to the store's audit log). Events include `dm_received`,
 `reply_scheduled` (with `watching`: timed as it still had their chat open), `reply_batched`, `reply_waiting` (in the
-backlog, with the next opening), `presence` (a status told to the `presence` hook) and `presence_failed`, `away` (an interruption, from and until), `interruption_held` (one held off by a conversation that matters), `reply_processing`,
+backlog, with the next opening), `away` (an interruption, from and until), `interruption_held` (one held off by a conversation that matters), `reply_processing`,
 `reply_superseded` (a message that makes the draft start over), `reply_restarted`, `reply_after_turn` (a message that
 gets a turn of its own once this one ends), `reply_picked` (who went first among several due, with their weight),
 `dm_sent`, `reply_sent`, `reply_skipped` (left on read), `reply_failed`, `reply_waiting_budget`,
