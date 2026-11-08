@@ -57,6 +57,12 @@ export interface Turn {
 	inviteWaits?: true;
 	/** The code's goodbye: it goes out even though the person is no longer active. */
 	final?: true;
+	/**
+	 * Saves what the turn wrote and decided (its notes on the person and on itself, a block or an action, audited):
+	 * nothing of it is stored before. The reply queue calls it once the turn is kept (its first message sent, or its
+	 * messages marked handled), never for a draft it drops to write the reply again. Calling it again does nothing.
+	 */
+	keep?: () => void;
 }
 
 export interface ParsedTurn {
@@ -150,9 +156,10 @@ export interface Brain {
 	 */
 	incoming(channel: Channel, externalId: string, name: string, text: string, at?: number): Decision;
 	/**
-	 * What to do now in the conversation with the person on `channel`. Stores nothing it says: the reply queue records
-	 * each message once sent. `invitation`: a pending group-chat invitation's name, heeded only where `channel.invitations`;
-	 * `extraLines`: the app's lines for this turn (`Conversation.extraLines`), given the person as compose reads them.
+	 * What to do now in the conversation with the person on `channel`. Stores nothing it says (the reply queue records
+	 * each message once sent), nor what it wrote and decided until the turn's `keep` is called. `invitation`: a pending
+	 * group-chat invitation's name, heeded only where `channel.invitations`; `extraLines`: the app's lines for this turn
+	 * (`Conversation.extraLines`), given the person as compose reads them.
 	 */
 	compose(personId: number, channel: Channel, options?: { invitation?: string; extraLines?: (person: Person) => readonly string[] }): Promise<Turn>;
 	/** A post in its own voice for `channel` (with its `notes`), following its rules and not repeating its recent posts, or null. The app picked where and when. */
@@ -399,20 +406,26 @@ export function createBrain({
 			// Never sent as it is (it would carry its notes): the queue tries again, as after any failed model call
 			if (!turn) throw new Error('LLM answered unreadable JSON');
 
-			if (turn.notes !== undefined) person = store.updatePerson(person.id, { summary: clip(turn.notes, settings.memory.personNotes) });
-			if (turn.self !== undefined) store.set(persona.id, 'selfNotes', clip(turn.self, settings.memory.selfNotes));
-
 			const reply = !turn.reply ? '' : clip(allowedLinksOnly(turn.reply), channel.maxLength);
 
 			const { action } = turn;
 			const invite = invitation === undefined ? {} : !joinNow ? { inviteWaits: true as const } : turn.acceptInvite && action === 'none' ? { acceptInvite: true as const } : {};
-			if (action === 'block') {
-				store.updatePerson(person.id, { state: 'blocked' });
-				store.audit(persona.id, 'blocked', { personId: person.id, platform: channel.id });
-			} else if (action !== 'none') store.audit(persona.id, 'action', { personId: person.id, platform: channel.id, action });
-			if (!reply) return { messages: [], action, ...invite };
+			let kept = false;
+			// Stored only once the queue keeps the turn: a draft it drops leaves nothing behind
+			const keep = () => {
+				if (kept) return;
+				kept = true;
+				const id = person.id;
+				if (turn.notes !== undefined) store.updatePerson(id, { summary: clip(turn.notes, settings.memory.personNotes) });
+				if (turn.self !== undefined) store.set(persona.id, 'selfNotes', clip(turn.self, settings.memory.selfNotes));
+				if (action === 'block') {
+					store.updatePerson(id, { state: 'blocked' });
+					store.audit(persona.id, 'blocked', { personId: id, platform: channel.id });
+				} else if (action !== 'none') store.audit(persona.id, 'action', { personId: id, platform: channel.id, action });
+			};
+			if (!reply) return { messages: [], action, ...invite, keep };
 
-			return { messages: splitReply(reply, runtime.rng, settings.pacing), action, ...invite };
+			return { messages: splitReply(reply, runtime.rng, settings.pacing), action, ...invite, keep };
 		},
 
 		async composePost(channel, { rules, examples, recent }) {

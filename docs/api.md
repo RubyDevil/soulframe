@@ -427,11 +427,15 @@ interface Brain {
   message under another name, the person takes that name), counts a new conversation after
   `memory.conversationGapHours` of silence, and runs the code's stop check (and, where `channel.adult`, its under-18
   check). Answers a `Decision`.
-- **`compose`**: the DM turn for the person, now. Runs the typed checks when enabled, builds the prompt, calls the
-  model with `task: 'directMessage'` and stores the rewritten notes. It stores nothing it says: the reply queue
-  records each message once sent. `invitation` is a pending group-chat invitation's name, heeded only where
-  `channel.invitations`; `extraLines` gives the application's lines for this turn. Throws when the model's answer
-  can't be read (the queue retries). The answer, `Turn`, is:
+- **`compose`**: the DM turn for the person, now. Runs the typed checks when enabled, builds the prompt and calls the
+  model with `task: 'directMessage'`. It stores nothing it says (the reply queue records each message once sent), nor,
+  until the turn's `keep()` is called, what it wrote and decided: the rewritten notes on the person and on itself, a
+  block, an action (each audited then). The reply queue calls `keep()` once it keeps the turn (its first message sent,
+  or its messages marked handled) and never for a draft it drops to write the reply again; call it yourself when you
+  use `compose` without the queue. The checks' own outcomes (a stop, a deny-listing, a minor caution) are stored at
+  once. `invitation` is a pending group-chat invitation's name, heeded only where `channel.invitations`; `extraLines`
+  gives the application's lines for this turn. Throws when the model's answer can't be read (the queue retries). The
+  answer, `Turn`, is:
 
   ```ts
   {
@@ -440,6 +444,7 @@ interface Brain {
   	acceptInvite?: true;            // join the pending invitation
   	inviteWaits?: true;             // the invitation waits for full online time (a short break)
   	final?: true;                   // the code's goodbye: sent even though the person is no longer active
+  	keep?: () => void;              // stores what the turn wrote and decided; a second call does nothing
   }
   ```
 
@@ -528,8 +533,8 @@ function createReplyQueue(options: {
 }): ReplyQueue;
 ```
 
-Answers people at a human pace (see [concepts](./concepts.md#the-reply-queue-and-the-backlog)). `act` carries out a
-block, or one of the channel's `actions`, that the persona chose, routed by the person's identities.
+Answers people at a human pace, one person at a time (see [concepts](./concepts.md#the-reply-queue-and-the-backlog)).
+`act` carries out a block, or one of the channel's `actions`, that the persona chose, routed by the person's identities.
 
 ### `ReplyQueue`
 
@@ -545,14 +550,16 @@ interface ReplyQueue {
 
 - **`handle`**: acts on `brain.incoming`'s decision. `ignore` does nothing; `final` cancels anything pending for the
   person and sends the goodbye after 2 to 10 seconds, in or out of hours (the promise resolves once it is sent);
-  `reply` times their turn or puts it in the backlog, and keeps `conversation.invitation` for it. `text` is for the log.
+  `reply` times their turn or puts it in the backlog, and keeps `conversation.invitation` for it; while their turn is
+  being written, it makes the draft start over or gets a turn of its own once that one ends (`pacing.burst`). `text`
+  is for the log.
 - **`schedule`**: times a turn for the person directly: after `delay` ms when given (a retry), else as `handle` does.
   A person whose turn is already coming is not scheduled twice.
 - **`requeue`**: after a start, puts everyone who last wrote on `channel` and is still owed a turn since the persona
   was last online into the backlog, oldest first. `conversationOf` answers their conversation, or `null` when they
   can't be reached there any more.
 - **`start`**: once every channel is up: every 30 seconds, records when the persona was last online (not halted, not a
-  dry run) and moves the backlog on. Keeps the process alive until `stop`. A second call, or one after `stop`, does
+  dry run) and moves the backlog and the turns that came due on. Keeps the process alive until `stop`. A second call, or one after `stop`, does
   nothing.
 - **`stop`**: stops for good: timers cleared, the backlog and invitations dropped; a turn under way sends nothing more.
 
@@ -563,7 +570,7 @@ interface Conversation {
 	channel: Channel;
 	typing(on: boolean): Promise<void>;
 	typingRefreshMs?: number;      // how long one typing(true) shows on the platform: repeated at that rhythm
-	markRead?(): Promise<void>;    // a read receipt, once per reply, when the reading starts
+	markRead?(): Promise<void>;    // a read receipt, as it starts writing each draft of a reply
 	send(text: string): Promise<void>;
 	delivered?(text: string): void;
 	extraLines?(person: Person): readonly string[];
@@ -573,9 +580,10 @@ interface Conversation {
 
 Where a reply goes, implemented by a channel adapter: see [channels](./channels.md). Each stretch of typing is one
 `typing(true)` (repeated every `typingRefreshMs` ms when given, while the message is typed) and one `typing(false)`;
-a thinking pause (`pacing.thinkingPauses`) ends one stretch and starts the next. Before its first message every reply is read for as long as
-the unread messages take (`pacing.readingCharsPerSecond`), and `markRead()`, when given, is called as that starts; a
-rejection from it, as from `typing`, counts as a failed delivery. Without either, the calls are one `typing(true)`, the
+a thinking pause (`pacing.thinkingPauses`) ends one stretch and starts the next. While the model writes a reply, the
+unread messages are read for as long as they take (`pacing.readingCharsPerSecond`), and `markRead()`, when given, is
+called as that starts (again for a draft written again: a turn left on read shows them read too); a rejection from it,
+as from `typing`, counts as a failed delivery. Without either, the calls are one `typing(true)`, the
 typing time, `send`, one `typing(false)` per message. `delivered(text)`, when given, is called after each message of
 a reply went out (once `send` resolved), and in a dry run after each message logged in place of sending; never for
 one whose send failed. A dry run makes every other call as a live run does.

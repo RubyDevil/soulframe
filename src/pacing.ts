@@ -20,6 +20,9 @@ export function replyDelayMs(rng: Rng, pacing: Pacing = DEFAULT_SETTINGS.pacing)
 /** The quick delay alone: the only one on a short break. */
 export const quickReplyMs = (rng: Rng, pacing: Pacing = DEFAULT_SETTINGS.pacing) => msIn(rng, pacing.quickReplyDelaySeconds);
 
+/** The quiet it waits for after someone's newest message before it starts the reply (`pacing.burst.settleSeconds`); 0, and no draw, when there is none. */
+export const quietMs = (rng: Rng, pacing: Pacing = DEFAULT_SETTINGS.pacing) => (pacing.burst.settleSeconds[1] > 0 ? msIn(rng, pacing.burst.settleSeconds) : 0);
+
 /** The delay, cut to the `leftMs` its span has left; null when not even `floorMs` fits (it waits for the next span). */
 export const fitDelay = (delayMs: number, leftMs: number, floorMs: number): number | null => (leftMs < floorMs ? null : Math.min(delayMs, leftMs));
 

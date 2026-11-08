@@ -7,6 +7,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Bursts** (`pacing.burst`). Someone who writes several messages in a row gets one reply, once they stop:
+  `settleSeconds` (default `[2, 5]`) of quiet after their newest message, each message starting the wait again, up to
+  `maxSettleResets` (default 3) times. A message that lands while the reply is being written, before its first message
+  is sent, drops the draft and writes it again with that message read (`restartOnNewMessage`, default `true`, at most
+  `maxRestarts` times in a row, default 1); too late for that, it gets a turn of its own once this one ends. Each
+  dropped draft was paid for, so `personaWarnings` warns when `maxRestarts` is above 1. New log events
+  `reply_superseded`, `reply_restarted` and `reply_after_turn`.
+- `Turn.keep()`: stores what a DM turn wrote and decided (its notes on the person and on itself, a block, an action),
+  once; the reply queue calls it when it keeps the turn, never for a dropped draft.
+
+### Changed
+
+- **One person at a time, always**, with no polling: turns that came due wait in the order they came due and the first
+  starts the moment the persona is free (they used to be checked again every 5 seconds, in no set order). A turn under
+  way for over 10 minutes still stops holding the others back.
+- **It reads while the model writes.** The read receipt (`markRead`) and the reading time now start with the model
+  call, and typing starts once both are done, so a reply no longer waits for the model and then for the reading. A
+  turn left on read now shows their messages read, and a turn whose model call fails ends at once.
+- **BREAKING: `compose` stores nothing of a turn until its `keep()`.** The notes, a block or an action (and their
+  audit lines) used to be stored as soon as the model answered, even for a reply never sent. Code that calls
+  `brain.compose` without the reply queue calls `turn.keep?.()` once it uses the turn.
+
+### Removed
+
+- **BREAKING: `pacing.singlePresence`.** Answering one person at a time is no longer optional: with it off, turns for
+  different people could overwrite each other's self notes. A config that still sets it fails to load with
+  `settings.pacing.singlePresence: unknown key`: delete the line.
+
 ## [0.1.0-beta.0] - 2026-11-07
 
 The first beta: a general-purpose persona framework that knows no messaging channel and no product, published to npm

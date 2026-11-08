@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { betweenMessagesMs, fitDelay, quickReplyMs, readingMs, replyDelayMs, splitReply, typingMs, typingPlan } from '../src/pacing.js';
+import { betweenMessagesMs, fitDelay, quickReplyMs, quietMs, readingMs, replyDelayMs, splitReply, typingMs, typingPlan } from '../src/pacing.js';
 import { seededRng } from '../src/rng.js';
 import { DEFAULT_SETTINGS, SettingsSchema, type Settings } from '../src/settings.js';
 
@@ -11,6 +11,27 @@ describe('millisecond durations', () => {
 			expect(Number.isInteger(typingMs('A message long enough to avoid the minimum typing duration.', rng))).toBe(true);
 			expect(Number.isInteger(betweenMessagesMs(rng))).toBe(true);
 		}
+	});
+});
+
+describe('quietMs', () => {
+	const withSettle = (settleSeconds: [number, number]) => SettingsSchema.parse({ pacing: { burst: { settleSeconds } } }).pacing;
+
+	it('draws the quiet after their newest message within settleSeconds', () => {
+		expect(quietMs(() => 0)).toBe(2_000);
+		expect(quietMs(() => 0.5, withSettle([1, 3]))).toBe(2_000);
+	});
+
+	it('is 0 without a draw when there is no quiet', () => {
+		const rng = vi.fn(() => 0.5);
+		expect(quietMs(rng, withSettle([0, 0]))).toBe(0);
+		expect(rng).not.toHaveBeenCalled();
+	});
+
+	it('refuses a burst setting it does not know, and maxRestarts below 1', () => {
+		expect(SettingsSchema.safeParse({ pacing: { burst: { settle: [1, 2] } } }).success).toBe(false);
+		expect(SettingsSchema.safeParse({ pacing: { burst: { maxRestarts: 0 } } }).success).toBe(false);
+		expect(DEFAULT_SETTINGS.pacing.burst).toEqual({ settleSeconds: [2, 5], maxSettleResets: 3, restartOnNewMessage: true, maxRestarts: 1 });
 	});
 });
 

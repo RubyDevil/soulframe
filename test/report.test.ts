@@ -85,10 +85,12 @@ describe('the warnings on a persona', () => {
 		]);
 	});
 
-	it('warns when it answers several people at once, which can lose self notes', () => {
-		expect(personaWarnings(persona({ window: evening, settings: { pacing: { singlePresence: false } } }), ['forum'])).toEqual([
-			`"test" has pacing.singlePresence off: replies to different people run at once and can overwrite each other's self notes`,
+	it('warns when a reply may be written again more than once, each time paid for', () => {
+		expect(personaWarnings(persona({ window: evening, settings: { pacing: { burst: { maxRestarts: 3 } } } }), ['forum'])).toEqual([
+			'"test" has pacing.burst.maxRestarts 3: each restart drops a draft already paid for, so one reply may cost up to 4 DM turns of tokens',
 		]);
+		// Not when it never starts over
+		expect(personaWarnings(persona({ window: evening, settings: { pacing: { burst: { maxRestarts: 3, restartOnNewMessage: false } } } }), ['forum'])).toEqual([]);
 		expect(warningsOf({ window: evening })).toEqual([]);
 	});
 });

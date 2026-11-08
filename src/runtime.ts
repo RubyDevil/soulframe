@@ -1,10 +1,10 @@
 import { existsSync } from 'node:fs';
 import { inspect } from 'node:util';
-import { unhandled, type Brain, type Decision, type PersonAction } from './brain.js';
+import { unhandled, type Brain, type Decision, type PersonAction, type Turn } from './brain.js';
 import type { Channel, ChannelId } from './channel.js';
 import { LlmBudgetError, ModelNotConfiguredError, ProviderUnavailableError } from './llm.js';
 import type { PersonaConfig } from './config/personas.js';
-import { betweenMessagesMs, fitDelay, quickReplyMs, readingMs, replyDelayMs, typingPlan } from './pacing.js';
+import { betweenMessagesMs, fitDelay, quickReplyMs, quietMs, readingMs, replyDelayMs, typingPlan } from './pacing.js';
 import { between, sleep, type Rng } from './rng.js';
 import { nextSpan, spanAt, type Hours, type Span } from './schedule.js';
 import { MINUTE, SECOND } from './settings.js';
@@ -90,14 +90,39 @@ const endedIt = (state: PersonState) => state === 'stopped' || state === 'denied
 const BACKLOG_LOOKBACK = 48 * 60 * MINUTE;
 /** A reply is due at least this long before its span ends, or it waits for the next span. */
 const SPAN_END_MARGIN = 90 * SECOND;
-/** A reply under way for longer than this no longer holds the others back (`pacing.singlePresence`): a send that never returned must not silence the persona. */
+/** A turn under way for longer than this no longer holds the others back: a send that never returned must not silence the persona. */
 const PRESENCE_LEASE = 10 * MINUTE;
 
+/** How a reply ended: sent in full, paused (the halt switch, the queue stopped), ended by them, dropped for a newer message of theirs, or a send that failed. */
+type Stop = 'done' | 'halt_switch' | 'stopped' | 'ended' | 'superseded' | 'unreachable' | 'failed';
+
+/** A turn under way. */
+interface TurnState {
+	/** When it started: past PRESENCE_LEASE it no longer holds the others back. */
+	readonly since: number;
+	/** Their newest message the draft being written read. */
+	through: number;
+	/** Messages of the reply sent so far. */
+	sent: number;
+	/** The draft is being written or typed, its first message not sent yet: a newer message of theirs may make it start over. */
+	writing: boolean;
+	/** It starts over: a message of theirs came in while it was writing (`pacing.burst.restartOnNewMessage`). */
+	superseded: boolean;
+	/** How many times it started over. */
+	restarts: number;
+	/** Saves what the draft being sent wrote and decided (`Turn.keep`): once its first message is sent, or once it is committed. */
+	keep?: () => void;
+}
+
 /**
- * Answers people at a human pace: one turn per person at a time (more messages from them while it waits are answered
- * together). While a span is open on their channel, after a random delay (only quick ones on a short break) that ends
- * before the span does. Otherwise they wait in the backlog, answered once a span opens: one person at a time, oldest
- * first, with a pause before each. The typing indicator shows for a time proportional to each message.
+ * Answers people at a human pace, one person at a time: while it writes or sends a reply to someone it starts nobody
+ * else's, so what one turn learns about itself is never overwritten by another (self notes are read when a turn starts
+ * and written when it ends). One turn per person at a time: more messages from them while it waits are answered
+ * together. While a span is open on their channel, a turn is due after a random delay (only quick ones on a short break)
+ * that ends before the span does, and once they stopped writing (`pacing.burst`); due turns start as soon as the persona
+ * is free, in the order they came due. Otherwise they wait in the backlog, answered once a span opens: one person at a
+ * time, oldest first, with a pause before each. It reads their messages while it writes, and types each message for a
+ * time proportional to it.
  */
 export function createReplyQueue({
 	persona,
@@ -115,14 +140,27 @@ export function createReplyQueue({
 	act: (personId: number, action: PersonAction) => Promise<void>;
 }) {
 	const { retries, pacing } = persona.settings;
+	const { burst } = pacing;
+	/** By person: the timer of a turn's delay, a retry or a backlog gap. */
 	const pending = new Map<number, NodeJS.Timeout>();
 	/** The backlog: people owed a turn while no span was open for it, oldest first. */
 	const waiting = new Map<number, Conversation>();
-	const busy = new Set<number>();
+	/** Due while they were still writing: due once their quiet ends. */
+	const settling = new Map<number, Conversation>();
+	/** Due, in the order they came due: the first starts as soon as the persona is free. */
+	const ready = new Map<number, Conversation>();
+	/** The quiet each is given after their newest message (`pacing.burst`): its timer, how many messages started it again, and what waits for its end. */
+	const quiet = new Map<number, { timer: NodeJS.Timeout; resets: number; ended: (() => void)[] }>();
+	/** Turns under way, by person: one at a time, but for one stuck past PRESENCE_LEASE. */
+	const active = new Map<number, TurnState>();
+	/** The turn the others wait for, until it has run PRESENCE_LEASE. */
+	let present: TurnState | null = null;
+	/** Lets the others go once that turn has run PRESENCE_LEASE. */
+	let lease: NodeJS.Timeout | undefined;
+	/** A message that came in during their turn, too late for it to start over: their next turn comes once this one ends. */
+	const owedAfter = new Map<number, Conversation>();
 	/** The backlog turn in progress (one at a time), and the start of the span it was taken in. */
 	let drainingId: number | null = null;
-	/** With `pacing.singlePresence`: who it is composing or sending a reply to, and since when. */
-	let present: { personId: number; since: number } | null = null;
 	let drainSpanStart: number | null = null;
 	const invitations = new Map<number, NonNullable<Conversation['invitation']>>();
 	/** Failed attempts at the pending answer, by person. */
@@ -135,20 +173,44 @@ export function createReplyQueue({
 	/** Set by `stop` (the app's, after a start that failed, say): a turn under way sends nothing more and nothing is timed or parked again, so whoever it was for is still owed at the next start. */
 	let stopped = false;
 	/** Why nothing may be sent or started now, if so: the queue stopped, or the halt switch. */
-	/** Someone else's reply is under way, with `pacing.singlePresence`, and not for so long that it must be stuck (it stops blocking after PRESENCE_LEASE). */
-	const occupied = () => present !== null && runtime.now() - present.since < PRESENCE_LEASE;
 	const paused = () => (stopped ? 'stopped' : runtime.halted() ? 'halt_switch' : null);
+	/** A turn is under way, and not for so long that it must be stuck (it stops holding the others back after PRESENCE_LEASE). */
+	const occupied = () => present !== null && runtime.now() - present.since < PRESENCE_LEASE;
+
+	/** A send or read receipt that failed: someone it can no longer reach is stopped for good, anything else logged. */
+	const failedDelivery = (error: unknown, personId: number, channel: ChannelId, sent: number): 'unreachable' | 'failed' => {
+		if (error instanceof UnreachableError) {
+			// A goodbye refused keeps them denied or blocked
+			if (runtime.store.personById(personId).state === 'active') runtime.store.updatePerson(personId, { state: 'stopped' });
+			runtime.log(persona.id, 'unreachable', { personId, platform: channel, code: error.code });
+			return 'unreachable';
+		}
+		runtime.log(persona.id, 'delivery_failed', { personId, platform: channel, sent, error: String(error) });
+		return 'failed';
+	};
+
+	/** Whether a reply goes on ('done') or why not: paused, no longer `stillWanted`, or its draft starts over for a newer message (`state.superseded`). */
+	const cutFor =
+		(state: TurnState | undefined, stillWanted: () => boolean) =>
+		(): Stop =>
+			paused() ?? (!stillWanted() ? 'ended' : state?.superseded ? 'superseded' : 'done');
 
 	/**
 	 * Sends the messages in order, typing before each, and records each one once sent (a dry run only logs it); either
-	 * way the conversation is told it was `delivered`. Before the first one is typed, their messages are shown read (with
-	 * `markRead`) and `readChars` characters are read, as long as that takes. The rest is dropped once paused or no longer `stillWanted`, checked again after each wait, or once a
-	 * send fails: that is never retried, since a send that timed out may still have landed. Typing always ends, sent or
-	 * not. Answers how many went out and why it stopped.
+	 * way the conversation is told it was `delivered`. With `markRead`, their messages are shown read first (the code's
+	 * goodbye: a turn shows them read while it writes). The rest is dropped once paused, no longer `stillWanted`, or the
+	 * draft is to start over (`state.superseded`, before its first message), checked again after each wait, or once a send
+	 * fails: that is never retried, since a send that timed out may still have landed. The first message sent keeps the
+	 * turn (`state.keep`). Typing always ends, sent or not. Answers how many went out and why it stopped.
 	 */
-	const deliver = async (conversation: Conversation, messages: string[], personId: number, stillWanted = () => true, readChars = 0) => {
+	const deliver = async (
+		conversation: Conversation,
+		messages: string[],
+		personId: number,
+		{ stillWanted = () => true, state, markRead = false }: { stillWanted?: () => boolean; state?: TurnState; markRead?: boolean } = {},
+	) => {
 		const channel = conversation.channel.id;
-		const cut = () => paused() ?? (stillWanted() ? 'done' : 'ended');
+		const cut = cutFor(state, stillWanted);
 		/** Waits `ms`, then answers whether the reply goes on ('done') or why not. */
 		const wait = async (ms: number) => {
 			await sleep(ms);
@@ -174,7 +236,7 @@ export function createReplyQueue({
 		const typeOut = async (text: string) => {
 			const plan = typingPlan(text, runtime.rng, pacing);
 			await typing(true);
-			let reason: ReturnType<typeof cut> = await typeFor(plan.typing[0]!);
+			let reason: Stop = await typeFor(plan.typing[0]!);
 			for (const [i, pause] of plan.pauses.entries()) {
 				if (reason !== 'done') break;
 				await typing(false);
@@ -185,16 +247,13 @@ export function createReplyQueue({
 			return reason;
 		};
 		let sent = 0;
-		let stop: 'done' | 'halt_switch' | 'stopped' | 'ended' | 'unreachable' | 'failed' = 'done';
+		let stop: Stop = 'done';
 		for (const text of messages) {
 			if (sent) await sleep(betweenMessagesMs(runtime.rng, pacing));
 			if ((stop = cut()) !== 'done') break;
 			try {
 				// Once, before the first message is typed (nothing follows a failed one)
-				if (!sent) {
-					await conversation.markRead?.();
-					if ((stop = await wait(readingMs(readChars, runtime.rng, pacing))) !== 'done') break;
-				}
+				if (!sent && markRead) await conversation.markRead?.();
 				if ((stop = await typeOut(text)) !== 'done') break;
 				if (runtime.dryRun) runtime.log(persona.id, 'dry_send', { personId, platform: channel, text });
 				else {
@@ -204,16 +263,14 @@ export function createReplyQueue({
 				}
 				conversation.delivered?.(text);
 				sent++;
-			} catch (error) {
-				if (error instanceof UnreachableError) {
-					stop = 'unreachable';
-					// A goodbye refused keeps them denied or blocked
-					if (runtime.store.personById(personId).state === 'active') runtime.store.updatePerson(personId, { state: 'stopped' });
-					runtime.log(persona.id, 'unreachable', { personId, platform: channel, code: error.code });
-				} else {
-					stop = 'failed';
-					runtime.log(persona.id, 'delivery_failed', { personId, platform: channel, sent, error: String(error) });
+				if (state) {
+					// Something went out: the turn is kept, and no newer message makes it start over now
+					state.sent = sent;
+					state.writing = false;
+					state.keep?.();
 				}
+			} catch (error) {
+				stop = failedDelivery(error, personId, channel, sent);
 				break;
 			} finally {
 				if (typingShown) await typing(false);
@@ -227,59 +284,205 @@ export function createReplyQueue({
 		return { sent, stop };
 	};
 
-	/** A turn that is due: answered while a span is open on its channel, else back into the backlog. A backlog turn ends here, whatever happened. */
-	const fire = async (personId: number, conversation: Conversation) => {
-		pending.delete(personId);
+	/**
+	 * What a turn does while the model writes: shows their messages read (`markRead`), then reads `chars` characters for
+	 * as long as that takes. Answers as `deliver`'s waits, or 'failed' / 'unreachable' when the read receipt was refused.
+	 */
+	const read = async (conversation: Conversation, personId: number, chars: number, cut: () => Stop): Promise<Stop> => {
 		try {
-			if (runtime.halted()) {
-				runtime.log(persona.id, 'reply_paused', { personId, platform: conversation.channel.id, reason: 'halt_switch' });
-				park(personId, conversation, 'halt_switch');
-			} else if (!spanAt(persona, runtime.now(), conversation.channel.id)) park(personId, conversation, 'offline');
-			else if (busy.has(personId) || occupied()) schedule(personId, conversation, 5_000);
-			else await answer(personId, conversation);
+			await conversation.markRead?.();
+		} catch (error) {
+			return failedDelivery(error, personId, conversation.channel.id, 0);
+		}
+		await sleep(readingMs(chars, runtime.rng, pacing));
+		return cut();
+	};
+
+	/** Resolves once they have been quiet for their `pacing.burst.settleSeconds` (at once when they are, or once stopped). */
+	const quietEnd = (personId: number) =>
+		new Promise<void>((resolve) => {
+			const entry = quiet.get(personId);
+			if (entry && !stopped) entry.ended.push(resolve);
+			else resolve();
+		});
+
+	/**
+	 * A message of theirs came in, while a span is open on its channel: the quiet after it starts, or starts again while one
+	 * runs, at most `burst.maxSettleResets` times (past them it ends as it was, so someone who never stops still gets a
+	 * reply). A turn due meanwhile waits for its end.
+	 */
+	const heard = (personId: number, channel: ChannelId) => {
+		if (stopped || !spanAt(persona, runtime.now(), channel)) return;
+		const current = quiet.get(personId);
+		if (current && current.resets >= burst.maxSettleResets) return;
+		const ms = quietMs(runtime.rng, pacing);
+		if (ms <= 0) return;
+		if (current) clearTimeout(current.timer);
+		quiet.set(personId, { timer: setTimeout(() => quieted(personId), ms), resets: current ? current.resets + 1 : 0, ended: current?.ended ?? [] });
+	};
+
+	/** Their quiet is over: what waited for it goes on, a turn that came due meanwhile first. */
+	const quieted = (personId: number) => {
+		const entry = quiet.get(personId);
+		quiet.delete(personId);
+		for (const resolve of entry?.ended ?? []) resolve();
+		const conversation = settling.get(personId);
+		if (!conversation) return;
+		settling.delete(personId);
+		due(personId, conversation);
+	};
+
+	/** Into the backlog after the halt switch, logged. */
+	const haltPark = (personId: number, conversation: Conversation) => {
+		runtime.log(persona.id, 'reply_paused', { personId, platform: conversation.channel.id, reason: 'halt_switch' });
+		park(personId, conversation, 'halt_switch');
+	};
+
+	/** A turn that is due: while a span is open on its channel, ready once they stopped writing; else back into the backlog. */
+	const due = (personId: number, conversation: Conversation) => {
+		pending.delete(personId);
+		if (runtime.halted()) return haltPark(personId, conversation);
+		if (!spanAt(persona, runtime.now(), conversation.channel.id)) return park(personId, conversation, 'offline');
+		// Still writing: due once they stop
+		if (quiet.has(personId)) return void settling.set(personId, conversation);
+		ready.set(personId, conversation);
+		// An earlier turn of theirs is still under way (stuck): the backlog moves on meanwhile
+		if (active.has(personId)) release(personId);
+		next();
+	};
+
+	/**
+	 * Starts the first ready turn once the persona is free (no turn under way, or one past PRESENCE_LEASE). Anyone whose span
+	 * closed while they waited goes back into the backlog, and while halted everyone does; someone writing again waits for
+	 * their quiet once more.
+	 */
+	const next = () => {
+		if (stopped || occupied()) return;
+		for (const [personId, conversation] of ready) {
+			// Their earlier turn, stuck past PRESENCE_LEASE, is still under way: this one waits for it to end
+			if (active.has(personId)) continue;
+			ready.delete(personId);
+			if (runtime.halted()) haltPark(personId, conversation);
+			else if (!spanAt(persona, runtime.now(), conversation.channel.id)) park(personId, conversation, 'offline');
+			else if (quiet.has(personId)) settling.set(personId, conversation);
+			else return void answer(personId, conversation);
+		}
+	};
+
+	/** One turn under way: the others wait until it ends (or has run PRESENCE_LEASE), then the next starts. */
+	const answer = async (personId: number, conversation: Conversation) => {
+		const state: TurnState = { since: runtime.now(), through: 0, sent: 0, writing: false, superseded: false, restarts: 0 };
+		active.set(personId, state);
+		present = state;
+		clearTimeout(lease);
+		lease = setTimeout(next, PRESENCE_LEASE);
+		try {
+			await turn(personId, conversation, state);
+		} catch (error) {
+			runtime.log(persona.id, 'delivery_failed', { personId, error: String(error) });
 		} finally {
+			active.delete(personId);
+			if (present === state) {
+				present = null;
+				clearTimeout(lease);
+			}
+			// A message that came in too late for this turn gets its own, unless a draft written after it read it
+			const later = owedAfter.get(personId);
+			owedAfter.delete(personId);
+			const person = runtime.store.personById(personId);
+			if (later && person.state === 'active' && person.lastInAt > state.through) schedule(personId, later);
 			release(personId);
+			next();
 		}
 	};
 
 	/**
-	 * Composes their turn and carries it out: the reply, the persona's action, an invitation it accepted. The turn is
-	 * committed (their messages it answered marked handled) once its delivery was attempted: sent, failed or cut short.
-	 * Only a turn paused before its first send stays owed: back in the backlog after HALT, for the next start after
-	 * `stop`; one cut by a restart before its delivery ended is queued again at the next start. Nothing more is carried
-	 * out once paused. The history holds only what was actually sent. A dry run marks nothing handled.
+	 * The turn starts over for a newer message of theirs: the draft is dropped (nothing of it was sent or kept), and it waits
+	 * for the quiet after their newest message. Answers whether to write it again: not once they ended it, nor once paused
+	 * (still owed, as before a first send: after HALT back in the backlog unless a newer message's turn is coming).
 	 */
-	const answer = async (personId: number, conversation: Conversation) => {
+	const restart = async (personId: number, conversation: Conversation, state: TurnState) => {
+		state.superseded = false;
+		state.writing = false;
+		state.keep = undefined;
+		state.restarts++;
+		runtime.log(persona.id, 'reply_restarted', { personId, platform: conversation.channel.id, restarts: state.restarts });
+		await quietEnd(personId);
+		if (endedIt(runtime.store.personById(personId).state)) return false;
+		const pause = paused();
+		if (pause === 'halt_switch' && !queued(personId)) park(personId, conversation, 'halt_switch');
+		return !pause;
+	};
+
+	/**
+	 * Composes their turn and carries it out: the reply, the persona's action, an invitation it accepted. Their messages are
+	 * read while the model writes; one that comes in before the first message is sent makes the draft start over while it
+	 * may (`pacing.burst`). The turn is committed (their messages it answered marked handled, what it wrote kept) once its
+	 * delivery was attempted: sent, failed or cut short. Only a turn paused before its first send stays owed: back in the
+	 * backlog after HALT, for the next start after `stop`; one cut by a restart before its delivery ended is queued again
+	 * at the next start. Nothing more is carried out once paused. The history holds only what was actually sent. A dry
+	 * run marks nothing handled.
+	 */
+	const turn = async (personId: number, conversation: Conversation, state: TurnState) => {
 		const channel = conversation.channel.id;
-		busy.add(personId);
-		if (pacing.singlePresence) present = { personId, since: runtime.now() };
-		try {
-			let turn: Awaited<ReturnType<Brain['compose']>>;
-			const invitation = conversation.channel.invitations ? invitations.get(personId) : undefined;
+		const invitation = conversation.channel.invitations ? invitations.get(personId) : undefined;
+		// Anything but the code's goodbye is dropped once they end it meanwhile (a block the persona chose still sends its reply)
+		const stillWanted = () => !endedIt(runtime.store.personById(personId).state);
+		const cut = cutFor(state, stillWanted);
+		/** Their messages up to this time were read by an earlier draft of this turn. */
+		let readUpTo = 0;
+		for (;;) {
 			// Their newest message the model sees: compose reads them before its first wait
 			const { lastInAt: through, handledAt } = runtime.store.personById(personId);
-			/** What there is to read: their messages this turn answers, together. */
-			const readChars = unhandled(runtime.store.history(personId, persona.settings.memory.historyMessages), handledAt).reduce((sum, m) => sum + m.text.length, 0);
+			state.through = through;
+			state.writing = true;
+			/** What there is to read: their messages this turn answers, together, but for those an earlier draft read. */
+			const readChars = unhandled(runtime.store.history(personId, persona.settings.memory.historyMessages), Math.max(handledAt, readUpTo)).reduce((sum, m) => sum + m.text.length, 0);
+			readUpTo = through;
+			runtime.log(persona.id, 'reply_processing', { personId, platform: channel });
+			// It reads them while the model writes
+			const reading = read(conversation, personId, readChars, cut);
+			let composed: Turn;
 			try {
-				runtime.log(persona.id, 'reply_processing', { personId, platform: channel });
-				turn = await brain.compose(personId, conversation.channel, { invitation: invitation?.name, extraLines: conversation.extraLines });
+				composed = await brain.compose(personId, conversation.channel, { invitation: invitation?.name, extraLines: conversation.extraLines });
 				failures.delete(personId);
 				providerWaits.delete(personId);
 			} catch (error) {
+				// The turn ends here, its reading left to finish on its own: the next try is timed from now, and the next person need not wait
+				state.writing = false;
+				void reading;
+				// A message that was to make it start over gets a turn of its own, if no retry answers it
+				if (state.superseded) owedAfter.set(personId, conversation);
 				// A stopped queue tries nothing again: they are still owed at the next start
 				if (!stopped) retry(personId, conversation, error, through);
 				return;
 			}
-			/** Those messages had their turn (one that came in meanwhile is still owed), and so had the invitation, unless it waits for full online time. */
+			const readStop = await reading;
+			if (state.superseded && !composed.final) {
+				if (await restart(personId, conversation, state)) continue;
+				return;
+			}
+			// The code's goodbye never starts over
+			if (composed.final) Object.assign(state, { superseded: false, writing: false });
+			state.keep = composed.keep;
+			/** Those messages had their turn (one that came in meanwhile is still owed), and so had the invitation, unless it waits for full online time; what it wrote is kept. */
 			const commit = () => {
+				state.writing = false;
 				if (!runtime.dryRun) runtime.store.updatePerson(personId, { handledAt: through });
-				if (!turn.inviteWaits && invitations.get(personId) === invitation) invitations.delete(personId);
+				if (!composed.inviteWaits && invitations.get(personId) === invitation) invitations.delete(personId);
+				composed.keep?.();
 			};
-			// Anything but the code's goodbye is dropped once they end it meanwhile (a block the persona chose still sends its reply)
-			const stillWanted = () => !endedIt(runtime.store.personById(personId).state);
-			if (turn.messages.length) {
-				const { sent, stop } = await deliver(conversation, turn.messages, personId, turn.final ? undefined : stillWanted, readChars);
+			if (composed.messages.length) {
+				const { sent, stop } =
+					readStop === 'failed' || readStop === 'unreachable'
+						? { sent: 0, stop: readStop }
+						: await deliver(conversation, composed.messages, personId, { stillWanted: composed.final ? undefined : stillWanted, state });
+				if (stop === 'superseded') {
+					if (await restart(personId, conversation, state)) continue;
+					return;
+				}
 				if ((stop === 'halt_switch' || stop === 'stopped') && !sent && runtime.store.personById(personId).state === 'active') {
+					state.writing = false;
 					// Paused before anything went out: still owed, invitation and all; after HALT back in the backlog unless a newer message's turn is coming
 					if (!queued(personId)) park(personId, conversation, 'halt_switch');
 					return;
@@ -291,21 +494,17 @@ export function createReplyQueue({
 				runtime.log(persona.id, 'reply_skipped', { personId, platform: channel, reason: 'no_reply' });
 			}
 			const pause = paused();
-			if (turn.action !== 'none') {
-				// The store has it already (compose ends the conversation on a block), but nothing new starts on the channel
-				if (pause) runtime.log(persona.id, 'action_skipped', { personId, action: turn.action, reason: pause });
-				else if (runtime.dryRun) runtime.log(persona.id, `dry_${turn.action}`, { personId });
-				else await act(personId, turn.action);
+			if (composed.action !== 'none') {
+				// The store has it already (keep ends the conversation on a block), but nothing new starts on the channel
+				if (pause) runtime.log(persona.id, 'action_skipped', { personId, action: composed.action, reason: pause });
+				else if (runtime.dryRun) runtime.log(persona.id, `dry_${composed.action}`, { personId });
+				else await act(personId, composed.action);
 			}
-			if (invitation && turn.acceptInvite && turn.action === 'none' && !pause && stillWanted()) {
+			if (invitation && composed.acceptInvite && composed.action === 'none' && !pause && stillWanted()) {
 				runtime.log(persona.id, 'invite_accepted', { personId, invitation: invitation.name, dryRun: runtime.dryRun });
 				if (!runtime.dryRun) await invitation.join();
 			} else if (invitation) runtime.log(persona.id, 'invite_not_joined', { personId, invitation: invitation.name });
-		} catch (error) {
-			runtime.log(persona.id, 'delivery_failed', { personId, error: String(error) });
-		} finally {
-			busy.delete(personId);
-			if (present?.personId === personId) present = null;
+			return;
 		}
 	};
 
@@ -348,16 +547,17 @@ export function createReplyQueue({
 		if (stopped) return;
 		// setTimeout holds at most about 24.8 days
 		const delayMs = Math.round(Math.min(wait, 2_000_000_000));
-		pending.set(personId, setTimeout(() => void fire(personId, conversation), delayMs));
+		pending.set(personId, setTimeout(() => due(personId, conversation), delayMs));
 		runtime.log(persona.id, 'reply_scheduled', { personId, platform: conversation.channel.id, delayMs, dueAt: new Date(runtime.now() + delayMs).toISOString(), reason });
 	};
 
-	/** Into the backlog: answered once a span with time for it is open on their channel (`drain`); never once stopped. */
+	/** Into the backlog: answered once a span with time for it is open on their channel (`drain`); never once stopped. A backlog turn parked again lets the next one start. */
 	const park = (personId: number, conversation: Conversation, reason: 'offline' | 'span_ending' | 'halt_switch' | 'restart') => {
 		if (stopped) return;
 		waiting.set(personId, conversation);
 		const next = nextSpan(persona, runtime.now(), { channel: conversation.channel.id });
 		runtime.log(persona.id, 'reply_waiting', { personId, platform: conversation.channel.id, reason, backlog: waiting.size, nextOpenAt: next ? new Date(next.start).toISOString() : null });
+		release(personId);
 	};
 
 	/** Starts the next backlog turn unless one is in progress: the oldest waiting person whose channel has a span open with time left for it. */
@@ -385,16 +585,32 @@ export function createReplyQueue({
 		drain();
 	};
 
-	/** Their turn is already coming: timed, or in the backlog. */
-	const queued = (personId: number) => pending.has(personId) || waiting.has(personId);
+	/** Their turn is already coming: timed, due, or in the backlog. */
+	const queued = (personId: number) => pending.has(personId) || waiting.has(personId) || settling.has(personId) || ready.has(personId);
 
+	/**
+	 * Times their turn: after `delay` when given (a retry), else as pacing says while a span is open on their channel, else
+	 * into the backlog. A turn already coming answers their newer messages too. During their turn under way, a newer
+	 * message makes its draft start over while it may (`pacing.burst`), or else gets a turn of its own once that one ends.
+	 */
 	const schedule = (personId: number, conversation: Conversation, delay?: number) => {
 		if (queued(personId)) {
 			runtime.log(persona.id, 'reply_batched', { personId, platform: conversation.channel.id });
 			return;
 		}
-		// A retry keeps its own delay; if no span is open by then, `fire` parks it
+		// A retry keeps its own delay; if no span is open by then, `due` parks it
 		if (delay !== undefined) return timeReply(personId, conversation, delay, 'retry');
+		const during = active.get(personId);
+		if (during) {
+			if (burst.restartOnNewMessage && during.writing && during.restarts < burst.maxRestarts) {
+				if (!during.superseded) runtime.log(persona.id, 'reply_superseded', { personId, platform: conversation.channel.id });
+				during.superseded = true;
+			} else {
+				owedAfter.set(personId, conversation);
+				runtime.log(persona.id, 'reply_after_turn', { personId, platform: conversation.channel.id });
+			}
+			return;
+		}
 		const now = runtime.now();
 		const span = spanAt(persona, now, conversation.channel.id);
 		// Only quick replies on a short break, and always due before the span ends
@@ -419,23 +635,30 @@ export function createReplyQueue({
 				...(decision.kind === 'ignore' ? { reason: decision.reason } : { personId: decision.person.id }),
 			});
 			if (decision.kind === 'ignore') return;
+			const personId = decision.person.id;
 			if (decision.kind === 'final') {
-				invitations.delete(decision.person.id);
-				waiting.delete(decision.person.id);
-				const timer = pending.get(decision.person.id);
-				pending.delete(decision.person.id);
-				if (timer) {
-					clearTimeout(timer);
-					// A backlog turn it cancelled lets the next one start
-					release(decision.person.id);
-				}
+				invitations.delete(personId);
+				waiting.delete(personId);
+				settling.delete(personId);
+				ready.delete(personId);
+				owedAfter.delete(personId);
+				const entry = quiet.get(personId);
+				quiet.delete(personId);
+				if (entry) clearTimeout(entry.timer);
+				// A turn under way waiting for their quiet ends now: they ended it
+				for (const resolve of entry?.ended ?? []) resolve();
+				clearTimeout(pending.get(personId));
+				pending.delete(personId);
+				// A backlog turn it cancelled lets the next one start (one under way does as it ends)
+				if (!active.has(personId)) release(personId);
 				// A final answer goes out soon, in or out of hours: it ends the conversation. One cut by HALT is dropped: they are stopped or denied already
 				await sleep(between(runtime.rng, 2_000, 10_000));
-				await deliver(conversation, decision.messages, decision.person.id);
+				await deliver(conversation, decision.messages, personId, { markRead: true });
 				return;
 			}
-			if (conversation.invitation) invitations.set(decision.person.id, conversation.invitation);
-			schedule(decision.person.id, conversation);
+			if (conversation.invitation) invitations.set(personId, conversation.invitation);
+			heard(personId, conversation.channel.id);
+			schedule(personId, conversation);
 		},
 		schedule,
 		/** Everyone who last wrote on `channel` and is still owed a turn since the persona was last online, into the backlog, oldest first. */
@@ -445,12 +668,12 @@ export function createReplyQueue({
 				// null: they can't be reached there any more
 				const conversation = await conversationOf(person);
 				// Someone who wrote since the start already has their turn
-				if (conversation && !queued(person.id) && !busy.has(person.id)) park(person.id, conversation, 'restart');
+				if (conversation && !queued(person.id) && !active.has(person.id)) park(person.id, conversation, 'restart');
 			}
 		},
 		/**
 		 * Once every channel is up: every 30 s, records when the persona was last online and answering (not halted, not a
-		 * dry run), for the next start's backlogSince, and moves the backlog on. Once only, and never after `stop`.
+		 * dry run), for the next start's backlogSince, and moves the backlog and the ready turns on. Once only, and never after `stop`.
 		 */
 		start() {
 			if (tick || stopped) return;
@@ -458,14 +681,25 @@ export function createReplyQueue({
 				const now = runtime.now();
 				if (!runtime.dryRun && spanAt(persona, now) && !runtime.halted()) runtime.store.set(persona.id, 'lastOnlineAt', String(now));
 				drain();
+				next();
 			}, 30_000);
 		},
 		stop() {
 			stopped = true;
 			clearInterval(tick);
+			clearTimeout(lease);
 			for (const timer of pending.values()) clearTimeout(timer);
 			pending.clear();
+			// A turn waiting for someone's quiet goes on, to find the queue stopped
+			for (const entry of quiet.values()) {
+				clearTimeout(entry.timer);
+				for (const resolve of entry.ended) resolve();
+			}
+			quiet.clear();
 			waiting.clear();
+			settling.clear();
+			ready.clear();
+			owedAfter.clear();
 			drainingId = null;
 			invitations.clear();
 		},

@@ -225,12 +225,25 @@ export const SettingsSchema = z
 					.strict()
 					.default({}),
 				/**
-				 * One person at a time: while it is composing or sending a reply to someone, it starts nobody else's, so what it
-				 * learns about itself is never overwritten by a turn that began before it (self notes are read when a turn starts and
-				 * written when it ends). Others wait their turn, a few seconds at a time. Turn it off only if you accept that:
-				 * parallel turns can lose each other's self notes. A turn stuck for over 10 minutes stops blocking the others.
+				 * Someone who writes in bursts, several messages in a row: how long it waits for them to finish before it starts the
+				 * reply, and what a message that comes in while it writes one does.
 				 */
-				singlePresence: z.boolean().default(true),
+				burst: z
+					.object({
+						/** Seconds of quiet after their newest message before it starts writing the reply; a message in that time starts the wait again. [0, 0] for none. */
+						settleSeconds: range(2, 5),
+						/** The most messages that may start the wait again; past them it starts writing anyway, so someone who never stops still gets a reply. */
+						maxSettleResets: z.number().int().min(0).max(20).default(3),
+						/**
+						 * A message that comes in while it writes the reply, before the first message of it is sent: the draft is dropped
+						 * and written again with that message read. Off, that message gets a turn of its own once this one is sent.
+						 */
+						restartOnNewMessage: z.boolean().default(true),
+						/** The most times in a row one reply may be written again so. Each costs a whole DM turn of tokens (the dropped draft is paid for): personaWarnings warns above 1. */
+						maxRestarts: z.number().int().min(1).max(5).default(1),
+					})
+					.strict()
+					.default({}),
 				/** Seconds between two messages of the same reply. */
 				betweenReplyMessagesSeconds: range(0.8, 3.5),
 				/** Chance that a long reply (over 90 characters) is sent as two messages. */

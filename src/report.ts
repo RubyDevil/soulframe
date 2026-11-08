@@ -20,7 +20,8 @@ const isCityZone = (timeZone: string) => timeZone === 'UTC' || (timeZone.include
 
 /**
  * Warnings about a persona: a time zone that is no city's, a weekday over 20 hours online, under an hour a day on
- * average, more than every other day off, one of its `channels` that no span ever includes, and no text provider.
+ * average, more than every other day off, one of its `channels` that no span ever includes, a reply that may be written
+ * again more than once (`pacing.burst.maxRestarts`), and no text provider.
  */
 export function personaWarnings(persona: PersonaConfig, channels: readonly ChannelId[]): string[] {
 	const { id, schedule, timezone } = persona;
@@ -35,7 +36,9 @@ export function personaWarnings(persona: PersonaConfig, channels: readonly Chann
 		...(average < 1 ? [`"${id}" is online about ${average.toFixed(1)} hours a day on average`] : []),
 		...skips.filter(({ chance }) => chance > 0.5).map(({ where, chance }) => `"${id}" takes more than every other day off${where} (skipDayChance ${chance})`),
 		...channels.filter((channel) => !spans.some((span) => isOn(span, channel))).map((channel) => `"${id}" is never online on ${channel}: its DMs there would wait forever`),
-		...(persona.settings.pacing.singlePresence ? [] : [`"${id}" has pacing.singlePresence off: replies to different people run at once and can overwrite each other's self notes`]),
+		...(persona.settings.pacing.burst.restartOnNewMessage && persona.settings.pacing.burst.maxRestarts > 1
+			? [`"${id}" has pacing.burst.maxRestarts ${persona.settings.pacing.burst.maxRestarts}: each restart drops a draft already paid for, so one reply may cost up to ${persona.settings.pacing.burst.maxRestarts + 1} DM turns of tokens`]
+			: []),
 		...(providerSet(persona.settings) ? [] : [`"${id}" has no text provider (settings.llm.baseUrl): the app refuses to start without it; a dry run uses canned lines`]),
 	];
 }

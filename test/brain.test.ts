@@ -176,13 +176,16 @@ describe('turns', () => {
 	});
 
 	it('may leave a message on read, sending nothing', async () => {
-		const { result, store, person } = await start(turn({}));
-		expect(result).toEqual({ messages: [], action: 'none' });
+		const { result } = await start(turn({}));
+		expect(result).toEqual({ messages: [], action: 'none', keep: expect.any(Function) });
 	});
 
 	it('keeps its notes small, cut after a whole word, and reads them back in the next turn', async () => {
 		const written = { notes: 'likes jazz and rain. '.repeat(50).trim(), self: `grew up by the sea, has a cat named Miso. ${'likes rain. '.repeat(100).trim()}` };
-		const { store, person, brain, seen } = await start(turn({ reply: 'ok', ...written }));
+		const { store, person, brain, seen, result } = await start(turn({ reply: 'ok', ...written }));
+		// Nothing is stored before the queue keeps the turn
+		expect([store.personById(person.id).summary, store.get(persona.id, 'selfNotes')]).toEqual(['', null]);
+		result.keep!();
 		const kept = { notes: store.personById(person.id).summary, self: store.get(persona.id, 'selfNotes')! };
 		for (const [key, max] of [['notes', DEFAULT_SETTINGS.memory.personNotes], ['self', DEFAULT_SETTINGS.memory.selfNotes]] as const) {
 			expect(kept[key].length).toBeLessThanOrEqual(max);
@@ -195,15 +198,21 @@ describe('turns', () => {
 		expect(seen[1]![0]!.content).toContain(`Your notes about Sam: ${kept.notes}`);
 	});
 
-	it('blocks: the person is ignored from then on', async () => {
-		const { result, brain } = await start(turn({ reply: 'bye', action: 'block' }));
+	it('blocks once the turn is kept: the person is ignored from then on', async () => {
+		const { result, brain, store, person } = await start(turn({ reply: 'bye', action: 'block' }));
 		expect(result.action).toBe('block');
+		expect(store.personById(person.id).state).toBe('active');
+		result.keep!();
+		// Once only
+		result.keep!();
+		expect(store.auditLog().filter((row) => row.kind === 'blocked')).toHaveLength(1);
 		expect(brain.incoming(DM.forum, 'p1', 'Sam', 'hello?')).toEqual({ kind: 'ignore', reason: 'blocked' });
 	});
 
 	it("takes a channel's own action only there, and audits it", async () => {
 		const forum = await start(turn({ reply: 'meh', action: SNOOZE.name }), 'forum');
 		expect(forum.result.action).toBe(SNOOZE.name);
+		forum.result.keep!();
 		expect(forum.store.auditLog('robin')[0]).toMatchObject({ kind: 'action', detail: { personId: forum.person.id, platform: 'forum', action: SNOOZE.name } });
 		expect(forum.brain.incoming(DM.forum, 'p1', 'Sam', 'hello?').kind).toBe('reply');
 		expect((await start(turn({ reply: 'meh', action: SNOOZE.name }), 'chat')).result.action).toBe('none');
@@ -418,7 +427,7 @@ describe('typed checks (settings.decisions)', () => {
 		for (const script of [{ writer_is_minor: 0.3 }, down as () => never, {}] as Script[]) {
 			const run = await start(script);
 			expect(run.decisions!.calls.length).toBeGreaterThan(0);
-			expect(run.result).toEqual(plain.result);
+			expect({ ...run.result, keep: undefined }).toEqual({ ...plain.result, keep: undefined });
 			expect(run.seen).toEqual(plain.seen);
 		}
 	});
@@ -578,7 +587,8 @@ describe('persona settings, character and relationship', () => {
 		const dm = async (text: string, channel: Channel = DM.forum) => {
 			const decision = brain.incoming(channel, 'p1', 'Sam', text);
 			if (decision.kind !== 'reply') throw new Error('expected a reply');
-			const { messages } = await brain.compose(decision.person.id, channel);
+			const { messages, keep } = await brain.compose(decision.person.id, channel);
+			keep?.();
 			delivered(store, decision.person, channel.id, messages);
 			return { person: store.personById(decision.person.id), system: seen.at(-1)![0]!.content, messages };
 		};

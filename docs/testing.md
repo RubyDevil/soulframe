@@ -136,7 +136,7 @@ tests fast:
 
 - **Zero the pacing** in the test persona: `settings: { pacing: { quickReplyChance: 1, slowReplyChance: 0,
   quickReplyDelaySeconds: [0, 0], typingDurationSeconds: [0, 0], betweenReplyMessagesSeconds: [0, 0] } }` (and
-  `readingDurationSeconds: [0, 0]`), then wait
+  `readingDurationSeconds: [0, 0]`, `burst: { settleSeconds: [0, 0] }`), then wait
   for the `reply_sent` event (wrap `runtime.log`) or poll the store. A code goodbye (`final`) still waits 2 to 10
   seconds.
 - **Fake timers**: Vitest's `vi.useFakeTimers()` and `await vi.runAllTimersAsync()` (or `advanceTimersByTimeAsync`).

@@ -302,13 +302,16 @@ Per persona. Unknown keys here are refused.
 | `busyReplyDelaySeconds` | range | `[300, 900]` | |
 | `typingCharsPerSecond` | range, floor 0.5 | `[3.5, 7]` | The typing indicator shows for as long as the message would take. |
 | `typingDurationSeconds` | range | `[1.5, 45]` | The shortest and longest typing time for one message (thinking pauses come on top). |
-| `singlePresence` | boolean | `true` | One person at a time: while it composes or sends a reply to someone it starts nobody else's, so its self notes (read when a turn starts, written when it ends) are never overwritten by a turn that began earlier. Others wait, re-checked every 5 seconds; a reply stuck for over 10 minutes stops holding them back. With `false`, turns for different people run in parallel and can lose each other's self notes; `personaWarnings` says so. |
 | `readingCharsPerSecond` | range, floor 1 | `[15, 25]` | How fast it reads: before typing it waits as long as their unread messages (together) take to read, with or without a `markRead` receipt (see [channels](./channels.md#typing-read-receipts-and-thinking-pauses)). |
 | `readingDurationSeconds` | range | `[1, 20]` | The shortest and longest that reading takes. |
 | `thinkingPauses.chance` | number, 0 to 1 | `0` | The chance of each pause while a long message is typed (typing off a moment, then on again); `0`: none. |
 | `thinkingPauses.minChars` | integer, 1 or more | `120` | The shortest message, in characters, that may have a pause. |
 | `thinkingPauses.max` | integer, 1 to 3 | `2` | The most pauses in one message. |
 | `thinkingPauses.seconds` | range | `[2, 6]` | How long each pause lasts; it adds to the typing time. Unknown keys under `thinkingPauses` are refused too. |
+| `burst.settleSeconds` | range | `[2, 5]` | Quiet after their newest message before it starts writing the reply: a message in that time starts the wait again. `[0, 0]` for none. |
+| `burst.maxSettleResets` | integer, 0 to 20 | `3` | The most messages that may start that wait again; past them it starts writing anyway. |
+| `burst.restartOnNewMessage` | boolean | `true` | A message that comes in while it writes the reply, before the reply's first message is sent, drops the draft: it is written again with that message read. `false`: that message gets a turn of its own once this one is sent. |
+| `burst.maxRestarts` | integer, 1 to 5 | `1` | The most times in a row one reply may be written again so. Each dropped draft was paid for (a whole DM turn of tokens): `personaWarnings` warns above 1. Unknown keys under `burst` are refused too. |
 | `betweenReplyMessagesSeconds` | range | `[0.8, 3.5]` | Between two messages of the same reply. |
 | `replySplitChance` | number, 0 to 1 | `0.35` | Chance that a single reply over 90 characters is sent as two messages. |
 | `returnOnlineReplyDelayMinutes` | range | `[0, 0]` | Extra wait after a span opens, before its first backlog reply; `[0, 0]` for none. |
@@ -324,6 +327,20 @@ settings:
     thinkingPauses:
       chance: 0.4
       seconds: [3, 8]
+```
+
+A persona answers one person at a time, always: while it writes or sends a reply to someone, the others' turns wait,
+and the first that came due starts the moment it is free (a turn under way for over 10 minutes stops holding them
+back). Someone who writes in bursts gets one reply once they stop: with the defaults it waits 2 to 5 seconds of quiet
+after their newest message, and a message that lands while the reply is being written makes it write the reply again,
+once, with that message read:
+
+```yaml
+settings:
+  pacing:
+    burst:
+      settleSeconds: [3, 6]       # a slower reader of bursts
+      restartOnNewMessage: false  # never drop a draft: a late message gets its own reply
 ```
 
 Each message is typed for its length at a speed drawn from `typingCharsPerSecond`, plus 0.4 to 1.5 seconds, kept

@@ -125,8 +125,20 @@ channel), all sharing one brain, one reply queue and one memory.
 `brain.incoming` decides at once what a message calls for; the **reply queue** (`createReplyQueue`) decides when and
 delivers:
 
+- **One person at a time.** While it writes or sends a reply to someone, it starts nobody else's: turns that came due
+  wait, and the first to come due starts the moment it is free, with no polling. What a turn learns about the persona
+  itself (its self notes, read when a turn starts and stored when it ends) is never overwritten by a turn that began
+  earlier. A turn under way for over 10 minutes stops holding the others back, so a send that never returns cannot
+  silence the persona.
 - **One turn per person at a time.** More messages from them while a turn waits are answered together
   (`reply_batched`).
+- **Bursts.** A turn starts only once they stopped writing: `pacing.burst.settleSeconds` of quiet after their newest
+  message, each message starting the wait again, up to `maxSettleResets` times. A message that comes in while the reply
+  is being written, before its first message is sent, drops the draft (`reply_superseded`, then `reply_restarted`): it
+  is written again, with that message read, once they are quiet (`restartOnNewMessage`, at most `maxRestarts` times in
+  a row). Nothing of a dropped draft is sent or stored: a turn's notes, block or action are kept only with the turn
+  (`Turn.keep`). Too late for that (something was sent already, or the restarts are spent), the message gets a turn of
+  its own once this one ends (`reply_after_turn`).
 - **Inside an open span**, a turn is timed with a random delay from `settings.pacing`: usually quick, sometimes slow,
   now and then a long "busy" gap. On a `break` only the quick delay is used. A turn is always due at least 90 seconds
   before its span ends.
@@ -136,9 +148,11 @@ delivers:
 - **Delivery** types before each message for a time proportional to its length (`typingCharsPerSecond`, within
   `typingDurationSeconds`, each persona's own), pauses between the messages of one reply, and splits a long single
   reply in two now and then (`replySplitChance`). The model may also write up to three messages itself, one per line.
-  Before it types, it reads what they wrote, as long as that takes at its reading speed (`readingCharsPerSecond`, `readingDurationSeconds`). Three opt-in touches make it look closer to a person typing: the conversation's `typingRefreshMs` keeps the
+  While the model writes the reply, it reads what they wrote, as long as that takes at its reading speed
+  (`readingCharsPerSecond`, `readingDurationSeconds`); typing starts once both are done. Three opt-in touches make it
+  look closer to a person typing: the conversation's `typingRefreshMs` keeps the
   indicator on while a long message is typed (platforms drop it after a few seconds), its `markRead()` shows their
-  messages read when the reply starts, and `thinkingPauses` lets typing
+  messages read as it starts writing the reply, and `thinkingPauses` lets typing
   stop a moment and start again in a long message. The halt switch, `stop()` and the person's state are checked after
   every wait, and typing never stays on after a reply is cut short or fails.
 - **Restarts.** While running (`queue.start()`), the queue records every 30 seconds when the persona was last online.
