@@ -58,6 +58,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   regardless. A chat it was answering when called away is not watched when it comes back. Logged as `away` (with `from` and `until`) and
   `interruption_held`; `personaReport` lists today's as scheduled.
 
+- `docs/attention.md`: when a persona answers, who goes first, how it gets to know people, every setting of it
+  explained in plain terms, and what to change coming from `0.1.0-beta.0`.
+
 ### Changed
 
 - **Drawn ranges have a shape.** Each setting a value is drawn from each time (typing and reading speeds, the burst

@@ -309,7 +309,8 @@ Per persona.
 
 ### `relationship`
 
-Per persona. How it comes to know and like each person, kept for each of them in the store (`Person.familiarity`,
+Per persona; explained in full, with the reply timing and who goes first, in
+[attention, timing and relationships](./attention.md#relationship-getting-to-know-and-like-each-person). How it comes to know and like each person, kept for each of them in the store (`Person.familiarity`,
 `Person.affinity`), and how the DM prompt describes it. Unknown keys here are refused.
 
 | Key | Type | Default | Notes |
@@ -339,6 +340,8 @@ settings:
 ```
 
 ### `pacing`
+
+What the timing settings mean together, in plain terms: [attention, timing and relationships](./attention.md).
 
 Per persona. Unknown keys here are refused.
 

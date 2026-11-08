@@ -122,6 +122,8 @@ channel), all sharing one brain, one reply queue and one memory.
 
 ## The reply queue and the backlog
 
+Every setting below is explained in plain terms in [attention, timing and relationships](./attention.md).
+
 `brain.incoming` decides at once what a message calls for; the **reply queue** (`createReplyQueue`) decides when and
 delivers:
 

@@ -215,6 +215,8 @@ Read [concepts](./docs/concepts.md) for the whole picture.
 
 - [Concepts](./docs/concepts.md): persona, agenda, channels, the reply queue, memory, the brain, safeguards and policy, Decisions.
 - [Configuration](./docs/configuration.md): every key of `_shared.yaml` and `<id>.yaml`, with type, default and range.
+- [Attention, timing and relationships](./docs/attention.md): when it answers, who goes first, how it gets to know
+  people, every setting of it explained, and coming from `0.1.0-beta.0`.
 - [API reference](./docs/api.md): every export of `soulframe`.
 - [Writing a channel adapter](./docs/channels.md): `Conversation`, delivery errors, invitations, restarts, presence.
 - [Testing](./docs/testing.md): the canned model, in-memory stores, a fixed clock and randomness.
