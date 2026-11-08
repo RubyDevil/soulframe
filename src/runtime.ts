@@ -4,8 +4,8 @@ import { unhandled, type Brain, type Decision, type PersonAction, type Turn } fr
 import type { Channel, ChannelId } from './channel.js';
 import { LlmBudgetError, ModelNotConfiguredError, ProviderUnavailableError } from './llm.js';
 import type { PersonaConfig } from './config/personas.js';
-import { betweenMessagesMs, fitDelay, interruptedBetween, interruptionAt, quietMs, readingMs, replyDelay, typingPlan, watchingMs } from './pacing.js';
-import { between, sleep, type Rng } from './rng.js';
+import { betweenMessagesMs, fitDelay, interruptedBetween, interruptionAt, quietMs, readingMs, replyDelay, typingPlan, watchingChance, watchingMs } from './pacing.js';
+import { between, sleep, weightedPick, type Rng } from './rng.js';
 import { nextSpan, spanAt, type Hours, type Span } from './schedule.js';
 import { MINUTE, SECOND } from './settings.js';
 import type { Person, PersonState, Store } from './store.js';
@@ -118,11 +118,12 @@ interface TurnState {
  * Answers people at a human pace, one person at a time: while it writes or sends a reply to someone it starts nobody
  * else's, so what one turn learns about itself is never overwritten by another (self notes are read when a turn starts
  * and written when it ends). One turn per person at a time: more messages from them while it waits are answered
- * together. While a span is open on their channel, a turn is due after a random delay (only quick ones on a short break)
- * that ends before the span does, and once they stopped writing (`pacing.burst`); due turns start as soon as the persona
- * is free, in the order they came due. Otherwise they wait in the backlog, answered once a span opens: one person at a
- * time, oldest first, with a pause before each. It reads their messages while it writes, and types each message for a
- * time proportional to it.
+ * together. While a span is open on their channel, a turn is due after a delay that ends before the span does: a short
+ * lag while it still watches their chat, else when it next glances at its messages (only the lag on a short break),
+ * and once they stopped writing (`pacing.burst`). Due turns start as soon as the persona is free and back from any
+ * interruption, the next drawn by weight among several (`pacing.priority`). Otherwise they wait in the backlog,
+ * answered once a span opens: one person at a time, oldest first, with a pause before each. It reads their messages
+ * while it writes, and types each message for a time proportional to it.
  */
 export function createReplyQueue({
 	persona,
@@ -140,15 +141,19 @@ export function createReplyQueue({
 	act: (personId: number, action: PersonAction) => Promise<void>;
 }) {
 	const { retries, pacing } = persona.settings;
-	const { burst } = pacing;
+	const { burst, priority } = pacing;
+	/** Whether a turn that comes due while others wait is weighed by the Decisions importance check (`brain.assess`, which asks nothing while the checks are off). */
+	const assessing = persona.settings.decisions.importance.enabled;
 	/** By person: the timer of a turn's delay, a retry or a backlog gap. */
 	const pending = new Map<number, NodeJS.Timeout>();
 	/** The backlog: people owed a turn while no span was open for it, oldest first. */
 	const waiting = new Map<number, Conversation>();
 	/** Due while they were still writing: due once their quiet ends. */
 	const settling = new Map<number, Conversation>();
-	/** Due, in the order they came due: the first starts as soon as the persona is free. */
-	const ready = new Map<number, Conversation>();
+	/** Due, in the order they came due, and since when: one of them starts as soon as the persona is free (`pacing.priority`). */
+	const ready = new Map<number, { conversation: Conversation; since: number }>();
+	/** How many messages they had written when `brain.assess` was last asked about them, by person: never twice for the same. */
+	const assessedAt = new Map<number, number>();
 	/** The quiet each is given after their newest message (`pacing.burst`): its timer, how many messages started it again, and what waits for its end. */
 	const quiet = new Map<number, { timer: NodeJS.Timeout; resets: number; ended: (() => void)[] }>();
 	/** Turns under way, by person: one at a time, but for one stuck past PRESENCE_LEASE. */
@@ -370,28 +375,68 @@ export function createReplyQueue({
 		if (!spanAt(persona, runtime.now(), conversation.channel.id)) return park(personId, conversation, 'offline');
 		// Still writing: due once they stop
 		if (quiet.has(personId)) return void settling.set(personId, conversation);
-		ready.set(personId, conversation);
+		ready.set(personId, { conversation, since: runtime.now() });
+		// Others wait for the persona too: how much their messages matter weighs their turn (asked once per newest message)
+		const { incoming } = runtime.store.personById(personId);
+		if (assessing && (occupied() || ready.size > 1) && assessedAt.get(personId) !== incoming) {
+			assessedAt.set(personId, incoming);
+			void brain.assess(personId, conversation.channel);
+		}
 		// An earlier turn of theirs is still under way (stuck): the backlog moves on meanwhile
 		if (active.has(personId)) release(personId);
 		next();
 	};
 
 	/**
-	 * Starts the first ready turn once the persona is free (no turn under way, or one past PRESENCE_LEASE). Anyone whose span
-	 * closed while they waited goes back into the backlog, and while halted everyone does; someone writing again waits for
-	 * their quiet once more.
+	 * How much someone due weighs against the others (`pacing.priority`): how close it is to them (familiarity, and
+	 * affinity when kept), how much their conversation matters now (their last importance, fading back to an ordinary
+	 * chat's), up to three times as much while it still watches their chat, and more the longer they waited.
+	 */
+	const weightOf = (personId: number, since: number, now: number) => {
+		const person = runtime.store.personById(personId);
+		const bond = (1 + person.familiarity) * (persona.settings.relationship.affinity.enabled ? 1 + person.affinity / 2 : 1);
+		const fading = 0.5 ** (Math.max(0, now - person.importanceAt) / (priority.importanceHalfLifeMinutes * MINUTE));
+		const importance = 2 + (person.importance - 1) * fading;
+		const last = lastWith.get(personId);
+		const watching = last !== undefined && !interruptedBetween(persona, last, now, pacing) ? watchingChance(now - last, pacing) : 0;
+		const waited = 1 + Math.max(0, now - since) / (priority.agingMinutes * MINUTE);
+		return bond * importance * (1 + 2 * watching) * waited;
+	};
+
+	/**
+	 * Starts the next ready turn once the persona is free (no turn under way, or one past PRESENCE_LEASE): of several due,
+	 * one drawn by weight (`pacing.priority`), else the first that came due. Anyone whose span closed while they waited goes
+	 * back into the backlog, and while halted everyone does; someone writing again waits for their quiet once more.
 	 */
 	const next = () => {
 		if (stopped || occupied() || (ready.size && away())) return;
-		for (const [personId, conversation] of ready) {
+		const now = runtime.now();
+		const due: { personId: number; conversation: Conversation; since: number }[] = [];
+		for (const [personId, { conversation, since }] of ready) {
 			// Their earlier turn, stuck past PRESENCE_LEASE, is still under way: this one waits for it to end
 			if (active.has(personId)) continue;
+			const leaving = runtime.halted() || !spanAt(persona, now, conversation.channel.id) || quiet.has(personId);
+			if (!leaving) {
+				due.push({ personId, conversation, since });
+				continue;
+			}
 			ready.delete(personId);
 			if (runtime.halted()) haltPark(personId, conversation);
-			else if (!spanAt(persona, runtime.now(), conversation.channel.id)) park(personId, conversation, 'offline');
 			else if (quiet.has(personId)) settling.set(personId, conversation);
-			else return void answer(personId, conversation);
+			else park(personId, conversation, 'offline');
 		}
+		const chosen = due.length > 1 && priority.weighted ? pickByWeight(due, now) : due[0];
+		if (!chosen) return;
+		ready.delete(chosen.personId);
+		void answer(chosen.personId, chosen.conversation);
+	};
+
+	/** One of several due, drawn by weight (`weightOf`), logged with how many it was picked among. */
+	const pickByWeight = (due: { personId: number; conversation: Conversation; since: number }[], now: number) => {
+		const weighed = due.map((entry) => ({ weight: weightOf(entry.personId, entry.since, now), value: entry }));
+		const chosen = weightedPick(runtime.rng, weighed) ?? due[0]!;
+		runtime.log(persona.id, 'reply_picked', { personId: chosen.personId, among: due.length, weight: Number(weighed.find((entry) => entry.value === chosen)!.weight.toFixed(2)) });
+		return chosen;
 	};
 
 	/** One turn under way: the others wait until it ends (or has run PRESENCE_LEASE), then the next starts. */

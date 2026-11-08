@@ -26,12 +26,15 @@ import {
 	moodText,
 	postTask,
 	relationshipPrompt,
+	levelText,
+	FAMILIARITY_LEVELS,
+	AFFINITY_LEVELS,
 	rulesPrompt,
 	stopQuestion,
 	systemPrompt,
 } from '../src/prompts.js';
 import { addDays, parseClock, situationAt, zonedToUtc, type Busy, type LocalDate, type Situation, type Span } from '../src/schedule.js';
-import { DEFAULT_SETTINGS, MINUTE } from '../src/settings.js';
+import { DEFAULT_SETTINGS, MINUTE, SettingsSchema } from '../src/settings.js';
 import { NOTED_DM, PLAIN_DM, SNOOZE, TEST_IDENTITY, TEST_STYLE } from './fixtures.js';
 
 const memory = DEFAULT_SETTINGS.memory;
@@ -142,10 +145,19 @@ It is Saturday, 11:40 PM for you.`);
 	it('asks about joining a group chat only where the channel answers invitations', () => {
 		expect(directMessageAnswerFormat({ actions: [SNOOZE] }, memory)).not.toContain('acceptInvite');
 		const forum = directMessageAnswerFormat(NOTED_DM, memory);
-		expect(forum).toContain('{"reply": "...", "notes": null, "self": null, "action": "none", "acceptInvite": false}\n- acceptInvite: true only when a pending group-chat invitation is supplied below');
+		expect(forum).toContain('{"reply": "...", "notes": null, "self": null, "importance": 1, "affinity": 0, "action": "none", "acceptInvite": false}\n- acceptInvite: true only when a pending group-chat invitation is supplied below');
 		expect(directMessageTask(base)).not.toContain('acceptInvite');
 		// Otherwise the same format, but for the channel's action
 		expect(directMessageAnswerFormat({}, memory)).toBe(forum.replace(', "acceptInvite": false', '').replace(/\n- acceptInvite: [^\n]*/, '').replace(`"snooze" ${SNOOZE.when}; `, ''));
+	});
+
+	it('asks how much the conversation matters, and how the exchange changed its feelings only while affinity is kept', () => {
+		const format = directMessageAnswerFormat({}, memory);
+		expect(format).toContain('- importance: how much this conversation matters to you right now: 0 small talk, 1 an ordinary chat, 2 something personal, 3 something that matters a lot');
+		expect(format).toContain('- affinity: how this exchange changed how you feel about them: 1 a little warmer, -1 a little cooler, 0 no change (most of the time).');
+		const without = directMessageAnswerFormat({}, memory, false);
+		expect(without).toBe(format.replace('"affinity": 0, ', '').replace(/\n- affinity: [^\n]*/, ''));
+		expect(directMessageTask({ ...base, affinity: false })).toContain(without);
 	});
 
 	it('asks for separate texts as \\n inside the reply, not as raw line breaks', () => {
@@ -457,12 +469,29 @@ describe('character, mood and relationship', () => {
 		expect(groupChatTimePrompt({ localTime: 'Friday 10:00 PM', mood: 'playful', rules: false })).toBe(`It is Friday 10:00 PM for you.${moodText('playful', false)}`);
 	});
 
-	it('says nothing of the relationship on a first conversation, and each tier after', () => {
-		const base = { personName: 'Sam', conversations: 1, knownFor: 3 * 86_400_000 };
-		expect(relationshipPrompt({ ...base, relationship: 'new' })).toBe('');
-		expect(relationshipPrompt({ ...base, conversations: 2, relationship: 'new' })).toBe("You're still getting to know Sam. You first talked 3 days ago; this is conversation 2 with them.");
-		expect(relationshipPrompt({ ...base, conversations: 3, relationship: 'acquainted' })).toContain('You and Sam have talked a few times');
-		expect(relationshipPrompt({ ...base, conversations: 6, relationship: 'regular' })).toContain('Sam is one of your regulars');
-		expect(relationshipPrompt({ ...base, conversations: 20, relationship: 'close' })).toContain('You and Sam are close');
+	it('says nothing of the relationship on a first conversation, then its levels, the way it went and how long they have known each other', () => {
+		const base = { personName: 'Sam', conversations: 1, knownFor: 3 * 86_400_000, familiarity: FAMILIARITY_LEVELS[0], trend: null };
+		expect(relationshipPrompt(base)).toBe('');
+		expect(relationshipPrompt({ ...base, conversations: 2 })).toBe("You're still getting to know Sam. You first talked 3 days ago; this is conversation 2 with them.");
+		expect(relationshipPrompt({ ...base, conversations: 6, familiarity: FAMILIARITY_LEVELS[3], trend: 'closer', affinity: AFFINITY_LEVELS[3] })).toBe(
+			"Sam is one of your regulars: you're at ease with each other and pick up where you left off. You've grown closer lately. You like Sam. You first talked 3 days ago; this is conversation 6 with them.",
+		);
+		// Neutral says nothing; so does a level with no text of its own
+		expect(relationshipPrompt({ ...base, conversations: 9, familiarity: { from: 0, text: '' }, trend: 'distant', affinity: AFFINITY_LEVELS[2] })).toBe(
+			"It's been a while, and things feel a little more distant than they were. You first talked 3 days ago; this is conversation 9 with them.",
+		);
+		expect(levelText({ from: 0, text: '{name} and {name} again' }, 'Sam')).toBe('Sam and Sam again');
+	});
+
+	it('ships seven familiarity levels from 0 and five affinity levels from -1, each starting above the one before', () => {
+		for (const [levels, first, count] of [[FAMILIARITY_LEVELS, 0, 7], [AFFINITY_LEVELS, -1, 5]] as const) {
+			expect(levels).toHaveLength(count);
+			expect(levels[0]!.from).toBe(first);
+			expect(levels.every((level, i) => i === 0 || level.from > levels[i - 1]!.from)).toBe(true);
+			// Valid as settings, so an operator can start from them
+			expect(SettingsSchema.safeParse({ relationship: { familiarity: { levels: FAMILIARITY_LEVELS }, affinity: { levels: AFFINITY_LEVELS } } }).success).toBe(true);
+		}
+		expect(SettingsSchema.safeParse({ relationship: { familiarity: { levels: [{ from: 0.1, text: 'a' }, { from: 0.5, text: 'b' }] } } }).success).toBe(false);
+		expect(SettingsSchema.safeParse({ relationship: { affinity: { levels: [{ from: -1, text: 'a' }, { from: -1, text: 'b' }] } } }).success).toBe(false);
 	});
 });

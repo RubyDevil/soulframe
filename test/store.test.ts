@@ -149,3 +149,21 @@ describe('minor caution', () => {
 		expect(store.isMinorCautioned('chat', 'u-kid')).toBe(false);
 	});
 });
+
+describe('a database made by the first beta', () => {
+	it('gets the columns added since, familiarity starting from the conversations so far', () => {
+		const db = openDatabase(':memory:');
+		// The first beta's people table
+		db.exec(`CREATE TABLE people (id INTEGER PRIMARY KEY, persona TEXT NOT NULL, name TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'active', incoming INTEGER NOT NULL DEFAULT 0, summary TEXT NOT NULL DEFAULT '', conversations INTEGER NOT NULL DEFAULT 0, last_in_at INTEGER NOT NULL DEFAULT 0, handled_at INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`);
+		db.prepare('INSERT INTO people (persona, name, conversations, created_at, updated_at) VALUES (?, ?, ?, 0, 0)').run('robin', 'Sam', 5);
+		db.prepare('INSERT INTO people (persona, name, conversations, created_at, updated_at) VALUES (?, ?, ?, 0, 0)').run('robin', 'Kai', 0);
+		const store = createStore(db, () => 0);
+		// 5 conversations made Sam a regular, as the conversation counts did
+		expect(store.personById(1)).toMatchObject({ familiarity: 1 - 0.9 ** 5, affinity: 0, importance: 1, importanceAt: 0 });
+		expect(store.personById(2).familiarity).toBe(0);
+		// Opening it again changes nothing
+		store.updatePerson(1, { familiarity: 0.7 });
+		expect(createStore(db, () => 0).personById(1).familiarity).toBe(0.7);
+		db.close();
+	});
+});

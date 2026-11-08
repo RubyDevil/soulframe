@@ -253,7 +253,11 @@ describe('keyEnvFor', () => {
 describe('SettingsSchema', () => {
 	it('fills in every default, and keeps what is given', () => {
 		const parsed = SettingsSchema.parse({ memory: { personNotes: 150 } });
-		expect(parsed.memory).toEqual({ personNotes: 150, selfNotes: 800, historyMessages: 20, conversationGapHours: 6, relationshipAfter: [2, 5, 12] });
+		expect(parsed.memory).toEqual({ personNotes: 150, selfNotes: 800, historyMessages: 20, conversationGapHours: 6 });
+		// The shipped levels unless replaced (prompts.ts)
+		expect(parsed.relationship).toEqual({ familiarity: { growth: 0.012, fadeHalfLifeDays: 60 }, affinity: { enabled: true, step: 0.05, fadeHalfLifeDays: 0 }, hysteresis: 0.05 });
+		expect(parsed.pacing.priority).toEqual({ weighted: true, agingMinutes: 2, importanceHalfLifeMinutes: 30 });
+		expect(parsed.decisions.importance).toEqual({ enabled: true });
 		expect(parsed.context).toEqual({ situation: true, upcoming: true, awayContext: true, relationship: true, timeSince: true });
 		expect(parsed.pacing.watching).toEqual({ halfLifeSeconds: 90, replyDelaySeconds: [2, 10] });
 		expect(parsed.pacing.glance).toEqual({ meanSeconds: 60, delaySeconds: [4, 900] });

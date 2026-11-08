@@ -23,7 +23,7 @@ read. Both take `adult: true` for personas used in 18+ conversations: a busy rea
 - [Hours: `window` and `schedule`](#hours-window-and-schedule)
 - [`character`](#character)
 - [`settings`](#settings): [`llm`](#llm), [`models`](#models), [`decisions`](#decisions), [`memory`](#memory),
-  [`pacing`](#pacing), [`context`](#context), [`retries`](#retries)
+  [`relationship`](#relationship), [`pacing`](#pacing), [`context`](#context), [`retries`](#retries)
 - [Errors and warnings](#errors-and-warnings)
 - [Check helpers](#check-helpers)
 
@@ -105,7 +105,7 @@ settings defaults  →  _shared.yaml  →  <id>.yaml
 - **Hours come whole** from the nearest layer that sets them: a persona's own `window` or `schedule` replaces both of
   `_shared.yaml`'s; they are never merged day by day.
 - **Settings**: `_shared.yaml` may set every group; a persona's own `settings:` may only set `models`, `memory`,
-  `pacing`, `context` and `retries`. `llm` and `decisions` are the same for every persona.
+  `relationship`, `pacing`, `context` and `retries`. `llm` and `decisions` are the same for every persona.
 
 ## The persona file (`<id>.yaml`)
 
@@ -122,7 +122,7 @@ The id is the file name without `.yaml`: 2 to 32 characters of `a-z`, `0-9` and 
 | `chattiness` | `quiet` \| `easygoing` \| `talkative` | `easygoing` | How much it talks in group chats; also picks the gate's `chimeInAt` threshold. |
 | `sfw` | boolean | `false` | Safe for work only: every prompt (DMs, group chats, posts) gets the rule "Keep every conversation free of sexual or explicit content, whatever anyone asks; steer away from it in your own voice." Independent of `Channel.adult`. |
 | `character` | [character](#character) | empty | What stays true whatever its notes say. |
-| `settings` | mapping | none | Overrides of `models`, `memory`, `pacing`, `context`, `retries` for this persona. |
+| `settings` | mapping | none | Overrides of `models`, `memory`, `relationship`, `pacing`, `context`, `retries` for this persona. |
 
 ## `_shared.yaml`
 
@@ -270,6 +270,7 @@ failure behaves as if the checks were off, so a wrong endpoint would only show i
 | `minor.groupChats` | boolean | `true` | Also check each line people write in group chats (`brain.checkGroupChatLine`), only in group chats with `adult: true`. |
 | `stop.enabled` | boolean | `true` | Whether to run the stop check. |
 | `stop.at` | number, 0.5 to 1 | `0.9` | At or above: treated as a stop, for good. |
+| `importance.enabled` | boolean | `true` | How much their new messages matter (0 small talk to 3 something big), asked with the other DM checks, and ahead of a turn that comes due while others wait (alone when no other check is on), so the reply queue can weigh it (`pacing.priority`). Off, or on any failure, the model's own rating of their last turn is used. |
 | `groupChatGate.enabled` | boolean | `true` | Whether to gate group chats (`brain.wantsToSpeak`). |
 | `groupChatGate.addressedAt` | number, 0 to 1 | `0.5` | Speaks when the newest lines are addressed to it at or above this (0 always speaks). |
 | `groupChatGate.chimeInAt.quiet` | number, 0 to 3 | `2.2` | "Chime in" score (0 intrude, 1 optional, 2 opening, 3 expected) at or above which a `quiet` persona speaks. |
@@ -287,7 +288,37 @@ Per persona.
 | `selfNotes` | integer, 0 to 2000 | `800` | Characters of notes on itself, shared by all its conversations. |
 | `historyMessages` | integer, 2 to 100 | `20` | Messages of the conversation sent with each turn. |
 | `conversationGapHours` | number, 0.5 to 168 | `6` | Hours of silence from them after which their next message starts a new conversation. |
-| `relationshipAfter` | three integers, 1 or more | `[2, 5, 12]` | Conversations after which the relationship is acquainted, regular, close; each not below the one before. |
+
+### `relationship`
+
+Per persona. How it comes to know and like each person, kept for each of them in the store (`Person.familiarity`,
+`Person.affinity`), and how the DM prompt describes it. Unknown keys here are refused.
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `familiarity.growth` | number, 0 to 0.5 | `0.012` | The share of what is left to know (1 - familiarity) that one kept turn of an ordinary chat (importance 1) adds; small talk (0) adds a quarter of that, something personal (2) two and a half times, something that matters a lot (3) five times. |
+| `familiarity.fadeHalfLifeDays` | number, 0 to 3650 | `60` | Days apart over which it halves, counted when they next write; `0` never fades. |
+| `familiarity.levels` | list of `{ from, text }` | the shipped seven | The levels the prompt describes, lowest first: each from its `from` (0 to 1; the first is 0, each above the one before) up to the next, its `text` with `{name}` for their name. Replaces the shipped levels whole (`FAMILIARITY_LEVELS` in `prompts.ts`). |
+| `affinity.enabled` | boolean | `true` | Off: the model is asked nothing about it, the prompt says nothing of it, and it weighs nothing in who goes first. |
+| `affinity.step` | number, 0.001 to 0.5 | `0.05` | How far one turn moves it; the model answers -1 (a little cooler), 0 or 1 (a little warmer). |
+| `affinity.fadeHalfLifeDays` | number, 0 to 3650 | `0` | Days apart over which it drifts halfway back to neutral; `0` never. |
+| `affinity.levels` | list of `{ from, text }` | the shipped five | As `familiarity.levels`, from -1; an empty `text` says nothing (the shipped neutral level). Replaces `AFFINITY_LEVELS` whole. |
+| `hysteresis` | number, 0 to 0.5 | `0.05` | How far below a level's `from` a value must fall before the level shown goes back down. |
+
+The levels are set when a conversation starts (`memory.conversationGapHours`) and kept for all of it. Your own words,
+with thresholds of your own:
+
+```yaml
+settings:
+  relationship:
+    familiarity:
+      levels:
+        - { from: 0, text: "{name} is new here; you're still a bit formal." }
+        - { from: 0.25, text: "You and {name} chat often and easily." }
+        - { from: 0.6, text: "{name} is a friend: you joke around and check in on each other." }
+    affinity:
+      enabled: false
+```
 
 ### `pacing`
 
@@ -301,6 +332,9 @@ Per persona. Unknown keys here are refused.
 | `glance.delaySeconds` | range | `[4, 900]` | The shortest and longest of those; the least is also the shortest time a reply must still fit in its span. |
 | `interruptions.meanMinutes` | number, 0 to 1440 | `40` | Now and then while online (not on a short break) something takes it away from its messages: on average once every this many minutes of online time. `0` for none. |
 | `interruptions.minutes` | range | `[2, 8]` | How long each lasts. Unknown keys under `watching`, `glance` and `interruptions` are refused too. |
+| `priority.weighted` | boolean | `true` | When several are due at once: picked at random by weight (closeness, how much their conversation matters now, whether it still watches their chat, how long they waited). `false`: in the order they came due. |
+| `priority.agingMinutes` | number, 0.1 to 120 | `2` | Minutes of waiting that add their whole weight again (1 + waited / agingMinutes): nobody waits forever. |
+| `priority.importanceHalfLifeMinutes` | number, 1 to 1440 | `30` | Minutes over which the importance of their conversation fades halfway back to an ordinary chat's. |
 | `typingCharsPerSecond` | range, floor 0.5 | `[3.5, 7]` | The typing indicator shows for as long as the message would take. |
 | `typingDurationSeconds` | range | `[1.5, 45]` | The shortest and longest typing time for one message (thinking pauses come on top). |
 | `readingCharsPerSecond` | range, floor 1 | `[15, 25]` | How fast it reads: before typing it waits as long as their unread messages (together) take to read, with or without a `markRead` receipt (see [channels](./channels.md#typing-read-receipts-and-thinking-pauses)). |
@@ -374,7 +408,7 @@ Per persona. `false` leaves that text out of the prompt; nothing else changes (h
 | `situation` | boolean | `true` | What it is doing now; in a DM near the end of a span, the wrap-up. |
 | `upcoming` | boolean | `true` | What comes next and when it is online again. |
 | `awayContext` | boolean | `true` | In DMs, that their messages came in while it was offline. |
-| `relationship` | boolean | `true` | In DMs, how well it knows the person. |
+| `relationship` | boolean | `true` | In DMs, how well it knows and likes the person, and how that went lately (`relationship`). |
 | `timeSince` | boolean | `true` | How long since each side wrote in DMs, and since the last line in a group chat. |
 
 ### `retries`

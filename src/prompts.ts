@@ -123,19 +123,74 @@ const selfNotesPrompt = (selfNotes: string) => (selfNotes ? `Your notes about yo
 /** Its notes about the person it is talking with. */
 const personNotesPrompt = (personName: string, notes: string) => (notes ? `Your notes about ${personName}: ${notes}` : '');
 
-/** How well it knows someone, from the code's count of conversations (brain.ts relationshipOf, memory.relationshipAfter). */
-export type Relationship = 'new' | 'acquainted' | 'regular' | 'close';
+/** A level a value is described by, from its `from` up to the next one's: its `text`, with {name} for the person's name (empty says nothing). */
+export interface Level {
+	from: number;
+	text: string;
+}
 
-const RELATIONSHIP_TEXT: Record<Relationship, (name: string) => string> = {
-	new: (name) => `You're still getting to know ${name}.`,
-	acquainted: (name) => `You and ${name} have talked a few times and are getting to know each other.`,
-	regular: (name) => `${name} is one of your regulars: you're at ease with each other and pick up where you left off.`,
-	close: (name) => `You and ${name} are close: running jokes, easy teasing, and you notice when they've been away.`,
+/**
+ * How well it knows someone, by familiarity (0 to 1, counted by the code; settings.relationship.familiarity): the shipped
+ * levels, which `relationship.familiarity.levels` replaces whole, thresholds and words.
+ */
+export const FAMILIARITY_LEVELS: readonly Level[] = [
+	{ from: 0, text: "You're still getting to know {name}." },
+	{ from: 0.08, text: 'You and {name} have talked a few times and are getting to know each other.' },
+	{ from: 0.18, text: 'You and {name} are starting to feel at ease with each other.' },
+	{ from: 0.32, text: "{name} is one of your regulars: you're at ease with each other and pick up where you left off." },
+	{ from: 0.48, text: 'You and {name} are getting close: more open with each other than before, not quite there yet.' },
+	{ from: 0.65, text: "You and {name} are close: running jokes, easy teasing, and you notice when they've been away." },
+	{ from: 0.82, text: "{name} is one of the people closest to you: you tell each other things you don't tell just anyone." },
+];
+
+/**
+ * How it feels about someone, by affinity (-1 to 1, moved a step per turn by the model; settings.relationship.affinity):
+ * the shipped levels, which `relationship.affinity.levels` replaces whole. Neutral says nothing; the low ones stay
+ * civil, since what a persona may say is the app's to decide.
+ */
+export const AFFINITY_LEVELS: readonly Level[] = [
+	{ from: -1, text: "You find {name} hard to warm to: you stay polite, but you're a little guarded with them." },
+	{ from: -0.6, text: '{name} rubs you the wrong way now and then.' },
+	{ from: -0.2, text: '' },
+	{ from: 0.2, text: 'You like {name}.' },
+	{ from: 0.6, text: "You're really fond of {name}." },
+];
+
+/** Which way familiarity went over the last few conversations (brain.ts): closer, or more distant (they were apart a while). */
+export type Trend = 'closer' | 'distant' | null;
+
+const TREND_TEXT: Record<NonNullable<Trend>, string> = {
+	closer: "You've grown closer lately.",
+	distant: "It's been a while, and things feel a little more distant than they were.",
 };
 
-/** How things are with the person, from the code's count of conversations (memory.relationshipAfter); nothing on a first conversation. */
-export const relationshipPrompt = ({ personName, relationship, conversations, knownFor }: { personName: string; relationship: Relationship; conversations: number; knownFor: number }) =>
-	conversations <= 1 ? '' : `${RELATIONSHIP_TEXT[relationship](personName)} You first talked ${ago(knownFor)}; this is conversation ${conversations} with them.`;
+/** A level's text with their name in it. */
+export const levelText = (level: Level | undefined, personName: string) => (level?.text ?? '').replaceAll('{name}', personName).trim();
+
+/**
+ * How things are with the person, on a level of familiarity and one of affinity (none when it is off), with the way it
+ * went lately; nothing on a first conversation.
+ */
+export const relationshipPrompt = ({
+	personName,
+	familiarity,
+	affinity,
+	trend,
+	conversations,
+	knownFor,
+}: {
+	personName: string;
+	familiarity: Level | undefined;
+	affinity?: Level;
+	trend: Trend;
+	conversations: number;
+	knownFor: number;
+}) =>
+	conversations <= 1
+		? ''
+		: [levelText(familiarity, personName), trend ? TREND_TEXT[trend] : '', levelText(affinity, personName), `You first talked ${ago(knownFor)}; this is conversation ${conversations} with them.`]
+				.filter(Boolean)
+				.join(' ');
 
 // ---------------------------------------------------------------------------------------------------
 // The time: the model has no clock, so a DM turn and a group-chat decision end with the persona's local time, the
@@ -306,14 +361,16 @@ export const groupChatTimePrompt = ({ localTime, silentFor, day, mood, rules }: 
  * the channel's own `actions` only there; blocking everywhere (where there is nothing to block, it means never
  * answering again).
  */
-export const directMessageAnswerFormat = ({ invitations, actions = [] }: Pick<Channel, 'invitations' | 'actions'>, memory: MemorySettings) =>
+export const directMessageAnswerFormat = ({ invitations, actions = [] }: Pick<Channel, 'invitations' | 'actions'>, memory: MemorySettings, affinity = true) =>
 	[
 		'Answer with one JSON object and nothing else:',
-		`{"reply": "...", "notes": null, "self": null, "action": "none"${invitations ? ', "acceptInvite": false' : ''}}`,
+		`{"reply": "...", "notes": null, "self": null, "importance": 1, ${affinity ? '"affinity": 0, ' : ''}"action": "none"${invitations ? ', "acceptInvite": false' : ''}}`,
 		invitations ? '- acceptInvite: true only when a pending group-chat invitation is supplied below and you choose to join now. Otherwise false. Your reply must match this decision: never decline and accept at the same time, and never promise to join when false.' : '',
 		`- reply: what you text back (separate texts with \\n), or null to leave it on read. Leaving it on read is fine when nothing needs an answer, like a plain "ok" or "lol"; don't leave someone hanging when they asked you something.`,
 		`- notes: your private notes about this person, rewritten whole, at most ${memory.personNotes} characters: what matters later (what they like, what to avoid, running jokes, how they want to be called). null to keep them as they are.`,
 		`- self: your notes about yourself, rewritten whole, at most ${memory.selfNotes} characters: details of your made-up life and tastes you mentioned and must keep consistent. null to keep them.`,
+		'- importance: how much this conversation matters to you right now: 0 small talk, 1 an ordinary chat, 2 something personal, 3 something that matters a lot (a confession, bad news, a fight, someone in trouble).',
+		affinity ? '- affinity: how this exchange changed how you feel about them: 1 a little warmer, -1 a little cooler, 0 no change (most of the time).' : '',
 		`- action: "none"; ${actions.map(({ name, when }) => `"${name}" ${when}; `).join('')}"block" only when they are abusive, threatening, or won't take no for an answer. Blocking ends the conversation for good.`,
 	]
 		.filter(Boolean)
@@ -339,6 +396,7 @@ export const directMessageTask = ({
 	time,
 	minorCaution = false,
 	relationship,
+	affinity = true,
 }: {
 	selfNotes: string;
 	personName: string;
@@ -357,10 +415,12 @@ export const directMessageTask = ({
 	/** The person may be under 18 (`MINOR_CAUTION_PROMPT`, right after the answer format). */
 	minorCaution?: boolean;
 	/** How things stand with them (`relationshipPrompt`, after the notes on them); none with settings.context.relationship off. */
-	relationship?: { relationship: Relationship; conversations: number; knownFor: number };
+	relationship?: { familiarity: Level | undefined; affinity?: Level; trend: Trend; conversations: number; knownFor: number };
+	/** Whether the answer format asks how the exchange changed its feelings (settings.relationship.affinity.enabled). */
+	affinity?: boolean;
 }) =>
 	[
-		directMessageAnswerFormat(channel, memory),
+		directMessageAnswerFormat(channel, memory, affinity),
 		minorCaution ? MINOR_CAUTION_PROMPT : '',
 		[selfNotesPrompt(selfNotes), personNotesPrompt(personName, personNotes), relationship ? relationshipPrompt({ personName, ...relationship }) : ''].filter(Boolean).join('\n'),
 		...extraLines,
@@ -466,6 +526,7 @@ export const groupChatTranscript = (lines: { name: string; text: string; mine: b
 /** The questions' names, echoed back in the answers. */
 export const MINOR_QUESTION = 'writer_is_minor';
 export const STOP_QUESTION = 'wants_no_contact';
+export const IMPORTANCE_QUESTION = 'conversation_importance';
 export const ADDRESSED_QUESTION = 'chat_addressed';
 export const CHIME_IN_QUESTION = 'chat_chime_in';
 
@@ -505,6 +566,22 @@ export const stopQuestion: Question = {
 	type: 'predicate',
 	name: STOP_QUESTION,
 	instructions: `Does the person marked "them" ask, in any wording or language, to end this conversation for good, to stop being messaged, or to be left alone (for example "please don't text me anymore", "I'm done with this, don't write back", "block me", "arrête de m'écrire")? Do not count: ending for now ("gtg, talk tomorrow", "brb", "goodnight"), saying no to one topic or suggestion, playful teasing ("stop it 😂"), or "stop" said within a role-play or a game.`,
+};
+
+/**
+ * How much the person's new messages matter, on the scale the DM answer format's `importance` uses (0 to 3), so the
+ * queue can weigh their turn before the model writes (settings.decisions.importance, pacing.priority).
+ */
+export const importanceQuestion: Question = {
+	type: 'score',
+	name: IMPORTANCE_QUESTION,
+	instructions: 'How much do the lines marked "them" matter to the person who wrote them, judging only what they say?',
+	levels: [
+		{ label: 'small_talk', description: 'Greetings, small talk, a quick reaction ("ok", "lol", "hey what\'s up").' },
+		{ label: 'ordinary', description: 'An ordinary chat: news of their day, plans, a question.' },
+		{ label: 'personal', description: 'Something personal: feelings, a worry, something they care about, asking for advice.' },
+		{ label: 'matters_a_lot', description: 'Something that matters a lot to them: a confession, bad news, a fight, someone in trouble or in distress.' },
+	],
 };
 
 /**

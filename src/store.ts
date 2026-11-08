@@ -28,6 +28,13 @@ export interface Person {
 	handledAt: number;
 	/** When they were first seen (ms); never changed. */
 	firstSeenAt: number;
+	/** How well the persona knows them, 0 to 1: counted by the code from the turns it kept, fading while they are apart (settings.relationship). */
+	familiarity: number;
+	/** How the persona feels about them, -1 to 1 (0 neutral): a small step per turn, as the model answers (settings.relationship.affinity). */
+	affinity: number;
+	/** How much their conversation mattered at their last turn, 0 (small talk) to 3 (something big), and when it was rated (ms, 0 never). */
+	importance: number;
+	importanceAt: number;
 }
 
 export interface StoredMessage {
@@ -48,6 +55,10 @@ CREATE TABLE IF NOT EXISTS people (
 	conversations INTEGER NOT NULL DEFAULT 0,
 	last_in_at INTEGER NOT NULL DEFAULT 0,
 	handled_at INTEGER NOT NULL DEFAULT 0,
+	familiarity REAL NOT NULL DEFAULT 0,
+	affinity REAL NOT NULL DEFAULT 0,
+	importance REAL NOT NULL DEFAULT 1,
+	importance_at INTEGER NOT NULL DEFAULT 0,
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL
 );
@@ -108,6 +119,10 @@ interface PersonRow {
 	conversations: number;
 	last_in_at: number;
 	handled_at: number;
+	familiarity: number;
+	affinity: number;
+	importance: number;
+	importance_at: number;
 	created_at: number;
 }
 
@@ -123,6 +138,10 @@ const toPerson = (row: PersonRow): Person => ({
 	lastInAt: row.last_in_at,
 	handledAt: row.handled_at,
 	firstSeenAt: row.created_at,
+	familiarity: row.familiarity,
+	affinity: row.affinity,
+	importance: row.importance,
+	importanceAt: row.importance_at,
 });
 
 const COLUMNS: Record<keyof Omit<Person, 'id' | 'persona' | 'ids' | 'firstSeenAt'>, string> = {
@@ -133,7 +152,23 @@ const COLUMNS: Record<keyof Omit<Person, 'id' | 'persona' | 'ids' | 'firstSeenAt
 	conversations: 'conversations',
 	lastInAt: 'last_in_at',
 	handledAt: 'handled_at',
+	familiarity: 'familiarity',
+	affinity: 'affinity',
+	importance: 'importance',
+	importanceAt: 'importance_at',
 };
+
+/**
+ * Columns added to `people` since the first beta, each added on open to a database made before it. Familiarity starts
+ * from their conversations so far (1 - 0.9^n: 2 of them make them at ease, 5 a regular, 12 close, as the conversation
+ * counts did), so nobody who was close becomes a stranger.
+ */
+const ADDED_PEOPLE_COLUMNS: { name: string; definition: string; fill?: string }[] = [
+	{ name: 'familiarity', definition: 'REAL NOT NULL DEFAULT 0', fill: 'conversations' },
+	{ name: 'affinity', definition: 'REAL NOT NULL DEFAULT 0' },
+	{ name: 'importance', definition: 'REAL NOT NULL DEFAULT 1' },
+	{ name: 'importance_at', definition: 'INTEGER NOT NULL DEFAULT 0' },
+];
 
 /** The key of the flag on someone possibly under 18 (settings.decisions.minor.cautionAt), in the kv of every persona ('*'). */
 const minorCautionKey = (channel: ChannelId, externalId: string) => `minorCaution:${channel}:${externalId}`;
@@ -170,6 +205,19 @@ export type Store = ReturnType<typeof createStore>;
  */
 export function createStore(db: Database, now: () => number = Date.now) {
 	db.exec(SCHEMA);
+	const columns = new Set((db.prepare('PRAGMA table_info(people)').all() as unknown as { name: string }[]).map((column) => column.name));
+	const missing = ADDED_PEOPLE_COLUMNS.filter((column) => !columns.has(column.name));
+	if (missing.length) {
+		inTransaction(db, () => {
+			for (const { name, definition, fill } of missing) {
+				db.exec(`ALTER TABLE people ADD COLUMN ${name} ${definition}`);
+				if (fill !== 'conversations') continue;
+				const rows = db.prepare('SELECT id, conversations FROM people').all() as unknown as { id: number; conversations: number }[];
+				const update = db.prepare(`UPDATE people SET ${name} = ? WHERE id = ?`);
+				for (const row of rows) update.run(1 - 0.9 ** row.conversations, row.id);
+			}
+		});
+	}
 
 	const byId = (id: number) => {
 		const row = db.prepare(`${PERSON_SELECT} WHERE p.id = ?`).get(id) as unknown as PersonRow | undefined;

@@ -27,6 +27,18 @@ export const range = (min: number, max: number, floor = 0) =>
  */
 const at = (value: number, min = 0.3) => z.number().min(min).max(1).default(value);
 
+/**
+ * Levels a value is described by in the prompt, lowest first: each from its `from` up to the next one's, its `text`
+ * with {name} for the person's name (an empty text says nothing). The first starts at `min`, the lowest the value goes.
+ */
+const levels = (min: number) =>
+	z
+		.array(z.object({ from: z.number().min(min).max(1), text: z.string().max(400) }).strict())
+		.min(2)
+		.max(12)
+		.refine((list) => list[0]?.from === min, `the first level must start at ${min}`)
+		.refine((list) => list.every((level, i) => i === 0 || level.from > list[i - 1]!.from), 'each level must start above the one before');
+
 /** One model, for one kind of text generation task. */
 const ModelSchema = (defaults: { maxTokens: number; temperature: number }) =>
 	z
@@ -149,6 +161,18 @@ export const SettingsSchema = z
 						at: at(0.9, 0.5),
 					})
 					.default({}),
+				/**
+				 * How much their newest messages matter (small talk to something big, like a confession), asked with the other DM
+				 * checks when their turn comes due while others wait, so the queue knows before the model writes (`pacing.priority`).
+				 * Off, or on any failure, the model's own rating of their last turn is used. Its own switch: off here costs nothing
+				 * extra even with the checks on, and with the stop and age checks off it is a request of its own.
+				 */
+				importance: z
+					.object({
+						/** Whether to ask it at all (only ever with `decisions.enabled`). */
+						enabled: z.boolean().default(true),
+					})
+					.default({}),
 				/** The group-chat gate: a cheap check decides quiet vs speak before the group-chat model is called (a failure lets the model decide as before). */
 				groupChatGate: z
 					.object({
@@ -183,14 +207,48 @@ export const SettingsSchema = z
 				selfNotes: z.number().int().min(0).max(2000).default(800),
 				/** Messages of the conversation sent with each turn (the notes carry what matters from older ones). */
 				historyMessages: z.number().int().min(2).max(100).default(20),
-				/** Hours without a message from them after which their next one starts a new conversation (counted for the relationship). */
+				/** Hours without a message from them after which their next one starts a new conversation (the relationship shown is set again at each). */
 				conversationGapHours: z.number().min(0.5).max(168).default(6),
-				/** Conversations after which the relationship is acquainted, regular, close (counted by the code, see brain.ts relationshipOf). */
-				relationshipAfter: z
-					.tuple([z.number().int().min(1), z.number().int().min(1), z.number().int().min(1)])
-					.default([2, 5, 12])
-					.refine(([a, b, c]) => a <= b && b <= c, 'each must not be below the one before'),
 			})
+			.default({}),
+
+		/**
+		 * How it comes to know and like each person, kept for each of them. Familiarity (0 to 1) is counted by the code:
+		 * each turn it keeps adds to it, more when the conversation mattered (the turn's importance), and it fades while
+		 * they are apart. Affinity (-1 to 1) is moved one small step per turn by the model, never set outright. Both decide
+		 * who it answers first when several wait (`pacing.priority`), and the DM prompt describes them as levels, set once
+		 * per conversation: the shipped ones (prompts.ts) unless replaced here, thresholds and words alike.
+		 */
+		relationship: z
+			.object({
+				familiarity: z
+					.object({
+						/** The share of what is left to know that an ordinary turn (importance 1) adds: small talk adds a quarter of it, a turn that matters a lot five times. */
+						growth: z.number().min(0).max(0.5).default(0.012),
+						/** Days apart over which it halves, counted when they next write; 0 never fades. */
+						fadeHalfLifeDays: z.number().min(0).max(3650).default(60),
+						/** The levels the prompt describes, lowest first: each from its `from` (0 to 1, the first 0), its `text` with {name} for their name. Left out: the shipped seven. */
+						levels: levels(0).optional(),
+					})
+					.strict()
+					.default({}),
+				affinity: z
+					.object({
+						/** Whether to keep it at all: off, the model is asked nothing about it, the prompt says nothing of it, and it weighs nothing. */
+						enabled: z.boolean().default(true),
+						/** How far one turn may move it: the model answers -1, 0 or 1. */
+						step: z.number().min(0.001).max(0.5).default(0.05),
+						/** Days apart over which it drifts halfway back to neutral, counted when they next write; 0 never. */
+						fadeHalfLifeDays: z.number().min(0).max(3650).default(0),
+						/** The levels the prompt describes, lowest first: each from its `from` (-1 to 1, the first -1), its `text` with {name}; an empty text says nothing. Left out: the shipped five. */
+						levels: levels(-1).optional(),
+					})
+					.strict()
+					.default({}),
+				/** How far below a level's threshold a value must fall before the level shown goes back down: no flip-flop around one. */
+				hysteresis: z.number().min(0).max(0.5).default(0.05),
+			})
+			.strict()
 			.default({}),
 
 		/** How fast it answers and types. */
@@ -235,6 +293,22 @@ export const SettingsSchema = z
 						meanMinutes: z.number().min(0).max(1440).default(40),
 						/** How long each lasts, in minutes (never past the end of its span). */
 						minutes: range(2, 8),
+					})
+					.strict()
+					.default({}),
+				/** Who goes first when several are due at once (one person at a time: while it answers one, the others wait). */
+				priority: z
+					.object({
+						/**
+						 * Picked at random by weight: how close it is to them (`relationship`), how much their conversation matters now
+						 * (its importance), whether it is still watching their chat, and how long they have waited. false: in the order
+						 * they came due.
+						 */
+						weighted: z.boolean().default(true),
+						/** Minutes of waiting that add their whole weight again (it grows as 1 + waited / agingMinutes), so nobody waits forever. */
+						agingMinutes: z.number().min(0.1).max(120).default(2),
+						/** Minutes over which the importance of their conversation fades halfway back to that of an ordinary chat. */
+						importanceHalfLifeMinutes: z.number().min(1).max(1440).default(30),
 					})
 					.strict()
 					.default({}),
@@ -304,7 +378,7 @@ export const SettingsSchema = z
 				upcoming: z.boolean().default(true),
 				/** In DMs, that their messages came in while it was offline: "These messages came in while you were at work (from 12:16 PM)…". */
 				awayContext: z.boolean().default(true),
-				/** How well it knows the person, in DMs: "Sam is one of your regulars…" (memory.relationshipAfter). */
+				/** How well it knows and likes the person, in DMs: "Sam is one of your regulars… You like Sam." (`relationship`). */
 				relationship: z.boolean().default(true),
 				/** How long since each side wrote in DMs ("Their last message was 25 minutes ago…"), and since the last line in a group chat. */
 				timeSince: z.boolean().default(true),
@@ -331,7 +405,7 @@ export type Settings = z.infer<typeof SettingsSchema>;
  * The setting groups a persona may set for itself (its file's `settings:`), deep-merged over `_shared.yaml`'s
  * (config/personas.ts). Everything else is set once for every persona.
  */
-export const PERSONA_SETTINGS = ['models', 'memory', 'pacing', 'context', 'retries'] as const;
+export const PERSONA_SETTINGS = ['models', 'memory', 'relationship', 'pacing', 'context', 'retries'] as const;
 /** Set once for every persona: the text provider and its daily cap, the Decisions checks. */
 export const GLOBAL_SETTINGS = ['llm', 'decisions'] as const;
 /** Why a group can't be set per persona, for the error message. */

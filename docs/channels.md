@@ -310,7 +310,7 @@ decides goes to the store's audit log). Events include `dm_received`,
 `reply_scheduled` (with `watching`: timed as it still had their chat open), `reply_batched`, `reply_waiting` (in the
 backlog, with the next opening), `away` (an interruption, with its end), `reply_processing`,
 `reply_superseded` (a message that makes the draft start over), `reply_restarted`, `reply_after_turn` (a message that
-gets a turn of its own once this one ends),
+gets a turn of its own once this one ends), `reply_picked` (who went first among several due, with their weight),
 `dm_sent`, `reply_sent`, `reply_skipped` (left on read), `reply_failed`, `reply_waiting_budget`,
 `reply_waiting_provider`, `reply_cancelled`, `reply_paused`, `unreachable`, `delivery_failed`, `invite_accepted`,
 `invite_not_joined`, `action_skipped` (an action not carried out while halted or stopped), `hours_open` and `hours_closed`, and in a dry run `dry_send`, `dry_block` and `dry_<action>` for a channel's own action. Your

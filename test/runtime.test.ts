@@ -1629,3 +1629,68 @@ describe('attention: watching a chat, glancing, interruptions', () => {
 		}
 	});
 });
+
+describe('who goes first when several are due (pacing.priority)', () => {
+	/**
+	 * Ana writes at 20:00 and her turn is held until the test lets it go; Bo writes 10 s later, Cy 20 s later. With rng
+	 * 0.6 each turn is due 55 s after their message, so Bo and Cy are both due while Ana's turn is under way.
+	 */
+	const three = async ({ persona = utc.personas[0]!, decisions }: { persona?: PersonaConfig; decisions?: Decisions } = {}) => {
+		const run = start({ persona, decisions, rng: () => 0.6 });
+		const gate = held<void>();
+		const order: number[] = [];
+		vi.spyOn(run.brain, 'compose').mockImplementation(async (personId) => {
+			order.push(personId);
+			if (personId === 1) await gate.promise;
+			return { messages: [], action: 'none' };
+		});
+		for (const [from, after] of [['ana', 0], ['bo', 10_000], ['cy', 20_000]] as const) {
+			await vi.advanceTimersByTimeAsync(EVENING + after - Date.now());
+			await run.message('hi', from);
+		}
+		await vi.advanceTimersByTimeAsync(EVENING + 2 * MINUTE - Date.now());
+		return { ...run, gate, order };
+	};
+
+	it('picks by weight: a conversation that matters more goes first', async () => {
+		for (const [importance, first] of [[3, 2], [1, 3]] as const) {
+			const run = await three();
+			try {
+				// Bo (person 2) says something that matters a lot; with no difference, rng 0.6 picks Cy, the second due
+				run.store.updatePerson(2, { importance, importanceAt: Date.now() });
+				run.gate.resolve();
+				await vi.advanceTimersByTimeAsync(MINUTE);
+				expect(run.order.slice(0, 2)).toEqual([1, first]);
+				expect(logged(run.log, 'reply_picked')[0]).toMatchObject({ personId: first, among: 2 });
+			} finally {
+				run.close();
+			}
+		}
+	});
+
+	it('takes them in the order they came due with weighted off', async () => {
+		const persona = personasOf({ test: testPersona({ settings: { pacing: { priority: { weighted: false } } } }) }, { prompt: 'A friendly persona.' })[0]!;
+		const run = await three({ persona });
+		try {
+			run.store.updatePerson(3, { importance: 3, importanceAt: Date.now(), familiarity: 0.9 });
+			run.gate.resolve();
+			await vi.advanceTimersByTimeAsync(MINUTE);
+			expect(run.order).toEqual([1, 2, 3]);
+			expect(logged(run.log, 'reply_picked')).toEqual([]);
+		} finally {
+			run.close();
+		}
+	});
+
+	it('asks how much their messages matter as their turn comes due while it is busy, once per newest message', async () => {
+		const decisions = createScriptedDecisions((question) => (question.name === 'conversation_importance' ? 3 : 0));
+		const run = await three({ decisions });
+		try {
+			// Bo and Cy came due while Ana's turn was under way: each asked once, ahead of their turn
+			expect(decisions.calls.filter((call) => call.names.includes('conversation_importance'))).toHaveLength(2);
+			expect([2, 3].map((id) => run.store.personById(id).importance)).toEqual([3, 3]);
+		} finally {
+			run.close();
+		}
+	});
+});

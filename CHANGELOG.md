@@ -23,6 +23,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `replyDelaySeconds` (default `[2, 10]`), so a quick back-and-forth stays live. Not watching, it answers when it next
   glances at its messages (`pacing.glance`: a memoryless clock with `meanSeconds` 60, within `delaySeconds`
   `[4, 900]`). On a short break it answers as if watching. `reply_scheduled` logs `watching`.
+- **Familiarity and affinity, kept per person** (`settings.relationship`, `Person.familiarity`, `Person.affinity`).
+  Familiarity (0 to 1) is counted by the code: each turn the reply queue keeps adds `familiarity.growth` (default
+  0.012) of what is left, times 0.25 to 5 by how much the turn mattered, and it halves over `fadeHalfLifeDays` (default
+  60) apart. Affinity (-1 to 1) moves `affinity.step` (default 0.05) per turn as the model answers (warmer, cooler or no
+  change); `affinity.enabled: false` turns it off. The DM prompt describes both as levels, shipped as seven and five
+  sentences (`FAMILIARITY_LEVELS`, `AFFINITY_LEVELS` in `prompts.ts`) and replaceable whole, thresholds and words
+  (`familiarity.levels`, `affinity.levels`); the levels are set once per conversation, go back down only past
+  `hysteresis` (default 0.05), and say when they grew closer lately or drifted apart.
+- **Importance.** The DM answer format asks how much the conversation matters now (`importance`, 0 small talk to 3
+  something that matters a lot) and how the exchange changed the persona's feelings (`affinity`, -1, 0 or 1). The
+  importance is stored on the person (`Person.importance`, `importanceAt`). With the typed checks on, it is also asked
+  with the other DM checks (`decisions.importance`, default on, a switch of its own), ahead of a turn that comes due
+  while others wait (`brain.assess`), whose answers `compose` then reuses.
+- **Who goes first** (`pacing.priority`): when several are due while the persona is busy, the next is drawn by weight:
+  closeness (familiarity, affinity), how much their conversation matters now (fading back over
+  `importanceHalfLifeMinutes`, default 30), up to three times as much while it still watches their chat, and more the
+  longer they waited (`agingMinutes`, default 2), so nobody waits forever. `weighted: false` keeps the order they came
+  due. Logged as `reply_picked`.
+- A database made by `0.1.0-beta.0` gets the new `people` columns when the store opens; familiarity starts from each
+  person's conversations so far, so nobody who was close becomes a stranger.
 - **Interruptions** (`pacing.interruptions`): now and then while online, something takes the persona away from its
   messages for a few minutes (on average once every `meanMinutes`, default 40, of online time, for `minutes`, default
   `[2, 8]`; `0` for none). Drawn per day from a seed, like the agenda, so a restart finds the same ones. Nobody's turn
@@ -48,6 +68,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   conversation was. `watching`, `glance` and `interruptions` time replies now, and others' turns are what keeps
   someone waiting while it is busy; a config that still sets the old keys fails to load (`unknown key`). Roughly:
   a faster or slower persona sets `glance.meanSeconds`, and a long busy gap becomes `interruptions.minutes`.
+- **BREAKING: `memory.relationshipAfter`.** The relationship is no longer a count of conversations: it is
+  `settings.relationship` (familiarity and affinity, with levels of your own if you like). A config that still sets
+  it fails to load (`unknown key`); to keep four levels at your old counts, set `relationship.familiarity.levels`.
 - **BREAKING: `pacing.singlePresence`.** Answering one person at a time is no longer optional: with it off, turns for
   different people could overwrite each other's self notes. A config that still sets it fails to load with
   `settings.pacing.singlePresence: unknown key`: delete the line.

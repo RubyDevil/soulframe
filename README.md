@@ -35,15 +35,17 @@ safe for work (`sfw: true`).
   every problem is reported with its file and path, unknown keys come with a "did you mean".
 - **A day that looks real.** Online hours by weekday, short breaks, busy blocks with a reason ("at work", "at the gym"),
   skipped days, all drawn per day from a seed so a restart draws the same agenda, across daylight saving changes too.
-- **Human pacing.** One person at a time; answers within seconds while it still has someone's chat open, and when it
-  next glances at its messages otherwise; short interruptions now and then; one reply to someone who writes in bursts
-  (a draft written again when they add to it mid-reply), messages read while the reply is written, typing time
-  proportional to each message at each persona's own speed, long replies split in two, a backlog answered one person
-  at a time when the persona comes back online; opt-in read receipts, typing kept alive on platforms that expire it,
-  and thinking pauses in long messages.
+- **Human pacing.** One person at a time, the next picked by closeness, how much their conversation matters and how
+  long they waited; answers within seconds while it still has someone's chat open, and when it next glances at its
+  messages otherwise; short interruptions now and then; one reply to someone who writes in bursts (a draft written
+  again when they add to it mid-reply), messages read while the reply is written, typing time proportional to each
+  message at each persona's own speed, long replies split in two, a backlog answered one person at a time when the
+  persona comes back online; opt-in read receipts, typing kept alive on platforms that expire it, and thinking pauses
+  in long messages.
 - **Memory that stays small.** People, their accounts on each channel, the conversation history, the model's own notes
-  on each person and on itself, a relationship counted from conversations, a cross-persona deny list and an audit log,
-  all in one SQLite file (Node's built-in `node:sqlite`), its tables made on open.
+  on each person and on itself, how well it knows and likes each of them (familiarity grown by what their
+  conversations meant, affinity moved a step at a time, both described in levels you can rewrite), a cross-persona
+  deny list and an audit log, all in one SQLite file (Node's built-in `node:sqlite`), its tables made on open.
 - **Three capabilities.** Direct-message turns (reply, notes, block or an action the channel declares, accept a
   group-chat invitation), lines in a group chat (or staying quiet), and short posts for a channel's rules.
 - **Your words, your rules.** The persona's identity phrase and writing style are yours to give (`identity`, `style`),

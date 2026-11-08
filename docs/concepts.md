@@ -130,6 +130,12 @@ delivers:
   itself (its self notes, read when a turn starts and stored when it ends) is never overwritten by a turn that began
   earlier. A turn under way for over 10 minutes stops holding the others back, so a send that never returns cannot
   silence the persona.
+- **Who goes first.** When several turns are due while it is busy, the next is drawn at random by weight
+  (`pacing.priority`): how close it is to them (familiarity, affinity), how much their conversation matters now (its
+  importance, fading back to an ordinary chat's), up to three times as much while it still watches their chat, and
+  more the longer they waited, so nobody waits forever (`reply_picked`). With the typed checks on, how much their new
+  messages matter is asked as their turn comes due (`brain.assess`, `decisions.importance`), so a confession can go
+  ahead of a "hey, what's up" before the model has read either. `weighted: false` takes them in the order they came due.
 - **One turn per person at a time.** More messages from them while a turn waits are answered together
   (`reply_batched`).
 - **Bursts.** A turn starts only once they stopped writing: `pacing.burst.settleSeconds` of quiet after their newest
@@ -195,9 +201,15 @@ loads; `node --disable-warning=ExperimentalWarning` hides it.
 - **Notes.** The model rewrites, at most each turn, its notes on the person (`Person.summary`, up to
   `memory.personNotes` characters) and on itself (made-up details it must keep consistent, up to `memory.selfNotes`,
   shared by all its conversations).
-- **Relationship.** Counted by the code, never by the model: a message after `memory.conversationGapHours` of silence
-  starts a new conversation, and `memory.relationshipAfter` turns the count into `new`, `acquainted`, `regular` or
-  `close`, which the DM prompt mentions.
+- **Relationship.** Two numbers per person, in the store. **Familiarity** (0 to 1) is counted by the code, never set
+  by the model: each turn the reply queue keeps adds to it, more when the conversation mattered (the turn's
+  `importance`, 0 to 3, which the model rates), and it fades while they are apart. **Affinity** (-1 to 1) is moved one
+  small step per turn as the model answers (warmer, cooler, or no change), never set outright; it can be turned off.
+  The DM prompt describes both as levels, shipped as seven and five sentences in `prompts.ts` and replaceable,
+  thresholds and words, per persona (`settings.relationship`). The levels are set once per conversation (a message
+  after `memory.conversationGapHours` of silence starts one), go back down only past a margin, and come with the way
+  things went lately ("You've grown closer lately."), so the tone changes a step at a time, between conversations.
+  Both also weigh who it answers first (below).
 - **Deny list.** Shared by every persona and keyed by channel and account: someone deny-listed by one persona is never
   approached by another, and every person with that account is denied at once.
 - **Minor flags**, **kv** (small per-persona values, token counts) and the **audit** log (what was decided, with the

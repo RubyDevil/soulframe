@@ -415,6 +415,7 @@ interface Brain {
 		invitation?: string;
 		extraLines?: (person: Person) => readonly string[];
 	}): Promise<Turn>;
+	assess(personId: number, channel: Channel): Promise<void>;
 	composePost(channel: Channel, post: { rules: string; examples: readonly string[]; recent: readonly string[] }): Promise<string | null>;
 	composeGroupChatLine(chat: Channel, recent: GroupChatLine[], quiet: boolean, hosted: boolean): Promise<string | null>;
 	wantsToSpeak(chatId: string, recent: GroupChatLine[]): Promise<{ speak: boolean; addressed: number; chimeIn: number } | null>;
@@ -448,6 +449,11 @@ interface Brain {
   }
   ```
 
+- **`assess`**: how much the person's new messages matter, asked ahead of their turn with the other DM checks
+  (`settings.decisions.importance`; nothing is asked unless the Decisions client is enabled), and stored on the person
+  (`importance`). The reply queue calls it when someone's turn comes due while others wait, to weigh who goes first;
+  `compose` then uses those answers while no newer message came, asking nothing again. Never throws: a failure leaves
+  the model's own rating of their last turn.
 - **`composePost`**: a post for `channel` in the persona's voice, with the channel's `notes`, following `rules`, like
   `examples`, not repeating `recent`; every link removed when `policy.allowedLinks` is set; `null` when under 10
   characters. Uses `task: 'post'`.
@@ -667,7 +673,10 @@ function createStore(db: Database, now?: () => number): Store;
 ```
 
 Creates the package's tables in `db` if missing, then answers the store. `now` (default `Date.now`) stamps what it
-records. Data the application kept in a layout of its own is its own to migrate before this (`inTransaction`).
+records. A database made by an earlier beta gets the columns added since (`familiarity`, `affinity`, `importance`,
+`importanceAt`), in one transaction; familiarity then starts from each person's conversations so far (1 - 0.9^n), so
+someone who was close stays close. Data the application kept in a layout of its own is its own to migrate before this
+(`inTransaction`).
 
 ### `inTransaction`
 
@@ -735,8 +744,15 @@ interface Person {
 	lastInAt: number;      // when they last wrote, 0 never
 	handledAt: number;     // their messages up to this time had a turn
 	firstSeenAt: number;
+	familiarity: number;   // 0 to 1: how well the persona knows them (counted by the code, fading while apart)
+	affinity: number;      // -1 to 1: how it feels about them (a small step per kept turn, as the model answers)
+	importance: number;    // 0 to 3: how much their conversation mattered at their last turn
+	importanceAt: number;  // when that was rated, 0 never
 }
 ```
+
+`familiarity`, `affinity` and `importance` are what `settings.relationship` and `pacing.priority` read; an application
+may read them (to show how close someone is) or set them through `updatePerson` (to seed someone known elsewhere).
 
 ### `PersonState`
 
