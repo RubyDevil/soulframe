@@ -57,6 +57,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   regardless. A chat it was answering when called away is not watched when it comes back. Logged as `away` (with `from` and `until`) and
   `interruption_held`; `personaReport` lists today's as scheduled.
 
+- **A presence hook for platform statuses.** `createReplyQueue({ presence: { channels, onChange } })` is told the
+  persona's `Presence` on each channel (`active` while it writes a reply and for a while after, `online`, `away` in an
+  interruption, `busy` in a busy block with its reason, `offline`) at `start` and on each change, to set a platform's
+  own status; never awaited, failures only logged. New type `Presence`, log events `presence` and `presence_failed`.
+
 ### Changed
 
 - **Drawn ranges have a shape.** Each setting a value is drawn from each time (typing and reading speeds, the burst

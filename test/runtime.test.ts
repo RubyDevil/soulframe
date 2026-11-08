@@ -217,7 +217,15 @@ const withBreak = (breakOn?: ChannelId[]): PersonaConfig => ({
  * A queue at `now` (in open hours unless given) with a real brain and store (a new one unless given); `message` hands
  * it what someone wrote, as a persona does, and `halt` flips the halt switch.
  */
-const start = ({ decisions, now = EVENING, persona = utc.personas[0]!, rng = () => 0, dryRun = false, store = memoryStore() }: { decisions?: Decisions; now?: number; persona?: PersonaConfig; rng?: Rng; dryRun?: boolean; store?: Store } = {}) => {
+const start = ({
+	decisions,
+	now = EVENING,
+	persona = utc.personas[0]!,
+	rng = () => 0,
+	dryRun = false,
+	store = memoryStore(),
+	presence,
+}: { decisions?: Decisions; now?: number; persona?: PersonaConfig; rng?: Rng; dryRun?: boolean; store?: Store; presence?: Parameters<typeof createReplyQueue>[0]['presence'] } = {}) => {
 	vi.useFakeTimers();
 	vi.setSystemTime(now);
 	let halted = false;
@@ -225,7 +233,7 @@ const start = ({ decisions, now = EVENING, persona = utc.personas[0]!, rng = () 
 	const log = vi.spyOn(runtime, 'log').mockImplementation(() => undefined);
 	const brain = createBrain({ persona, identity: TEST_IDENTITY, runtime, decisions, llm: { complete: async () => JSON.stringify({ reply: 'hey you' }) } });
 	const act = vi.fn(async (_personId: number, _action: string) => undefined);
-	const queue = createReplyQueue({ persona, brain, runtime, act });
+	const queue = createReplyQueue({ persona, brain, runtime, act, presence });
 	queue.start();
 	const conversation = { channel: NOTED_DM, typing: vi.fn(async (_on: boolean) => undefined), send: vi.fn(async (_text: string) => undefined) };
 	const message = (text: string, from = 'user-1', channel: Channel = NOTED_DM) => queue.handle(brain.incoming(channel, from, 'Sam', text), { ...conversation, channel }, text);
@@ -1802,6 +1810,85 @@ describe('who goes first when several are due (pacing.priority)', () => {
 			// Bo and Cy came due while Ana's turn was under way: each asked once, ahead of their turn
 			expect(decisions.calls.filter((call) => call.names.includes('conversation_importance'))).toHaveLength(2);
 			expect([2, 3].map((id) => run.store.personById(id).importance)).toEqual([3, 3]);
+		} finally {
+			run.close();
+		}
+	});
+});
+
+describe('presence (for a platform status)', () => {
+	const persona = utc.personas[0]!;
+	const [, away] = interruptionsOn(persona, { year: 2026, month: 10, day: 14 }, persona.settings.pacing);
+	/** A queue at `now` whose presence on forum is recorded as `status@ms after now`. */
+	const watched = (now: number, options: { persona?: PersonaConfig; onChange?: () => void } = {}) => {
+		const seen: string[] = [];
+		const run = start({
+			now,
+			...(options.persona && { persona: options.persona }),
+			presence: {
+				channels: ['forum'],
+				onChange: (_channel, shown) => {
+					seen.push(`${shown.status}${shown.reason ? ` (${shown.reason})` : ''}@${Date.now() - now}`);
+					options.onChange?.();
+				},
+			},
+		});
+		return { ...run, seen };
+	};
+
+	it('is online at start, active while it writes and for a while after, then online again', async () => {
+		const run = watched(EVENING);
+		try {
+			expect(run.seen).toEqual(['online@0']);
+			await run.message('hey');
+			// Due at 4 s; sent at 7.4 s; on its phone for 90 s more
+			await vi.advanceTimersByTimeAsync(2 * MINUTE);
+			expect(run.seen).toEqual(['online@0', 'active@4000', 'online@97401']);
+		} finally {
+			run.close();
+		}
+	});
+
+	it('is away during an interruption, and online once it is back', async () => {
+		const run = watched(away!.start - 20_000);
+		try {
+			await vi.advanceTimersByTimeAsync(away!.end - away!.start + 30_000);
+			expect(run.seen).toEqual(['online@0', 'away@30000', `online@${away!.end - away!.start + 20_000}`]);
+		} finally {
+			run.close();
+		}
+	});
+
+	it('is busy, with its reason, through a busy block, active on its break from it, and offline at night', async () => {
+		const own = {
+			...persona,
+			schedule: everyDay({
+				busy: [{ reason: 'at work', start: ['09:00', '09:00'], end: ['17:00', '17:00'] }],
+				breaks: [{ start: ['12:30', '12:30'], minutes: [10, 10] }],
+				online: [{ start: ['19:00', '19:00'], end: ['23:00', '23:00'] }],
+			}),
+		};
+		const run = watched(at(12), { persona: own });
+		try {
+			await vi.advanceTimersByTimeAsync(at(17, 30) - Date.now());
+			expect(run.seen).toEqual(['busy (at work)@0', `active@${30 * MINUTE}`, `busy (at work)@${40 * MINUTE}`, `offline@${5 * 60 * MINUTE}`]);
+		} finally {
+			run.close();
+		}
+	});
+
+	it('tells only changes, and a hook that throws changes nothing else', async () => {
+		const run = watched(EVENING, {
+			onChange: () => {
+				throw new Error('platform down');
+			},
+		});
+		try {
+			await run.message('hey');
+			await vi.advanceTimersByTimeAsync(10_000);
+			expect(run.conversation.send).toHaveBeenCalledWith('hey you');
+			expect(logged(run.log, 'presence_failed')).toHaveLength(2);
+			expect(logged(run.log, 'presence').map((detail) => detail.status)).toEqual(['online', 'active']);
 		} finally {
 			run.close();
 		}

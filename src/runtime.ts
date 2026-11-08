@@ -6,7 +6,7 @@ import { LlmBudgetError, ModelNotConfiguredError, ProviderUnavailableError } fro
 import type { PersonaConfig } from './config/personas.js';
 import { betweenMessagesMs, drawIn, fitDelay, interruptionAt, quietMs, readingMs, replyDelay, typingPlan, watchingChance, watchingMs, type Interruption } from './pacing.js';
 import { between, sleep, weightedPick, type Rng } from './rng.js';
-import { nextSpan, spanAt, type Hours, type Span } from './schedule.js';
+import { busyAt, nextSpan, spanAt, type Hours, type Span } from './schedule.js';
 import { MINUTE, SECOND } from './settings.js';
 import type { Person, PersonState, Store } from './store.js';
 
@@ -115,6 +115,19 @@ interface TurnState {
 }
 
 /**
+ * What the persona looks like to others on a channel right now, for a platform that shows a status (`createReplyQueue`'s
+ * `presence`): `active` while it writes a reply to anyone and for `pacing.watching.halfLifeSeconds` after (on a short
+ * break too: it is on its phone), `online` the rest of its online time there, `away` during an interruption, `busy`
+ * while a busy block keeps it offline (with that block's `reason`), and `offline` otherwise (or while halted). `until`:
+ * when this status is due to change, as far as its agenda says (an incoming message may change it sooner).
+ */
+export interface Presence {
+	status: 'active' | 'online' | 'away' | 'busy' | 'offline';
+	reason?: string;
+	until?: number;
+}
+
+/**
  * Answers people at a human pace, one person at a time: while it writes or sends a reply to someone it starts nobody
  * else's, so what one turn learns about itself is never overwritten by another (self notes are read when a turn starts
  * and written when it ends). One turn per person at a time: more messages from them while it waits are answered
@@ -130,10 +143,17 @@ export function createReplyQueue({
 	brain,
 	runtime,
 	act,
+	presence,
 }: {
 	persona: PersonaConfig;
 	brain: Brain;
 	runtime: Runtime;
+	/**
+	 * Told of each change of the persona's `Presence` on each of `channels`, to set the platform's own status where it has
+	 * one (online, idle, do not disturb, a status text): once each at `start`, then on every change. Never awaited by the
+	 * queue; a rejection or a throw is logged and changes nothing else.
+	 */
+	presence?: { channels: readonly ChannelId[]; onChange: (channel: ChannelId, presence: Presence) => void | Promise<void> };
 	/**
 	 * Carries out what the persona chose besides talking (never "none"): "block", or one of the channel's `actions`; the app
 	 * routes it by the person's identities (where it can't block, not answering is the block).
@@ -181,6 +201,9 @@ export function createReplyQueue({
 	const pendingWhy = new Map<number, { why: 'pacing' | 'retry' | 'backlog'; at: number; conversation: Conversation }>();
 	/** When its last turn with anyone ended: while that is recent it is on its phone (`pacing.watching`). */
 	let lastActive: number | undefined;
+	/** The presence last told on each channel (`presence`), and the timer that tells the end of `active`. */
+	const presenceTold = new Map<ChannelId, string>();
+	let presenceTimer: NodeJS.Timeout | undefined;
 	/** When each person due first came due, kept while they write again: how long they waited (`pacing.priority`). */
 	const firstDue = new Map<number, number>();
 	/** The backlog turn in progress (one at a time), and the start of the span it was taken in. */
@@ -233,7 +256,52 @@ export function createReplyQueue({
 			away = null;
 			drain();
 			next();
+			tellPresence();
 		}, end - now);
+		tellPresence();
+	};
+
+	/** Until when it is on its phone after its last turn (`pacing.watching.halfLifeSeconds`), unless it was away since. */
+	const activeUntil = () => (lastActive !== undefined && !awaySince(lastActive) ? lastActive + pacing.watching.halfLifeSeconds * SECOND : 0);
+
+	/** Its `Presence` on `channel` at `now`. */
+	const presenceAt = (channel: ChannelId, now: number): Presence => {
+		const span = runtime.halted() ? null : spanAt(persona, now, channel);
+		if (!span) {
+			const busy = runtime.halted() ? null : busyAt(persona, now);
+			if (busy) return { status: 'busy', reason: busy.reason, until: busy.end };
+			const next = nextSpan(persona, now, { channel });
+			return { status: 'offline', ...(next && { until: next.start }) };
+		}
+		if (away && now < away.end) return { status: 'away', until: Math.min(away.end, span.end) };
+		if (span.kind === 'break' || occupied()) return { status: 'active', until: span.end };
+		const until = activeUntil();
+		return now < until ? { status: 'active', until: Math.min(until, span.end) } : { status: 'online', until: span.end };
+	};
+
+	/**
+	 * Tells `presence.onChange` of each channel whose presence changed (logged as `presence`), and comes back as being on its
+	 * phone lapses; the queue's tick, turns and interruptions call it, so a change is told within 30 seconds at worst.
+	 */
+	const tellPresence = () => {
+		if (!presence || stopped) return;
+		const now = runtime.now();
+		for (const channel of presence.channels) {
+			const shown = presenceAt(channel, now);
+			const key = `${shown.status}|${shown.reason ?? ''}`;
+			if (presenceTold.get(channel) === key) continue;
+			presenceTold.set(channel, key);
+			runtime.log(persona.id, 'presence', { platform: channel, status: shown.status, ...(shown.reason && { reason: shown.reason }), ...(shown.until && { until: new Date(shown.until).toISOString() }) });
+			const failed = (error: unknown) => runtime.log(persona.id, 'presence_failed', { platform: channel, error: String(error) });
+			try {
+				void Promise.resolve(presence.onChange(channel, shown)).catch(failed);
+			} catch (error) {
+				failed(error);
+			}
+		}
+		clearTimeout(presenceTimer);
+		const until = activeUntil();
+		if (until > now && !occupied()) presenceTimer = setTimeout(tellPresence, until - now + 1);
 	};
 
 	/**
@@ -533,6 +601,7 @@ export function createReplyQueue({
 		active.set(personId, state);
 		present = state;
 		noticeWaiting(personId);
+		tellPresence();
 		clearTimeout(lease);
 		lease = setTimeout(() => {
 			// Ended turns clear it, so this one is stuck: the others go on, whatever the clock reads as the timer fires
@@ -559,6 +628,7 @@ export function createReplyQueue({
 			release(personId);
 			drain();
 			next();
+			tellPresence();
 		}
 	};
 
@@ -862,13 +932,16 @@ export function createReplyQueue({
 				isAway();
 				drain();
 				next();
+				tellPresence();
 			}, 30_000);
+			tellPresence();
 		},
 		stop() {
 			stopped = true;
 			clearInterval(tick);
 			clearTimeout(lease);
 			clearTimeout(comeback);
+			clearTimeout(presenceTimer);
 			for (const timer of pending.values()) clearTimeout(timer);
 			pending.clear();
 			// A turn waiting for someone's quiet goes on, to find the queue stopped
