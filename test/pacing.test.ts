@@ -207,6 +207,11 @@ describe('interruptions', () => {
 		expect(perDay).toBeLessThan(11);
 	});
 
+	it('refuse a mean gap between 0 and a minute, which would make them nearly endless', () => {
+		expect(SettingsSchema.safeParse({ pacing: { interruptions: { meanMinutes: 0.001 } } }).success).toBe(false);
+		expect(SettingsSchema.safeParse({ pacing: { interruptions: { meanMinutes: 1 } } }).success).toBe(true);
+	});
+
 	it('are none with meanMinutes 0', () => {
 		const none = SettingsSchema.parse({ pacing: { interruptions: { meanMinutes: 0 } } }).pacing;
 		expect(interruptionsOn(persona, day, none)).toEqual([]);

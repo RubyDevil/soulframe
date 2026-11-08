@@ -657,6 +657,34 @@ describe('turns still owed (handled_at)', () => {
 		}
 	});
 
+	it.each([
+		['one message', ['the reply']],
+		['two messages', ['first part', 'second part']],
+	])('gives a message that comes in while the first message of a reply is being sent a turn of its own (%s)', async (_what, parts) => {
+		const { store, log, brain, conversation, message, close } = start();
+		const compose = vi.spyOn(brain, 'compose').mockResolvedValueOnce({ messages: parts, action: 'none' });
+		let first = true;
+		conversation.send.mockImplementation(async () => {
+			if (!first) return;
+			first = false;
+			// It lands as the first message goes out: too late to start over
+			await message('wait, one more thing');
+		});
+		try {
+			await message('hi');
+			await vi.advanceTimersByTimeAsync(2 * MINUTE);
+			// The reply went out whole, once, and the newer message had its own turn
+			expect(conversation.send.mock.calls.map(([text]) => text)).toEqual([...parts, 'hey you']);
+			expect(compose).toHaveBeenCalledTimes(2);
+			expect(logged(log, 'reply_superseded')).toEqual([]);
+			expect(logged(log, 'reply_restarted')).toEqual([]);
+			expect(logged(log, 'reply_after_turn')).toEqual([{ personId: 1, platform: 'forum' }]);
+			expect(store.personById(1).handledAt).toBe(store.personById(1).lastInAt);
+		} finally {
+			close();
+		}
+	});
+
 	it.each<[string, { restartOnNewMessage?: boolean; maxRestarts?: number }]>([
 		['restartOnNewMessage is off', { restartOnNewMessage: false }],
 		['the reply already started over maxRestarts times', { maxRestarts: 1 }],
@@ -1618,8 +1646,8 @@ describe('attention: watching a chat, glancing, interruptions', () => {
 		const { store, log, conversation, message, close } = start({ now: away!.start - 20_000 });
 		try {
 			await message('i have to tell you something', 'ana');
-			// Something that matters a lot, as the model rated it
-			store.updatePerson(1, { importance: 3 });
+			// Something that matters a lot, as the model rated it just now
+			store.updatePerson(1, { importance: 3, importanceAt: Date.now() });
 			await vi.advanceTimersByTimeAsync(away!.start + 30_000 - Date.now());
 			expect(logged(log, 'interruption_held')).toEqual([{ personId: 1, minutes: Number(((away!.end - away!.start - 10_000) / MINUTE).toFixed(1)) }]);
 			// Still there for her: answered within seconds, inside the time it would have been away
@@ -1637,19 +1665,34 @@ describe('attention: watching a chat, glancing, interruptions', () => {
 		}
 	});
 
-	it('never holds one off with holdAtImportance 4, nor for a conversation of small talk', async () => {
-		for (const [holdAtImportance, importance] of [[4, 3], [2, 1]] as const) {
+	it('never holds one off with holdAtImportance 4, for small talk, or for a rating from an hour ago', async () => {
+		for (const [holdAtImportance, importance, ratedAgo] of [[4, 3, 0], [2, 1, 0], [2, 3, 60 * MINUTE]] as const) {
 			const persona = personasOf({ test: testPersona({ settings: { pacing: { interruptions: { holdAtImportance } } } }) }, { prompt: 'A friendly persona.' })[0]!;
 			const { store, log, message, close } = start({ persona, now: away!.start - 20_000 });
 			try {
 				await message('hey', 'ana');
-				store.updatePerson(1, { importance });
+				store.updatePerson(1, { importance, importanceAt: Date.now() - ratedAgo });
 				await vi.advanceTimersByTimeAsync(away!.start + 30_000 - Date.now());
 				expect(logged(log, 'interruption_held')).toEqual([]);
 				expect(logged(log, 'away')).toHaveLength(1);
 			} finally {
 				close();
 			}
+		}
+	});
+
+	it('watches no chat it answered while it was being called away, though that reply was finished first', async () => {
+		const { brain, log, conversation, message, close } = start({ now: away!.start - 10_000 });
+		vi.spyOn(brain, 'compose').mockResolvedValueOnce({ messages: ['x'.repeat(70)], action: 'none' });
+		try {
+			// Typed until 15 s into the interruption, which the tick meets 20 s in
+			await message('hi');
+			await vi.advanceTimersByTimeAsync(away!.start + 30_000 - Date.now());
+			expect(conversation.send).toHaveBeenCalledTimes(1);
+			await message('so?');
+			expect(logged(log, 'reply_scheduled').at(-1)).toMatchObject({ watching: false });
+		} finally {
+			close();
 		}
 	});
 

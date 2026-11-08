@@ -48,9 +48,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   messages for a few minutes (on average once every `meanMinutes`, default 40, of online time, for `minutes`, default
   `[2, 8]`; `0` for none). Drawn per day from a seed, like the agenda, so a restart finds the same ones. Nobody's turn
   starts until it is back (a reply it was typing is finished), and it watches no chat then. One that comes in the
-  middle of a conversation that matters (importance at `holdAtImportance`, default 2, or more, with an exchange in the
-  last `calmMinutes`, default 5, or a turn of theirs coming) is held off and taken once it calms down, for the time it
-  had left; the end of its online time comes regardless. Logged as `away` (with `from` and `until`) and
+  middle of a conversation that matters (importance at `holdAtImportance`, default 2, or more, rated in the last
+  `priority.importanceHalfLifeMinutes`, with an exchange in the last `calmMinutes`, default 5, or a turn of theirs
+  coming) is held off and taken once it calms down, for the time it had left; the end of its online time comes
+  regardless. A chat it was answering when called away is not watched when it comes back. Logged as `away` (with `from` and `until`) and
   `interruption_held`; `personaReport` lists today's as scheduled.
 
 ### Changed

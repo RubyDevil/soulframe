@@ -323,7 +323,12 @@ export const SettingsSchema = z
 				interruptions: z
 					.object({
 						/** Minutes of online time between two, on average (they come at random moments: a memoryless clock); 0 for none. */
-						meanMinutes: z.number().min(0).max(1440).default(40),
+						meanMinutes: z
+							.number()
+							.min(0)
+							.max(1440)
+							.default(40)
+							.refine((minutes) => minutes === 0 || minutes >= 1, 'must be 0 (none) or at least 1'),
 						/** How long each lasts, in minutes (never past the end of its span). */
 						minutes: drawn(2, 8, 'lognormal'),
 						/**
