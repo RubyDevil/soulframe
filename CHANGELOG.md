@@ -18,12 +18,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `reply_superseded`, `reply_restarted` and `reply_after_turn`.
 - `Turn.keep()`: stores what a DM turn wrote and decided (its notes on the person and on itself, a block, an action),
   once; the reply queue calls it when it keeps the turn, never for a dropped draft.
-- **It answers by what it is doing, not by a roll per message.** Right after a turn with someone it may still have
-  their chat open (`pacing.watching`: the chance halves every `halfLifeSeconds`, default 90) and answers after a short
-  lag (`medianSeconds` 4, `p90Seconds` 8, within `delaySeconds` `[2, 20]`), so a quick back-and-forth stays live. Not
-  watching, it answers when it next glances at its messages (`pacing.glance`: `medianSeconds` 40, `p90Seconds` 150,
-  within `[4, 900]`). Both are drawn from a log-normal distribution, the skewed shape of real answer times: around a
-  typical value, with a long tail. On a short break it answers as if watching. `reply_scheduled` logs `watching`.
+- **It answers by what it is doing, not by a roll per message.** While it writes a reply to anyone, and for a while
+  after, it is on its phone (`pacing.watching`: the chance halves every `halfLifeSeconds`, default 90) and notices a
+  new message from anyone after a short lag (`medianSeconds` 4, `p90Seconds` 8, within `delaySeconds` `[2, 20]`), so
+  a live conversation stays live and doesn't leave anyone else waiting for its next glance. Off its phone, it notices
+  a message when it next glances at its messages (`pacing.glance`: `medianSeconds` 40, `p90Seconds` 150, within
+  `[4, 900]`); once it picks up its phone for someone's turn, whatever else was waiting is noticed too. Both delays
+  are drawn from a log-normal distribution, the skewed shape of real answer times. Whether it still has one person's
+  chat open (`chatHalfLifeSeconds`, default 90) only weighs who goes first. On a short break it is on its phone.
+  `reply_scheduled` logs `watching`.
 - **Familiarity and affinity, kept per person** (`settings.relationship`, `Person.familiarity`, `Person.affinity`).
   Familiarity (0 to 1) is counted by the code: each turn the reply queue keeps adds `familiarity.growth` (default
   0.012) of what is left, times 0.25 to 5 by how much the turn mattered, and it halves over `fadeHalfLifeDays` (default

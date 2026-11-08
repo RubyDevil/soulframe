@@ -344,7 +344,8 @@ Per persona. Unknown keys here are refused.
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `watching.halfLifeSeconds` | number, 1 to 3600 | `90` | After a turn with someone it may still have their chat open: the chance starts at 1 and halves every this many seconds (an interruption since ends it). |
+| `watching.halfLifeSeconds` | number, 1 to 3600 | `90` | While it writes a reply to anyone it is on its phone; after, the chance it still is starts at 1 and halves every this many seconds (an interruption since ends it). On its phone, a message from anyone is noticed after the short lag below. |
+| `watching.chatHalfLifeSeconds` | number, 1 to 3600 | `90` | The same for one person's chat: the chance it still has it open, which weighs who goes first when several wait (`priority`). |
 | `watching.medianSeconds` | number, 0.1 to 600 | `4` | The lag before it answers while watching (also every delay on a short break, when it is on its phone anyway): half are shorter. |
 | `watching.p90Seconds` | number, 0.1 to 3600 | `8` | Nine in ten are shorter; above `medianSeconds`. |
 | `watching.delaySeconds` | range | `[2, 20]` | The shortest and longest lag. |
@@ -387,9 +388,9 @@ settings:
       seconds: [3, 8]
 ```
 
-How soon it answers depends on what it is doing, not on a roll per message. Right after a turn with someone it may
-still have their chat open: a quick back-and-forth gets answers within seconds (`watching`), and the longer they take
-to write back, the likelier it put the phone down. Not watching, it answers when it next glances at its messages
+How soon it answers depends on what it is doing, not on a roll per message. While it chats with anyone it is on its
+phone: a new message from anyone is noticed within seconds (`watching`), and the longer it goes without a turn, the
+likelier it put the phone down. Not watching, it answers when it next glances at its messages
 (`glance`): usually within a minute, now and then a few. Both are skewed the way real answer times are (log-normal):
 set by a median (half come sooner) and a 90th percentile (how long the slow tail is), within bounds. Now and then
 something takes it away for a few minutes (`interruptions`, drawn per day from a seed like the agenda, and listed by

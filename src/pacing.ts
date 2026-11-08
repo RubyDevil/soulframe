@@ -66,8 +66,12 @@ export function skewedMs(rng: Rng, { medianSeconds, p90Seconds, delaySeconds: [l
 	return Math.round(Math.min(most, Math.max(least, seconds)) * SECOND);
 }
 
-/** The chance that it still has someone's chat open `sinceMs` after its last turn with them: 1 at once, halving every `watching.halfLifeSeconds`. */
-export const watchingChance = (sinceMs: number, pacing: Pacing = DEFAULT_SETTINGS.pacing) => 0.5 ** (Math.max(0, sinceMs) / (pacing.watching.halfLifeSeconds * SECOND));
+/**
+ * The chance that it is still on its phone `sinceMs` after its last turn with anyone: 1 at once, halving every
+ * `watching.halfLifeSeconds` (or every `halfLifeSeconds` given, as `watching.chatHalfLifeSeconds` for one chat).
+ */
+export const watchingChance = (sinceMs: number, pacing: Pacing = DEFAULT_SETTINGS.pacing, halfLifeSeconds = pacing.watching.halfLifeSeconds) =>
+	0.5 ** (Math.max(0, sinceMs) / (halfLifeSeconds * SECOND));
 
 /** The lag before it answers while it is watching their chat (`watching`): the only delay on a short break. */
 export const watchingMs = (rng: Rng, pacing: Pacing = DEFAULT_SETTINGS.pacing) => skewedMs(rng, pacing.watching);
@@ -76,10 +80,10 @@ export const watchingMs = (rng: Rng, pacing: Pacing = DEFAULT_SETTINGS.pacing) =
 export const glanceMs = (rng: Rng, pacing: Pacing = DEFAULT_SETTINGS.pacing) => skewedMs(rng, pacing.glance);
 
 /**
- * How long before it answers someone's message, and whether it was watching their chat. `sinceMs`: how long ago its
- * last turn with them ended, or null when there was none (or it was away since). While it may still be watching
- * (`watchingChance`), a short lag; else the time until it next glances at its messages. Draws once for the chance
- * (with a turn to go by), then the delay.
+ * How long before it notices someone's message, and whether it was on its phone. `sinceMs`: how long ago its last turn
+ * with anyone ended (0 while it writes one), or null when there was none (or it was away since). While it may still be
+ * on its phone (`watchingChance`), a short lag; else the time until it next glances at its messages. Draws once for
+ * the chance (with a turn to go by), then the delay.
  */
 export function replyDelay(rng: Rng, sinceMs: number | null, pacing: Pacing = DEFAULT_SETTINGS.pacing): { ms: number; watching: boolean } {
 	const watching = sinceMs !== null && rng() < watchingChance(sinceMs, pacing);

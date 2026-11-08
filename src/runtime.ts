@@ -177,8 +177,10 @@ export function createReplyQueue({
 	let lastAwayEnd = 0;
 	let held: { ms: number } | null = null;
 	const met = new Set<number>();
-	/** Why each pending timer was set: only a turn's own delay or a backlog gap is a turn coming soon. */
-	const pendingWhy = new Map<number, 'pacing' | 'retry' | 'backlog'>();
+	/** Why each pending timer was set (only a turn's own delay or a backlog gap is a turn coming soon), when it is due, and for which conversation. */
+	const pendingWhy = new Map<number, { why: 'pacing' | 'retry' | 'backlog'; at: number; conversation: Conversation }>();
+	/** When its last turn with anyone ended: while that is recent it is on its phone (`pacing.watching`). */
+	let lastActive: number | undefined;
 	/** When each person due first came due, kept while they write again: how long they waited (`pacing.priority`). */
 	const firstDue = new Map<number, number>();
 	/** The backlog turn in progress (one at a time), and the start of the span it was taken in. */
@@ -210,7 +212,7 @@ export function createReplyQueue({
 	const holder = (now: number) => {
 		const { holdAtImportance, calmMinutes } = pacing.interruptions;
 		if (holdAtImportance > 3) return null;
-		const soon = [...pending.keys()].filter((personId) => pendingWhy.get(personId) !== 'retry');
+		const soon = [...pending.keys()].filter((personId) => pendingWhy.get(personId)?.why !== 'retry');
 		const coming = new Set([...active.keys(), ...ready.keys(), ...settling.keys(), ...soon]);
 		for (const [personId, last] of lastWith) if (now - last < calmMinutes * MINUTE) coming.add(personId);
 		for (const personId of coming) {
@@ -467,7 +469,7 @@ export function createReplyQueue({
 		const fading = 0.5 ** (Math.max(0, now - person.importanceAt) / (priority.importanceHalfLifeMinutes * MINUTE));
 		const importance = 2 + (person.importance - 1) * fading;
 		const last = lastWith.get(personId);
-		const watching = last !== undefined && !awaySince(last) ? watchingChance(now - last, pacing) : 0;
+		const watching = last !== undefined && !awaySince(last) ? watchingChance(now - last, pacing, pacing.watching.chatHalfLifeSeconds) : 0;
 		const waited = 1 + Math.max(0, now - since) / (priority.agingMinutes * MINUTE);
 		return bond * importance * (1 + 2 * watching) * waited;
 	};
@@ -509,11 +511,28 @@ export function createReplyQueue({
 		return chosen;
 	};
 
+	/**
+	 * It picks up its phone for a turn: what was waiting for its next glance is noticed now, after the short lag it would
+	 * have had watching (only ever sooner). The one it is answering, retries and backlog gaps keep their times.
+	 */
+	const noticeWaiting = (answering: number) => {
+		const now = runtime.now();
+		for (const [personId, { why, at, conversation }] of pendingWhy) {
+			if (why !== 'pacing' || personId === answering || !pending.has(personId)) continue;
+			const lag = watchingMs(runtime.rng, pacing);
+			if (at <= now + lag) continue;
+			clearTimeout(pending.get(personId));
+			pending.delete(personId);
+			timeReply(personId, conversation, lag, 'pacing', true);
+		}
+	};
+
 	/** One turn under way: the others wait until it ends (or has run PRESENCE_LEASE), then the next starts. */
 	const answer = async (personId: number, conversation: Conversation) => {
 		const state: TurnState = { since: runtime.now(), through: 0, sent: 0, writing: false, superseded: false, restarts: 0 };
 		active.set(personId, state);
 		present = state;
+		noticeWaiting(personId);
 		clearTimeout(lease);
 		lease = setTimeout(() => {
 			// Ended turns clear it, so this one is stuck: the others go on, whatever the clock reads as the timer fires
@@ -527,6 +546,7 @@ export function createReplyQueue({
 		} finally {
 			active.delete(personId);
 			lastWith.set(personId, runtime.now());
+			lastActive = runtime.now();
 			if (present === state) {
 				present = null;
 				clearTimeout(lease);
@@ -699,7 +719,7 @@ export function createReplyQueue({
 		// setTimeout holds at most about 24.8 days
 		const delayMs = Math.round(Math.min(wait, 2_000_000_000));
 		pending.set(personId, setTimeout(() => due(personId, conversation), delayMs));
-		pendingWhy.set(personId, reason);
+		pendingWhy.set(personId, { why: reason, at: runtime.now() + delayMs, conversation });
 		runtime.log(persona.id, 'reply_scheduled', {
 			personId,
 			platform: conversation.channel.id,
@@ -774,9 +794,8 @@ export function createReplyQueue({
 		const now = runtime.now();
 		const span = spanAt(persona, now, conversation.channel.id);
 		if (!span) return park(personId, conversation, 'offline');
-		// It may still be watching their chat after its last turn with them, unless it was away since; on a short break it is on its phone anyway
-		const last = lastWith.get(personId);
-		const since = last !== undefined && !awaySince(last) ? now - last : null;
+		// On its phone while it writes a reply to anyone, and for a while after, unless it was away since; on a short break it is on it anyway
+		const since = occupied() ? 0 : lastActive !== undefined && !awaySince(lastActive) ? now - lastActive : null;
 		const timing = span.kind === 'break' ? { ms: watchingMs(runtime.rng, pacing), watching: true } : replyDelay(runtime.rng, since, pacing);
 		// Always due before the span ends
 		const wait = fitDelay(timing.ms, span.end - SPAN_END_MARGIN - now, pacing.glance.delaySeconds[0] * SECOND);

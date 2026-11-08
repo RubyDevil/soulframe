@@ -1609,6 +1609,36 @@ describe('attention: watching a chat, glancing, interruptions', () => {
 		}
 	});
 
+	it('notices a message from anyone within seconds while it is on its phone with someone else', async () => {
+		const { log, conversation, message, close } = start();
+		try {
+			await message('hey', 'bo');
+			await vi.advanceTimersByTimeAsync(10_000);
+			expect(conversation.send).toHaveBeenCalledTimes(1);
+			// Ana never wrote before: it is on its phone, with Bo, so her message is noticed after the short lag
+			await message('hi there', 'ana');
+			expect(logged(log, 'reply_scheduled').at(-1)).toMatchObject({ personId: 2, delayMs: 2_000, watching: true });
+		} finally {
+			close();
+		}
+	});
+
+	it("notices what waited for its next glance as soon as it picks up its phone for someone's turn", async () => {
+		// rng 0.9: its next glance would come after 150 s; Bo's turn, due sooner (his message is from earlier), picks up the phone
+		const { log, message, close } = start({ rng: () => 0.9 });
+		try {
+			await message('hey', 'bo');
+			await vi.advanceTimersByTimeAsync(100_000);
+			await message('hi', 'ana');
+			expect(logged(log, 'reply_scheduled').at(-1)).toMatchObject({ personId: 2, delayMs: 150_000, watching: false });
+			await vi.advanceTimersByTimeAsync(60_000);
+			// Bo's turn started at 150 s: Ana's message was noticed then, after the lag (8 s, its 90th percentile)
+			expect(logged(log, 'reply_scheduled').at(-1)).toMatchObject({ personId: 2, delayMs: 8_000, watching: true });
+		} finally {
+			close();
+		}
+	});
+
 	it('starts no turn while something took it away, answers them in order once it is back, and watches no chat then', async () => {
 		const { log, brain, conversation, message, close } = start({ now: away!.start - 20_000 });
 		const starts: [number, number][] = [];

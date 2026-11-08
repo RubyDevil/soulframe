@@ -259,7 +259,7 @@ describe('SettingsSchema', () => {
 		expect(parsed.pacing.priority).toEqual({ weighted: true, agingMinutes: 2, importanceHalfLifeMinutes: 30 });
 		expect(parsed.decisions.importance).toEqual({ enabled: true });
 		expect(parsed.context).toEqual({ situation: true, upcoming: true, awayContext: true, relationship: true, timeSince: true });
-		expect(parsed.pacing.watching).toEqual({ halfLifeSeconds: 90, medianSeconds: 4, p90Seconds: 8, delaySeconds: [2, 20] });
+		expect(parsed.pacing.watching).toEqual({ halfLifeSeconds: 90, chatHalfLifeSeconds: 90, medianSeconds: 4, p90Seconds: 8, delaySeconds: [2, 20] });
 		expect(parsed.pacing.glance).toEqual({ medianSeconds: 40, p90Seconds: 150, delaySeconds: [4, 900] });
 		expect(parsed.pacing.interruptions).toEqual({ meanMinutes: 40, minutes: { range: [2, 8], shape: 'lognormal' }, holdAtImportance: 2, calmMinutes: 5 });
 		expect(parsed.pacing.returnOnlineReplyDelayMinutes).toEqual({ range: [0, 0], shape: 'lognormal' });

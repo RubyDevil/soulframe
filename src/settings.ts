@@ -278,15 +278,17 @@ export const SettingsSchema = z
 		pacing: z
 			.object({
 				/**
-				 * Right after a turn with someone it may still have their chat open: their next message is then answered after
-				 * a short lag. The chance it is still watching starts at 1 and halves every `halfLifeSeconds`, so a quick
-				 * back-and-forth stays live and a pause of a few minutes means it put the phone down. An interruption since
-				 * then (`interruptions`) means it looked away.
+				 * While it is on its phone, a new message from anyone is noticed after a short lag: right after a turn with
+				 * anyone the chance starts at 1 and halves every `halfLifeSeconds` (1 while it writes a reply), so a live
+				 * conversation with one person doesn't leave another waiting for its next glance, and a pause of a few minutes
+				 * means it put the phone down. An interruption since then (`interruptions`) means it looked away.
 				 */
 				watching: z
 					.object({
-						/** Seconds after its last turn with them over which the chance that it is still watching halves. */
+						/** Seconds after its last turn with anyone over which the chance that it is still on its phone halves. */
 						halfLifeSeconds: z.number().min(1).max(3600).default(90),
+						/** Seconds after its last turn with someone over which the chance that it still has their chat open halves: their weight when several wait (`priority`). */
+						chatHalfLifeSeconds: z.number().min(1).max(3600).default(90),
 						/** The lag before it answers while watching (also every delay on a short break, when it is on its phone anyway): half are shorter than this, in seconds. */
 						medianSeconds: z.number().min(0.1).max(600).default(4),
 						/** …and nine in ten shorter than this (above the median): how far the slow ones go. */

@@ -145,9 +145,12 @@ delivers:
   a row). Nothing of a dropped draft is sent or stored: a turn's notes, block or action are kept only with the turn
   (`Turn.keep`). Too late for that (something was sent already, or the restarts are spent), the message gets a turn of
   its own once this one ends (`reply_after_turn`).
-- **Inside an open span**, a turn is timed by what the persona is doing. Right after a turn with someone it may still
-  have their chat open (`pacing.watching`: the chance starts at 1 and halves every 90 seconds by default), and
-  answers after a short lag; otherwise it answers when it next glances at its messages (`pacing.glance`: skewed like
+- **Inside an open span**, a turn is timed by what the persona is doing. While it writes a reply to anyone, and for a
+  while after, it is on its phone (`pacing.watching`: the chance starts at 1 and halves every 90 seconds by default),
+  and a new message from anyone is noticed after a short lag: a live conversation with one person doesn't leave
+  another waiting for its next glance (they still wait for the reply under way, one person at a time). Otherwise it
+  notices a message when it next glances at its messages, and once it picks up its phone for someone's turn it
+  notices whatever else was waiting (`pacing.glance`: skewed like
   real answer times, around a median of 40 seconds by default, a few taking minutes). On a `break` it is on its phone: only the short lag. A turn is always due at least
   90 seconds before its span ends.
 - **Interruptions.** Now and then while online, something takes it away from its messages for a few minutes
