@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { betweenMessagesMs, fitDelay, glanceMs, interruptedBetween, interruptionAt, interruptionsOn, quietMs, readingMs, replyDelay, splitReply, typingMs, typingPlan, watchingChance, watchingMs } from '../src/pacing.js';
+import { betweenMessagesMs, fitDelay, glanceMs, interruptionAt, interruptionsOn, normalQuantile, quietMs, readingMs, replyDelay, skewedMs, splitReply, typingMs, typingPlan, watchingChance, watchingMs } from '../src/pacing.js';
 import { seededRng } from '../src/rng.js';
 import { ScheduleSchema } from '../src/config/hours.js';
 import { DEFAULT_SETTINGS, SettingsSchema, type Settings } from '../src/settings.js';
@@ -105,15 +105,17 @@ describe('the typing settings', () => {
 });
 
 describe('replyDelay', () => {
-	it('is the time until it next glances at its messages without a turn to go by: mostly under a minute, never under 4 s or over 15 min', () => {
+	it('is the time until it next glances at its messages without a turn to go by: skewed around 40 s, never under 4 s or over 15 min', () => {
 		const rng = seededRng('delays');
 		const delays = Array.from({ length: 4000 }, () => replyDelay(rng, null));
 		expect(delays.every((delay) => !delay.watching)).toBe(true);
-		const quick = delays.filter((delay) => delay.ms < 60_000).length / delays.length;
-		// A memoryless clock with a 60 s mean: 1 - 1/e of them come within the minute
-		expect(quick).toBeGreaterThan(0.58);
-		expect(quick).toBeLessThan(0.68);
-		expect(delays.some((delay) => delay.ms > 4 * 60_000)).toBe(true);
+		const share = (under: number) => delays.filter((delay) => delay.ms < under).length / delays.length;
+		// Half within the median, nine in ten within the 90th percentile, a few over five minutes
+		expect(share(40_000)).toBeGreaterThan(0.47);
+		expect(share(40_000)).toBeLessThan(0.53);
+		expect(share(150_000)).toBeGreaterThan(0.88);
+		expect(share(150_000)).toBeLessThan(0.92);
+		expect(share(5 * 60_000)).toBeLessThan(0.99);
 		expect(Math.min(...delays.map((delay) => delay.ms))).toBeGreaterThanOrEqual(4_000);
 		expect(Math.max(...delays.map((delay) => delay.ms))).toBeLessThanOrEqual(15 * 60_000);
 	});
@@ -128,7 +130,7 @@ describe('replyDelay', () => {
 		for (let sample = 0; sample < 200; sample++) {
 			const delay = replyDelay(rng, 0);
 			expect(delay.ms).toBeGreaterThanOrEqual(2_000);
-			expect(delay.ms).toBeLessThanOrEqual(10_000);
+			expect(delay.ms).toBeLessThanOrEqual(20_000);
 		}
 	});
 
@@ -141,7 +143,7 @@ describe('replyDelay', () => {
 	});
 });
 
-describe('watchingChance, watchingMs and glanceMs', () => {
+describe('watchingChance, skewedMs, watchingMs and glanceMs', () => {
 	const pacing = (settings: Record<string, unknown>) => SettingsSchema.parse({ pacing: settings }).pacing;
 
 	it('halves the chance that it still watches every halfLifeSeconds', () => {
@@ -149,9 +151,18 @@ describe('watchingChance, watchingMs and glanceMs', () => {
 		expect(watchingChance(10_000, pacing({ watching: { halfLifeSeconds: 10 } }))).toBe(0.5);
 	});
 
-	it('gives whole milliseconds within their ranges', () => {
+	it('draws a log-normal: the median at the middle draw, the 90th percentile at 0.9, the bounds at the ends', () => {
+		const shape = { medianSeconds: 40, p90Seconds: 150, delaySeconds: [4, 900] as const };
+		expect(skewedMs(() => 0.5, shape)).toBe(40_000);
+		expect(skewedMs(() => 0.9, shape)).toBe(150_000);
+		expect(skewedMs(() => 0, shape)).toBe(4_000);
+		expect(skewedMs(() => 0.999999, shape)).toBe(900_000);
+		expect([0.001, 0.025, 0.5, 0.975].map((p) => Number(normalQuantile(p).toFixed(4)))).toEqual([-3.0902, -1.96, 0, 1.96]);
+	});
+
+	it('gives whole milliseconds within their bounds', () => {
 		const rng = seededRng('ranges');
-		const own = pacing({ watching: { replyDelaySeconds: [1, 3] }, glance: { meanSeconds: 30, delaySeconds: [10, 40] } });
+		const own = pacing({ watching: { medianSeconds: 2, p90Seconds: 3, delaySeconds: [1, 3] }, glance: { medianSeconds: 20, p90Seconds: 30, delaySeconds: [10, 40] } });
 		for (let sample = 0; sample < 500; sample++) {
 			const watching = watchingMs(rng, own);
 			const glance = glanceMs(rng, own);
@@ -163,12 +174,9 @@ describe('watchingChance, watchingMs and glanceMs', () => {
 		}
 	});
 
-	it('glances after meanSeconds on average', () => {
-		const rng = seededRng('mean');
-		const own = pacing({ glance: { meanSeconds: 100, delaySeconds: [0, 3600] } });
-		const mean = Array.from({ length: 8000 }, () => glanceMs(rng, own)).reduce((sum, ms) => sum + ms, 0) / 8000;
-		expect(mean).toBeGreaterThan(95_000);
-		expect(mean).toBeLessThan(105_000);
+	it('refuses a 90th percentile not above the median', () => {
+		expect(SettingsSchema.safeParse({ pacing: { glance: { medianSeconds: 60, p90Seconds: 60 } } }).success).toBe(false);
+		expect(SettingsSchema.safeParse({ pacing: { watching: { medianSeconds: 9 } } }).success).toBe(false);
 	});
 });
 
@@ -200,12 +208,10 @@ describe('interruptions', () => {
 		expect(interruptionAt(persona, Date.UTC(2026, 9, 14, 20), none)).toBeNull();
 	});
 
-	it('say when it is away, and whether it was away in between', () => {
+	it('say which one is scheduled at a moment', () => {
 		const [first] = interruptionsOn(persona, day, often);
 		expect(interruptionAt(persona, first!.start, often)).toEqual(first);
 		expect(interruptionAt(persona, first!.end, often)).not.toEqual(first);
-		expect(interruptedBetween(persona, first!.start - 1, first!.start, often)).toBe(true);
-		expect(interruptedBetween(persona, first!.start, first!.end, often)).toBe(false);
 	});
 });
 

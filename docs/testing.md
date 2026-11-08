@@ -135,7 +135,7 @@ The reply queue uses real timers (`setTimeout`, `setInterval`) for its delays, t
 tests fast:
 
 - **Zero the pacing** in the test persona: `settings: { pacing: { glance: { delaySeconds: [0, 0] },
-  watching: { replyDelaySeconds: [0, 0] }, interruptions: { meanMinutes: 0 }, typingDurationSeconds: [0, 0],
+  watching: { delaySeconds: [0, 0] }, interruptions: { meanMinutes: 0 }, typingDurationSeconds: [0, 0],
   betweenReplyMessagesSeconds: [0, 0] } }` (and `readingDurationSeconds: [0, 0]`, `burst: { settleSeconds: [0, 0] }`),
   then wait
   for the `reply_sent` event (wrap `runtime.log`) or poll the store. A code goodbye (`final`) still waits 2 to 10

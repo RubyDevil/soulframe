@@ -259,9 +259,9 @@ describe('SettingsSchema', () => {
 		expect(parsed.pacing.priority).toEqual({ weighted: true, agingMinutes: 2, importanceHalfLifeMinutes: 30 });
 		expect(parsed.decisions.importance).toEqual({ enabled: true });
 		expect(parsed.context).toEqual({ situation: true, upcoming: true, awayContext: true, relationship: true, timeSince: true });
-		expect(parsed.pacing.watching).toEqual({ halfLifeSeconds: 90, replyDelaySeconds: [2, 10] });
-		expect(parsed.pacing.glance).toEqual({ meanSeconds: 60, delaySeconds: [4, 900] });
-		expect(parsed.pacing.interruptions).toEqual({ meanMinutes: 40, minutes: [2, 8] });
+		expect(parsed.pacing.watching).toEqual({ halfLifeSeconds: 90, medianSeconds: 4, p90Seconds: 8, delaySeconds: [2, 20] });
+		expect(parsed.pacing.glance).toEqual({ medianSeconds: 40, p90Seconds: 150, delaySeconds: [4, 900] });
+		expect(parsed.pacing.interruptions).toEqual({ meanMinutes: 40, minutes: [2, 8], holdAtImportance: 2, calmMinutes: 5 });
 		expect(parsed.pacing.returnOnlineReplyDelayMinutes).toEqual([0, 0]);
 		expect(parsed.pacing.backlogGapSeconds).toEqual([30, 150]);
 		expect(parsed.models.directMessage.maxTokens).toBe(400);
@@ -276,7 +276,7 @@ describe('SettingsSchema', () => {
 		for (const key of ['quickReplyChance', 'slowReplyChance', 'quickReplyDelaySeconds', 'slowReplyDelaySeconds', 'busyReplyDelaySeconds']) {
 			expect(() => SettingsSchema.parse({ pacing: { [key]: key.endsWith('Chance') ? 0.5 : [4, 15] } })).toThrow();
 		}
-		expect(() => SettingsSchema.parse({ pacing: { glance: { mean: 60 } } })).toThrow();
+		expect(() => SettingsSchema.parse({ pacing: { glance: { meanSeconds: 60 } } })).toThrow();
 	});
 	it('keeps the typed checks off unless turned on, and their minor tiers in order', () => {
 		expect(DEFAULT_SETTINGS.decisions.enabled).toBe(false);

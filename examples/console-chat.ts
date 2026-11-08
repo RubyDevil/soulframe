@@ -46,7 +46,7 @@ const loaded = parsePersonas({
 				settings: {
 					pacing: {
 						glance: { delaySeconds: [0, 0] },
-						watching: { replyDelaySeconds: [0, 0] },
+						watching: { delaySeconds: [0, 0] },
 						interruptions: { meanMinutes: 0 },
 						readingDurationSeconds: [0, 0],
 						typingDurationSeconds: [0, 0],

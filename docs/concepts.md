@@ -147,13 +147,16 @@ delivers:
   its own once this one ends (`reply_after_turn`).
 - **Inside an open span**, a turn is timed by what the persona is doing. Right after a turn with someone it may still
   have their chat open (`pacing.watching`: the chance starts at 1 and halves every 90 seconds by default), and
-  answers after a short lag; otherwise it answers when it next glances at its messages (`pacing.glance`, a memoryless
-  clock: usually within a minute). On a `break` it is on its phone: only the short lag. A turn is always due at least
+  answers after a short lag; otherwise it answers when it next glances at its messages (`pacing.glance`: skewed like
+  real answer times, around a median of 40 seconds by default, a few taking minutes). On a `break` it is on its phone: only the short lag. A turn is always due at least
   90 seconds before its span ends.
 - **Interruptions.** Now and then while online, something takes it away from its messages for a few minutes
   (`pacing.interruptions`, drawn per day from a seed, like the agenda; `personaReport` lists today's). No turn starts
-  until it is back, a reply it was typing is finished first, and it watches no chat when it comes back. Being busy
-  with others needs no roll of its own: their turns, one at a time, are what keeps someone waiting.
+  until it is back, a reply it was typing is finished first, and it watches no chat when it comes back. One that comes
+  in the middle of a conversation that matters (its importance at `holdAtImportance` or more, an exchange within
+  `calmMinutes`, or a turn of theirs coming) is held off and taken once that conversation calms down
+  (`interruption_held`); the end of its online time is its agenda's and comes regardless. Being busy with others
+  needs no roll of its own: their turns, one at a time, are what keeps someone waiting.
 - **Otherwise it waits in the backlog.** When a span opens on its channel, the backlog is answered one person at a
   time, oldest first, with `backlogGapSeconds` before each (and `returnOnlineReplyDelayMinutes` more before the first
   one of a span).

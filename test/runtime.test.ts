@@ -964,7 +964,7 @@ describe('the backlog', () => {
 	});
 
 	it('answers on a short break as if watching, due 90 s before it ends, else in the next span', async () => {
-		// On its phone: with this rng the watching lag is 9.92 s, where a full span would glance at its messages after 15 minutes
+		// On its phone: with this rng the watching lag is 14.08 s (its 99th percentile), where a full span would glance at its messages after 15 minutes
 		const { log, message, close } = start({ now: at(12, 35), persona: withBreak(), rng: () => 0.99 });
 		try {
 			await message('quick one?', 'ana');
@@ -975,7 +975,7 @@ describe('the backlog', () => {
 			// Under 90 s left: not even the quickest reply fits
 			await message('and me?', 'cy');
 			expect(logged(log, 'reply_scheduled').map((detail) => [detail.personId, detail.delayMs, detail.dueAt, detail.watching])).toEqual([
-				[1, 9_920, '2026-10-14T12:35:09.920Z', true],
+				[1, 14_077, '2026-10-14T12:35:14.077Z', true],
 				[2, 5_000, '2026-10-14T12:38:30.000Z', true],
 			]);
 			expect(logged(log, 'reply_waiting')).toEqual([{ personId: 3, platform: 'forum', reason: 'span_ending', backlog: 1, nextOpenAt: '2026-10-14T19:00:00.000Z' }]);
@@ -1600,7 +1600,8 @@ describe('attention: watching a chat, glancing, interruptions', () => {
 			await vi.advanceTimersByTimeAsync(MINUTE);
 			// Due a few seconds later, inside the interruption: nothing starts
 			expect(starts).toHaveLength(1);
-			expect(logged(log, 'away')).toEqual([{ until: new Date(away!.end).toISOString() }]);
+			// Met at the first tick inside it (they come every 30 s from the start, 20 s before it)
+			expect(logged(log, 'away')).toEqual([{ from: new Date(away!.start + 10_000).toISOString(), until: new Date(away!.end).toISOString() }]);
 			await vi.advanceTimersByTimeAsync(away!.end + MINUTE - Date.now());
 			expect(starts.slice(1)).toEqual([
 				[1, away!.end],
@@ -1610,6 +1611,45 @@ describe('attention: watching a chat, glancing, interruptions', () => {
 			expect(logged(log, 'reply_scheduled').filter((detail) => detail.personId === 1).map((detail) => detail.watching)).toEqual([false, false]);
 		} finally {
 			close();
+		}
+	});
+
+	it('holds an interruption off while a conversation that matters goes on, and takes it once that calms down', async () => {
+		const { store, log, conversation, message, close } = start({ now: away!.start - 20_000 });
+		try {
+			await message('i have to tell you something', 'ana');
+			// Something that matters a lot, as the model rated it
+			store.updatePerson(1, { importance: 3 });
+			await vi.advanceTimersByTimeAsync(away!.start + 30_000 - Date.now());
+			expect(logged(log, 'interruption_held')).toEqual([{ personId: 1, minutes: Number(((away!.end - away!.start - 10_000) / MINUTE).toFixed(1)) }]);
+			// Still there for her: answered within seconds, inside the time it would have been away
+			await message('ok so', 'ana');
+			await vi.advanceTimersByTimeAsync(10_000);
+			expect(conversation.send).toHaveBeenCalledTimes(2);
+			expect(logged(log, 'away')).toEqual([]);
+			// Five quiet minutes later it goes, for the time it had left
+			await vi.advanceTimersByTimeAsync(6 * MINUTE);
+			const [left] = logged(log, 'away') as { from: string; until: string }[];
+			expect(Date.parse(left!.until) - Date.parse(left!.from)).toBe(away!.end - away!.start - 10_000);
+			expect(Date.parse(left!.from)).toBeGreaterThanOrEqual(away!.start + 30_000 + 5 * MINUTE);
+		} finally {
+			close();
+		}
+	});
+
+	it('never holds one off with holdAtImportance 4, nor for a conversation of small talk', async () => {
+		for (const [holdAtImportance, importance] of [[4, 3], [2, 1]] as const) {
+			const persona = personasOf({ test: testPersona({ settings: { pacing: { interruptions: { holdAtImportance } } } }) }, { prompt: 'A friendly persona.' })[0]!;
+			const { store, log, message, close } = start({ persona, now: away!.start - 20_000 });
+			try {
+				await message('hey', 'ana');
+				store.updatePerson(1, { importance });
+				await vi.advanceTimersByTimeAsync(away!.start + 30_000 - Date.now());
+				expect(logged(log, 'interruption_held')).toEqual([]);
+				expect(logged(log, 'away')).toHaveLength(1);
+			} finally {
+				close();
+			}
 		}
 	});
 
@@ -1633,7 +1673,7 @@ describe('attention: watching a chat, glancing, interruptions', () => {
 describe('who goes first when several are due (pacing.priority)', () => {
 	/**
 	 * Ana writes at 20:00 and her turn is held until the test lets it go; Bo writes 10 s later, Cy 20 s later. With rng
-	 * 0.6 each turn is due 55 s after their message, so Bo and Cy are both due while Ana's turn is under way.
+	 * 0.6 each turn is due 52 s after their message, so Bo and Cy are both due while Ana's turn is under way.
 	 */
 	const three = async ({ persona = utc.personas[0]!, decisions }: { persona?: PersonaConfig; decisions?: Decisions } = {}) => {
 		const run = start({ persona, decisions, rng: () => 0.6 });

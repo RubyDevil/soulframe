@@ -84,7 +84,8 @@ character:
 settings:
   pacing:
     glance:
-      meanSeconds: 120   # checks its messages less often than most
+      medianSeconds: 90   # checks its messages less often than most
+      p90Seconds: 300
 ```
 
 `robin.md` holds Robin's voice and background in plain prose.
@@ -97,7 +98,7 @@ Each persona's values are built in three layers, each over the one before:
 settings defaults  →  _shared.yaml  →  <id>.yaml
 ```
 
-- **Plain objects merge key by key.** `settings.pacing.glance.meanSeconds` in a persona's file changes that key only.
+- **Plain objects merge key by key.** `settings.pacing.glance.medianSeconds` in a persona's file changes that key only.
 - **Lists, `[least, most]` ranges and plain values replace** what the layer below set.
 - **`null` removes** an inherited value: the key goes back to the schema's default (or to nothing).
 - **`character.boundaries` add up**: `_shared.yaml`'s first, then the persona's own, without duplicates. A persona can't
@@ -327,11 +328,16 @@ Per persona. Unknown keys here are refused.
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `watching.halfLifeSeconds` | number, 1 to 3600 | `90` | After a turn with someone it may still have their chat open: the chance starts at 1 and halves every this many seconds (an interruption since ends it). |
-| `watching.replyDelaySeconds` | range | `[2, 10]` | The lag before it answers while watching; also every delay on a short break, when it is on its phone anyway. |
-| `glance.meanSeconds` | number, 1 to 3600 | `60` | Not watching: the average time until it next glances at its messages, on a memoryless clock (most glances come soon, a few take a while). |
+| `watching.medianSeconds` | number, 0.1 to 600 | `4` | The lag before it answers while watching (also every delay on a short break, when it is on its phone anyway): half are shorter. |
+| `watching.p90Seconds` | number, 0.1 to 3600 | `8` | Nine in ten are shorter; above `medianSeconds`. |
+| `watching.delaySeconds` | range | `[2, 20]` | The shortest and longest lag. |
+| `glance.medianSeconds` | number, 1 to 3600 | `40` | Not watching: the time until it next glances at its messages. Half its glances come sooner. |
+| `glance.p90Seconds` | number, 1 to 7200 | `150` | Nine in ten come sooner; above `medianSeconds`: how long the tail is. |
 | `glance.delaySeconds` | range | `[4, 900]` | The shortest and longest of those; the least is also the shortest time a reply must still fit in its span. |
 | `interruptions.meanMinutes` | number, 0 to 1440 | `40` | Now and then while online (not on a short break) something takes it away from its messages: on average once every this many minutes of online time. `0` for none. |
-| `interruptions.minutes` | range | `[2, 8]` | How long each lasts. Unknown keys under `watching`, `glance` and `interruptions` are refused too. |
+| `interruptions.minutes` | range | `[2, 8]` | How long each lasts. |
+| `interruptions.holdAtImportance` | number, 0 to 4 | `2` | A conversation whose importance is at least this (0 small talk, 1 ordinary, 2 personal, 3 matters a lot) holds an interruption off while it goes on; `4` never holds one off. |
+| `interruptions.calmMinutes` | number, 0.5 to 120 | `5` | Minutes without an exchange after which such a conversation has calmed down: a held interruption comes then, for the time it had left (never past the end of its online time). Unknown keys under `watching`, `glance` and `interruptions` are refused too. |
 | `priority.weighted` | boolean | `true` | When several are due at once: picked at random by weight (closeness, how much their conversation matters now, whether it still watches their chat, how long they waited). `false`: in the order they came due. |
 | `priority.agingMinutes` | number, 0.1 to 120 | `2` | Minutes of waiting that add their whole weight again (1 + waited / agingMinutes): nobody waits forever. |
 | `priority.importanceHalfLifeMinutes` | number, 1 to 1440 | `30` | Minutes over which the importance of their conversation fades halfway back to an ordinary chat's. |
@@ -367,9 +373,13 @@ settings:
 How soon it answers depends on what it is doing, not on a roll per message. Right after a turn with someone it may
 still have their chat open: a quick back-and-forth gets answers within seconds (`watching`), and the longer they take
 to write back, the likelier it put the phone down. Not watching, it answers when it next glances at its messages
-(`glance`): usually within a minute, now and then a few. Now and then something takes it away for a few minutes
-(`interruptions`, drawn per day from a seed like the agenda, and listed by the config check): nobody's turn starts
-then (one it is typing is finished first), and it watches no chat when it comes back.
+(`glance`): usually within a minute, now and then a few. Both are skewed the way real answer times are (log-normal):
+set by a median (half come sooner) and a 90th percentile (how long the slow tail is), within bounds. Now and then
+something takes it away for a few minutes (`interruptions`, drawn per day from a seed like the agenda, and listed by
+the config check): nobody's turn starts then (one it is typing is finished first), and it watches no chat when it
+comes back. Not in the middle of a conversation that matters, though: one that comes then is held off until that
+conversation calms down (`holdAtImportance`, `calmMinutes`). Going offline at the end of its hours is its agenda's,
+and comes whatever the conversation.
 
 ```yaml
 settings:

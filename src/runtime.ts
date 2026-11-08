@@ -4,7 +4,7 @@ import { unhandled, type Brain, type Decision, type PersonAction, type Turn } fr
 import type { Channel, ChannelId } from './channel.js';
 import { LlmBudgetError, ModelNotConfiguredError, ProviderUnavailableError } from './llm.js';
 import type { PersonaConfig } from './config/personas.js';
-import { betweenMessagesMs, fitDelay, interruptedBetween, interruptionAt, quietMs, readingMs, replyDelay, typingPlan, watchingChance, watchingMs } from './pacing.js';
+import { betweenMessagesMs, fitDelay, interruptionAt, quietMs, readingMs, replyDelay, typingPlan, watchingChance, watchingMs, type Interruption } from './pacing.js';
 import { between, sleep, weightedPick, type Rng } from './rng.js';
 import { nextSpan, spanAt, type Hours, type Span } from './schedule.js';
 import { MINUTE, SECOND } from './settings.js';
@@ -166,9 +166,16 @@ export function createReplyQueue({
 	const owedAfter = new Map<number, Conversation>();
 	/** When its last turn with each person ended: it may still be watching their chat (`pacing.watching`). */
 	const lastWith = new Map<number, number>();
-	/** The start of the interruption it was last found in (`pacing.interruptions`), and the timer that moves the queue on as it ends. */
-	let awayFrom: number | null = null;
+	/**
+	 * Interruptions as they happen (`pacing.interruptions`): the one it is in, and the timer that moves the queue on as it
+	 * ends; when the last one began (it watches no chat it had open before); one held off by a conversation that matters,
+	 * with the time it has left; and the scheduled ones already met, each taken or held once.
+	 */
+	let away: Interruption | null = null;
 	let comeback: NodeJS.Timeout | undefined;
+	let lastAwayAt = 0;
+	let held: { ms: number } | null = null;
+	const met = new Set<number>();
 	/** The backlog turn in progress (one at a time), and the start of the span it was taken in. */
 	let drainingId: number | null = null;
 	let drainSpanStart: number | null = null;
@@ -187,23 +194,64 @@ export function createReplyQueue({
 	/** A turn is under way, and not for so long that it must be stuck (it stops holding the others back after PRESENCE_LEASE). */
 	const occupied = () => present !== null && runtime.now() - present.since < PRESENCE_LEASE;
 
+	/** Whether it may still be watching a chat it last had open at `last`: not once an interruption began since. */
+	const awaySince = (last: number) => lastAwayAt > last;
+
 	/**
-	 * Whether something took it away from its messages now (`pacing.interruptions`): no turn starts until it is back.
-	 * The first time an interruption is found it is logged, and the queue moves on as it ends.
+	 * Who holds an interruption off now, if anyone: someone whose conversation matters (their last importance at or above
+	 * `interruptions.holdAtImportance`) and goes on, with a turn under way or coming, or an exchange in the last
+	 * `calmMinutes`.
 	 */
-	const away = () => {
+	const holder = (now: number) => {
+		const { holdAtImportance, calmMinutes } = pacing.interruptions;
+		if (holdAtImportance > 3) return null;
+		const coming = new Set([...active.keys(), ...ready.keys(), ...settling.keys(), ...pending.keys()]);
+		for (const [personId, last] of lastWith) if (now - last < calmMinutes * MINUTE) coming.add(personId);
+		for (const personId of coming) if (runtime.store.personById(personId).importance >= holdAtImportance) return personId;
+		return null;
+	};
+
+	/** It is away from now to `end`: logged, and the queue moves on as it comes back. */
+	const leave = (now: number, end: number) => {
+		away = { start: now, end };
+		lastAwayAt = now;
+		runtime.log(persona.id, 'away', { from: new Date(now).toISOString(), until: new Date(end).toISOString() });
+		clearTimeout(comeback);
+		comeback = setTimeout(() => {
+			drain();
+			next();
+		}, end - now);
+	};
+
+	/**
+	 * Whether something took it away from its messages now (`pacing.interruptions`): no turn starts until it is back (one
+	 * under way is finished). A scheduled interruption that comes while a conversation matters is held off, and taken
+	 * once that conversation calms down, for the time it had left, never past the end of its online time; a planned leave
+	 * (the end of its span) is the agenda's, whatever the conversation. Checked at each tick too, so an interruption
+	 * comes whether or not anyone is waiting.
+	 */
+	const isAway = () => {
 		const now = runtime.now();
-		const interruption = interruptionAt(persona, now, pacing);
-		if (!interruption) return false;
-		if (awayFrom !== interruption.start) {
-			awayFrom = interruption.start;
-			runtime.log(persona.id, 'away', { until: new Date(interruption.end).toISOString() });
-			clearTimeout(comeback);
-			comeback = setTimeout(() => {
-				drain();
-				next();
-			}, interruption.end - now);
+		if (away && now < away.end) return true;
+		away = null;
+		const scheduled = interruptionAt(persona, now, pacing);
+		const fresh = scheduled && !met.has(scheduled.start) ? scheduled : null;
+		if (fresh) met.add(fresh.start);
+		if (!held && !fresh) return false;
+		const holding = holder(now);
+		if (holding !== null) {
+			if (fresh && !held) {
+				held = { ms: fresh.end - now };
+				runtime.log(persona.id, 'interruption_held', { personId: holding, minutes: Number((held.ms / MINUTE).toFixed(1)) });
+			}
+			return false;
 		}
+		const span = spanAt(persona, now);
+		const ms = held?.ms ?? fresh!.end - now;
+		held = null;
+		// Its online time is over: what was held is dropped
+		if (span?.kind !== 'online') return false;
+		leave(now, Math.min(now + ms, span.end));
 		return true;
 	};
 
@@ -398,7 +446,7 @@ export function createReplyQueue({
 		const fading = 0.5 ** (Math.max(0, now - person.importanceAt) / (priority.importanceHalfLifeMinutes * MINUTE));
 		const importance = 2 + (person.importance - 1) * fading;
 		const last = lastWith.get(personId);
-		const watching = last !== undefined && !interruptedBetween(persona, last, now, pacing) ? watchingChance(now - last, pacing) : 0;
+		const watching = last !== undefined && !awaySince(last) ? watchingChance(now - last, pacing) : 0;
 		const waited = 1 + Math.max(0, now - since) / (priority.agingMinutes * MINUTE);
 		return bond * importance * (1 + 2 * watching) * waited;
 	};
@@ -409,7 +457,7 @@ export function createReplyQueue({
 	 * back into the backlog, and while halted everyone does; someone writing again waits for their quiet once more.
 	 */
 	const next = () => {
-		if (stopped || occupied() || (ready.size && away())) return;
+		if (stopped || occupied() || (ready.size && isAway())) return;
 		const now = runtime.now();
 		const due: { personId: number; conversation: Conversation; since: number }[] = [];
 		for (const [personId, { conversation, since }] of ready) {
@@ -640,7 +688,7 @@ export function createReplyQueue({
 
 	/** Starts the next backlog turn unless one is in progress: the oldest waiting person whose channel has a span open with time left for it. */
 	const drain = () => {
-		if (drainingId !== null || runtime.halted() || occupied() || (waiting.size && away())) return;
+		if (drainingId !== null || runtime.halted() || occupied() || (waiting.size && isAway())) return;
 		const now = runtime.now();
 		for (const [personId, conversation] of waiting) {
 			const span = spanAt(persona, now, conversation.channel.id);
@@ -694,7 +742,7 @@ export function createReplyQueue({
 		if (!span) return park(personId, conversation, 'offline');
 		// It may still be watching their chat after its last turn with them, unless it was away since; on a short break it is on its phone anyway
 		const last = lastWith.get(personId);
-		const since = last !== undefined && !interruptedBetween(persona, last, now, pacing) ? now - last : null;
+		const since = last !== undefined && !awaySince(last) ? now - last : null;
 		const timing = span.kind === 'break' ? { ms: watchingMs(runtime.rng, pacing), watching: true } : replyDelay(runtime.rng, since, pacing);
 		// Always due before the span ends
 		const wait = fitDelay(timing.ms, span.end - SPAN_END_MARGIN - now, pacing.glance.delaySeconds[0] * SECOND);
@@ -757,6 +805,7 @@ export function createReplyQueue({
 			tick = setInterval(() => {
 				const now = runtime.now();
 				if (!runtime.dryRun && spanAt(persona, now) && !runtime.halted()) runtime.store.set(persona.id, 'lastOnlineAt', String(now));
+				isAway();
 				drain();
 				next();
 			}, 30_000);

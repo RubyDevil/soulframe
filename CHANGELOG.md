@@ -19,10 +19,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `Turn.keep()`: stores what a DM turn wrote and decided (its notes on the person and on itself, a block, an action),
   once; the reply queue calls it when it keeps the turn, never for a dropped draft.
 - **It answers by what it is doing, not by a roll per message.** Right after a turn with someone it may still have
-  their chat open (`pacing.watching`: the chance halves every `halfLifeSeconds`, default 90) and answers after
-  `replyDelaySeconds` (default `[2, 10]`), so a quick back-and-forth stays live. Not watching, it answers when it next
-  glances at its messages (`pacing.glance`: a memoryless clock with `meanSeconds` 60, within `delaySeconds`
-  `[4, 900]`). On a short break it answers as if watching. `reply_scheduled` logs `watching`.
+  their chat open (`pacing.watching`: the chance halves every `halfLifeSeconds`, default 90) and answers after a short
+  lag (`medianSeconds` 4, `p90Seconds` 8, within `delaySeconds` `[2, 20]`), so a quick back-and-forth stays live. Not
+  watching, it answers when it next glances at its messages (`pacing.glance`: `medianSeconds` 40, `p90Seconds` 150,
+  within `[4, 900]`). Both are drawn from a log-normal distribution, the skewed shape of real answer times: around a
+  typical value, with a long tail. On a short break it answers as if watching. `reply_scheduled` logs `watching`.
 - **Familiarity and affinity, kept per person** (`settings.relationship`, `Person.familiarity`, `Person.affinity`).
   Familiarity (0 to 1) is counted by the code: each turn the reply queue keeps adds `familiarity.growth` (default
   0.012) of what is left, times 0.25 to 5 by how much the turn mattered, and it halves over `fadeHalfLifeDays` (default
@@ -46,8 +47,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Interruptions** (`pacing.interruptions`): now and then while online, something takes the persona away from its
   messages for a few minutes (on average once every `meanMinutes`, default 40, of online time, for `minutes`, default
   `[2, 8]`; `0` for none). Drawn per day from a seed, like the agenda, so a restart finds the same ones. Nobody's turn
-  starts until it is back (a reply it was typing is finished), and it watches no chat then. Logged as `away`;
-  `personaReport` lists today's.
+  starts until it is back (a reply it was typing is finished), and it watches no chat then. One that comes in the
+  middle of a conversation that matters (importance at `holdAtImportance`, default 2, or more, with an exchange in the
+  last `calmMinutes`, default 5, or a turn of theirs coming) is held off and taken once it calms down, for the time it
+  had left; the end of its online time comes regardless. Logged as `away` (with `from` and `until`) and
+  `interruption_held`; `personaReport` lists today's as scheduled.
 
 ### Changed
 
@@ -67,7 +71,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `slowReplyDelaySeconds` and `busyReplyDelaySeconds`. Each reply had a chance of a slow or busy delay however live the
   conversation was. `watching`, `glance` and `interruptions` time replies now, and others' turns are what keeps
   someone waiting while it is busy; a config that still sets the old keys fails to load (`unknown key`). Roughly:
-  a faster or slower persona sets `glance.meanSeconds`, and a long busy gap becomes `interruptions.minutes`.
+  a faster or slower persona sets `glance.medianSeconds`, and a long busy gap becomes `interruptions.minutes`.
 - **BREAKING: `memory.relationshipAfter`.** The relationship is no longer a count of conversations: it is
   `settings.relationship` (familiarity and affinity, with levels of your own if you like). A config that still sets
   it fails to load (`unknown key`); to keep four levels at your old counts, set `relationship.familiarity.levels`.

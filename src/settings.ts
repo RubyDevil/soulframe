@@ -264,35 +264,52 @@ export const SettingsSchema = z
 					.object({
 						/** Seconds after its last turn with them over which the chance that it is still watching halves. */
 						halfLifeSeconds: z.number().min(1).max(3600).default(90),
-						/** Seconds before it answers while watching; also every delay on a short break, when it is on its phone anyway. */
-						replyDelaySeconds: range(2, 10),
+						/** The lag before it answers while watching (also every delay on a short break, when it is on its phone anyway): half are shorter than this, in seconds. */
+						medianSeconds: z.number().min(0.1).max(600).default(4),
+						/** …and nine in ten shorter than this (above the median): how far the slow ones go. */
+						p90Seconds: z.number().min(0.1).max(3600).default(8),
+						/** The shortest and longest, in seconds. */
+						delaySeconds: range(2, 20),
 					})
 					.strict()
-					.default({}),
+					.default({})
+					.refine((watching) => watching.p90Seconds > watching.medianSeconds, 'p90Seconds must be above medianSeconds'),
 				/**
-				 * Not watching: the time until it next glances at its messages. A memoryless clock (how long it has waited says
-				 * nothing of when it looks), so most glances come soon and a few take a while.
+				 * Not watching: the time until it next glances at its messages. Skewed like real answer times (a log-normal
+				 * distribution): most come within a minute, around a typical time, and a few take much longer.
 				 */
 				glance: z
 					.object({
-						/** The average seconds until it next looks. */
-						meanSeconds: z.number().min(1).max(3600).default(60),
+						/** Half of its glances come sooner than this, in seconds. */
+						medianSeconds: z.number().min(1).max(3600).default(40),
+						/** …and nine in ten sooner than this (above the median): how long the tail is. */
+						p90Seconds: z.number().min(1).max(7200).default(150),
 						/** The shortest and longest, in seconds; the least is also the shortest time a reply must still fit in its span. */
 						delaySeconds: range(4, 900),
 					})
 					.strict()
-					.default({}),
+					.default({})
+					.refine((glance) => glance.p90Seconds > glance.medianSeconds, 'p90Seconds must be above medianSeconds'),
 				/**
 				 * Now and then, while online (not on a short break), something takes it away from its messages for a few
 				 * minutes: nobody's turn starts until it is back (one under way is finished first), and it is watching no chat
-				 * when it comes back. Drawn per day from a seed, like its agenda, so a restart finds the same ones.
+				 * when it comes back. Drawn per day from a seed, like its agenda, so a restart finds the same ones. Not in
+				 * the middle of a conversation that matters: one that comes then waits until it calms down. A planned leave
+				 * (the end of its online time) is its agenda's, and comes whatever the conversation.
 				 */
 				interruptions: z
 					.object({
-						/** Minutes of online time between two, on average (a memoryless clock); 0 for none. */
+						/** Minutes of online time between two, on average (they come at random moments: a memoryless clock); 0 for none. */
 						meanMinutes: z.number().min(0).max(1440).default(40),
 						/** How long each lasts, in minutes (never past the end of its span). */
 						minutes: range(2, 8),
+						/**
+						 * The importance (0 small talk to 3 something that matters a lot) at or above which a conversation holds an
+						 * interruption off: 2, something personal, by default; 4 never holds one off.
+						 */
+						holdAtImportance: z.number().min(0).max(4).default(2),
+						/** Minutes without an exchange after which such a conversation has calmed down, and a held interruption may come. */
+						calmMinutes: z.number().min(0.5).max(120).default(5),
 					})
 					.strict()
 					.default({}),
