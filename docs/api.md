@@ -224,13 +224,17 @@ type Settings = {
 	models: { directMessage: { /* ... */ }; groupChat: { /* ... */ }; post: { /* ... */ } };
 	decisions: { /* ... */ };
 	memory: { /* ... */ };
+	relationship: { /* ... */ };
 	pacing: { /* ... */ };
 	context: { /* ... */ };
 	retries: { /* ... */ };
 };
 ```
 
-Every setting of a persona, defaults filled in. Each key is in [configuration](./configuration.md#settings).
+Every setting of a persona, defaults filled in. Each key is in [configuration](./configuration.md#settings). A drawn
+range (a value drawn from it each time: `pacing.typingCharsPerSecond`, `pacing.backlogGapSeconds`,
+`retries.delayMinutes`, …) is read as `{ range: [least, most], shape }`, whichever way the config wrote it; a range
+that is only a limit stays `[least, most]`.
 
 ### `range`
 
@@ -239,7 +243,8 @@ function range(min: number, max: number, floor?: number): z.ZodType<[number, num
 ```
 
 The zod schema of a `[least, most]` setting: two numbers at or above `floor` (default 0), defaulting to `[min, max]`,
-the first not above the second. For an application that declares its own settings the same way.
+the first not above the second. For an application that declares its own settings the same way. Draw from it with
+`between(rng, ...value)` (evenly); soulframe's own drawn ranges also carry a shape (see `Settings`).
 
 ### `SECOND`, `MINUTE`, `HOUR`, `DAY`
 

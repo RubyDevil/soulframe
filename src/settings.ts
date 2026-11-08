@@ -14,7 +14,7 @@
 
 import { z } from 'zod';
 
-/** [least, most]: a random value between the two is picked each time. */
+/** [least, most]: the bounds a value is kept within, or drawn from evenly (soulframe's own drawn ranges are `drawn`, with a shape). */
 export const range = (min: number, max: number, floor = 0) =>
 	z
 		.tuple([z.number().min(floor), z.number().min(floor)])

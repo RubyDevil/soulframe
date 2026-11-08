@@ -163,6 +163,8 @@ delivers:
 - **Delivery** types before each message for a time proportional to its length (`typingCharsPerSecond`, within
   `typingDurationSeconds`, each persona's own), pauses between the messages of one reply, and splits a long single
   reply in two now and then (`replySplitChance`). The model may also write up to three messages itself, one per line.
+  Each of these values is drawn from its range with a shape that fits it: speeds on a bell curve around the middle,
+  waits and pauses skewed like the time people take (see [configuration](./configuration.md#settings)).
   While the model writes the reply, it reads what they wrote, as long as that takes at its reading speed
   (`readingCharsPerSecond`, `readingDurationSeconds`); typing starts once both are done. Three opt-in touches make it
   look closer to a person typing: the conversation's `typingRefreshMs` keeps the
