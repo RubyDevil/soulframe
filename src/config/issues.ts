@@ -46,10 +46,6 @@ export const describe = (path: readonly (string | number)[], message: string, go
 /** A problem of another file than the ConfigError's: "<file> › <problem>". */
 export const inFile = (file: string, problem: string) => `${file} › ${problem}`;
 
-/** An issue's identity, to tell one a layer only inherits (reported once, where it is written) from its own. */
-export const issueKey = (path: readonly (string | number)[], message: string) => `${path.join('.')}:${message}`;
-export const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-
 // ---------------------------------------------------------------------------------------------------
 // Unknown keys and suggestions
 // ---------------------------------------------------------------------------------------------------

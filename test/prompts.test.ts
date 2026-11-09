@@ -4,9 +4,7 @@ import { ScheduleSchema } from '../src/config/hours.js';
 import {
 	ADULTS_ONLY_RULE,
 	AWARE_PROMPT,
-	boundariesPrompt,
 	BREAK_INVITE_PROMPT,
-	characterPrompt,
 	dateTimeText,
 	dayPrompt,
 	directMessageAnswerFormat,
@@ -32,6 +30,8 @@ import {
 	rulesPrompt,
 	stopQuestion,
 	systemPrompt,
+	TRAITS,
+	traitsPrompt,
 } from '../src/prompts.js';
 import { addDays, parseClock, situationAt, zonedToUtc, type Busy, type LocalDate, type Situation, type Span } from '../src/schedule.js';
 import { DEFAULT_SETTINGS, MINUTE, SettingsSchema } from '../src/settings.js';
@@ -195,9 +195,8 @@ describe('the time', () => {
 	it('ends the group-chat task', () => {
 		const time = groupChatTimePrompt({ rules: true, localTime: 'Friday 10:00 PM', silentFor: 7 * 60_000 });
 		expect(time).toBe('It is Friday 10:00 PM for you. The last line in the chat was 7 minutes ago.');
-		const task = groupChatTask({ selfNotes: '', chattiness: 'talkative', quiet: true, hosted: false, notes: [], targetLength: 150, time });
+		const task = groupChatTask({ selfNotes: '', quiet: true, hosted: false, notes: [], targetLength: 150, time });
 		expect(task.endsWith(time)).toBe(true);
-		expect(task).toContain('You are talkative in group chats.');
 	});
 
 	it('leaves out the gaps without them (settings.context.timeSince off), and keeps the mood', () => {
@@ -363,12 +362,13 @@ describe('the day (dayPrompt)', () => {
 });
 
 describe('groupChatTask', () => {
-	const task = (hosted: boolean, notes: readonly string[] = [], targetLength = 150) => groupChatTask({ selfNotes: '', chattiness: 'talkative', quiet: false, hosted, notes, targetLength, time: 'TIME' });
-	const HOSTING = " This is your own group chat: you're hosting it.";
+	const task = (hosted: boolean, notes: readonly string[] = [], targetLength = 150) => groupChatTask({ selfNotes: '', quiet: false, hosted, notes, targetLength, time: 'TIME' });
+	const HOSTING = "This is your own group chat: you're hosting it. ";
 
-	it('tells it a group chat it hosts is its own, right after its chattiness', () => {
-		expect(task(true).split('\n')[0]).toBe(`You are talkative in group chats.${HOSTING} Decide like a person in a group chat whether to say something now:`);
+	it('tells it a group chat it hosts is its own, first, and says nothing of how much it talks (its prompt or traits do)', () => {
+		expect(task(true).split('\n')[0]).toBe(`${HOSTING}Decide like a person in a group chat whether to say something now:`);
 		expect(task(false)).toBe(task(true).replace(HOSTING, ''));
+		expect(task(false)).not.toMatch(/quiet in|easygoing|talkative/);
 	});
 
 	it("treats notices as background, and lists the channel's notes after its own instructions, before the answer format", () => {
@@ -435,23 +435,35 @@ describe('typed check questions (Decisions API)', () => {
 	});
 });
 
-describe('character, mood and relationship', () => {
+describe('traits', () => {
 	const args = { personaPrompt: 'Voice: warm.', name: 'Robin', identity: TEST_IDENTITY, channel: NOTED_DM, rules: [ADULTS_ONLY_RULE], task: 'TASK' };
 
-	it('is the same prompt as before without a character, or with an empty one', () => {
-		const before = systemPrompt(args);
-		expect(systemPrompt({ ...args, character: { facts: [], interests: [], boundaries: [] } })).toBe(before);
-		expect(characterPrompt({ facts: [], interests: [], boundaries: [] })).toBe('');
-		expect(characterPrompt(undefined)).toBe('');
-		expect(boundariesPrompt([])).toBe('');
+	it('give one fixed sentence for each value of each trait', () => {
+		expect(traitsPrompt({ chattiness: 'quiet' })).toBe('You are quiet in group chats.');
+		expect(traitsPrompt({ chattiness: 'easygoing' })).toBe('You are easygoing in group chats.');
+		expect(traitsPrompt({ chattiness: 'talkative' })).toBe('You are talkative in group chats.');
+		for (const [name, sentences] of Object.entries(TRAITS)) {
+			for (const [value, sentence] of Object.entries(sentences)) expect(traitsPrompt({ [name]: value })).toBe(sentence);
+		}
 	});
 
-	it('puts the character after the persona prompt and before identity, rules and task', () => {
-		const prompt = systemPrompt({ ...args, character: { facts: ["you're 24"], interests: ['jazz'], boundaries: ['exes'] } });
-		const order = ['Voice: warm.', "- you're 24", 'jazz', '- exes', 'You are Robin, a guide made by Forum', 'Rules you never break', 'TASK'].map((part) => prompt.indexOf(part));
-		expect(order.every((at) => at >= 0)).toBe(true);
-		expect([...order].sort((a, b) => a - b)).toEqual(order);
+	it('say nothing without traits, or with none set', () => {
+		expect(traitsPrompt(undefined)).toBe('');
+		expect(traitsPrompt({})).toBe('');
+		expect(systemPrompt({ ...args, traits: {} })).toBe(systemPrompt(args));
 	});
+
+	it('are the same every time (nothing is drawn)', () => {
+		expect(new Set(Array.from({ length: 5 }, () => traitsPrompt({ chattiness: 'quiet' }))).size).toBe(1);
+	});
+
+	it('come right after the persona prompt and before identity, rules and task', () => {
+		const prompt = systemPrompt({ ...args, traits: { chattiness: 'quiet' } });
+		expect(prompt).toBe(['Voice: warm.', 'You are quiet in group chats.', identityPrompt('Robin', TEST_IDENTITY, NOTED_DM), rulesPrompt([ADULTS_ONLY_RULE]), 'TASK'].join('\n\n'));
+	});
+});
+
+describe('mood and relationship', () => {
 
 	it('ends the time lines with the mood, and leaves them as they were without one', () => {
 		const dm = { localTime: 'Saturday 11:40 PM', gaps: { theirLast: 60_000, yourLast: null }, rules: true };

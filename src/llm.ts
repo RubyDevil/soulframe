@@ -213,7 +213,8 @@ export function createCannedLlm(rng: Rng): Llm {
 export const providerSet = ({ llm, models: { vision: _vision, ...text } }: Settings) => !!(llm.baseUrl || Object.values(text).some((model) => model.baseUrl));
 
 /**
- * One model client per persona, by id, so its own `settings.models` apply (the meter, `llm.dailyTokens`, and the
+ * One model client per persona, by id, with the settings given for it (those its brain is given: one object for
+ * every persona, or one of their own), so its `settings.models` apply (the meter, `llm.dailyTokens`, and the
  * `concurrency` limit stay shared). Canned lines for a persona in `keyless`, and in a dry run for one without a
  * provider: otherwise that is an error, naming every such persona.
  */

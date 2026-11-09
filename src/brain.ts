@@ -1,5 +1,5 @@
 import type { Channel, ChannelId } from './channel.js';
-import type { PersonaConfig } from './config/personas.js';
+import type { Persona } from './config/personas.js';
 import { DISABLED_DECISIONS, probabilityOf, scoreOf, type Decisions, type DecisionsUse, type Question } from './decisions.js';
 import type { Llm, LlmMessage } from './llm.js';
 import { moodOf } from './mood.js';
@@ -7,7 +7,7 @@ import { splitReply } from './pacing.js';
 import { clip, lookedCard, mediaOf, seenIn, timeLimited, unseen, type IncomingMessage, type MessageMedia, type PreviewLink, type SeenImage, type SeenLink } from './perception.js';
 import { hostOf, isStopRequest, MINOR_EXIT, minorSignal, STOP_ACK, stripForeignLinks } from './safety.js';
 import { busyAt, fullyOnline, situationAt } from './schedule.js';
-import { DAY, HOUR, MINUTE, SECOND } from './settings.js';
+import { DAY, DEFAULT_SETTINGS, HOUR, MINUTE, SECOND, type Settings } from './settings.js';
 import {
 	ADDRESSED_QUESTION,
 	ADULTS_ONLY_RULE,
@@ -174,6 +174,10 @@ export interface GroupChatLine {
 }
 
 export interface Brain {
+	/** The persona it is the brain of, as `createBrain` was given it. */
+	readonly persona: Persona;
+	/** The settings it runs with, as `createBrain` was given them (every default without them): its reply queue reads them here. */
+	readonly settings: Settings;
 	/**
 	 * A message they wrote on `channel` as `name` (the name they go by there: the person keeps the one of their newest
 	 * message), now unless `at` says when (one read late). `message` is their words, or those with the photos and link
@@ -208,7 +212,7 @@ export interface Brain {
 	/**
 	 * Group-chat gate (settings.decisions.groupChatGate) on the chat `chatId` (the app's own id for that chat, the same on
 	 * every call: its `perHour` cap counts per chat): null when off, past that cap, or on any failure or refusal; the
-	 * caller then lets the model decide.
+	 * caller then lets the model decide. It speaks when addressed (`addressedAt`) or when chiming in fits (`chimeInAt`).
 	 */
 	wantsToSpeak(chatId: string, recent: GroupChatLine[]): Promise<{ speak: boolean; addressed: number; chimeIn: number } | null>;
 	/** Age check of one group-chat line (settings.decisions.minor.groupChats): level 'none', nothing asked, unless `chat.adult`; 'none' too when off or on any failure or refusal. */
@@ -255,8 +259,13 @@ interface Shown {
 	baseline: number;
 }
 
-/** The app's content policy. soulframe applies none of its own beyond `Channel.adult` and the persona's `sfw`. */
+/** The app's content policy. soulframe applies none of its own beyond `Channel.adult` and, when asked, `sfw`. */
 export interface Policy {
+	/**
+	 * Safe for work only: every prompt (DMs, group chats, posts) gets the rule to keep the conversation free of sexual or
+	 * explicit content (prompts.ts SFW_RULE), after the 18+ line and before `rules`. Off by default.
+	 */
+	sfw?: boolean;
 	/** Lines of "Rules you never break:", each rendered "- line", after soulframe's own (the 18+ line, the sfw line). */
 	rules?: readonly string[];
 	/**
@@ -268,6 +277,7 @@ export interface Policy {
 
 export function createBrain({
 	persona,
+	settings = DEFAULT_SETTINGS,
 	identity,
 	style,
 	runtime,
@@ -276,7 +286,13 @@ export function createBrain({
 	policy = {},
 	previewLink,
 }: {
-	persona: PersonaConfig;
+	/** Its config and prompt (`parsePersona`, `loadPersonas`). */
+	persona: Persona;
+	/**
+	 * What it runs with: models, limits, memory, pacing, the typed checks (`parseSettings`); every default when left out.
+	 * Its reply queue reads them from the brain, and its model client should be made with the same (`llmsFor`).
+	 */
+	settings?: Settings;
 	/** The app's phrase on what the persona is, after its name in the identity line ("You are Robin, <identity>, chatting by text in …"); none for the name alone. */
 	identity?: string;
 	/** The app's block on how the persona writes, word for word after the identity line; none by default. */
@@ -297,10 +313,7 @@ export function createBrain({
 	const { store } = runtime;
 	// Read at each use: a clock swapped on the runtime is the brain's too
 	const now = () => runtime.now();
-	// Its own settings: the global ones with its overrides merged in when the config was loaded
-	const settings = persona.settings;
-	// Which checks run and their thresholds; whether any runs at all is `decisions.enabled` (the caller builds a real client only when the setting is on).
-	// Global only (settings.ts GLOBAL_SETTINGS): the same for every persona
+	// Which checks run and their thresholds; whether any runs at all is `decisions.enabled` (the caller builds a real client only when the setting is on)
 	const checks = settings.decisions;
 	const ctx = (use: DecisionsUse) => ({ use, personaId: persona.id });
 	const localTime = () => dateTimeText(now(), persona.timezone);
@@ -311,12 +324,12 @@ export function createBrain({
 	/** When the group-chat gate asked over the last hour, by chat (`wantsToSpeak`'s `chatId`, settings.decisions.groupChatGate.perHour). */
 	const gateAsked = new Map<string, number[]>();
 
-	/** The rules on `channel`: the 18+ line on an adult one, the sfw line of an sfw persona, then the app's. */
-	const rulesOn = (channel: Channel) => [...(channel.adult ? [ADULTS_ONLY_RULE] : []), ...(persona.sfw ? [SFW_RULE] : []), ...(policy.rules ?? [])];
+	/** The rules on `channel`: the 18+ line on an adult one, the sfw line of an sfw policy, then the app's. */
+	const rulesOn = (channel: Channel) => [...(channel.adult ? [ADULTS_ONLY_RULE] : []), ...(policy.sfw ? [SFW_RULE] : []), ...(policy.rules ?? [])];
 
 	// Every prompt's text is in prompts.ts (and the channel's, in the app's Channel); this only fills in the persona
 	const system = (channel: Channel, rules: readonly string[], task: string) =>
-		systemPrompt({ personaPrompt: persona.promptText, character: persona.character, name: persona.name, identity, style, channel, rules, task });
+		systemPrompt({ personaPrompt: persona.prompt, traits: persona.traits, name: persona.name, identity, style, channel, rules, task });
 
 	const lookLimit = settings.perception.timeoutSeconds * SECOND;
 
@@ -494,6 +507,9 @@ export function createBrain({
 	};
 
 	return {
+		persona,
+		settings,
+
 		incoming({ id: channel, adult }, externalId, name, message, at = now()) {
 			const sent = typeof message === 'string' ? { text: message } : message;
 			// The code's own checks below read only their words: a headline or a sign in a photo is not them saying it
@@ -683,7 +699,6 @@ export function createBrain({
 			// The group-chat gate, if any, ran before this (wantsToSpeak, settings.decisions.groupChatGate): here the model decides
 			const task = groupChatTask({
 				selfNotes: selfNotes(),
-				chattiness: persona.chattiness,
 				quiet,
 				hosted,
 				notes: chat.notes ?? [],
@@ -720,8 +735,8 @@ export function createBrain({
 			const addressed = probabilityOf(answers, ADDRESSED_QUESTION);
 			const chimeIn = scoreOf(answers, CHIME_IN_QUESTION);
 			if (addressed === null || chimeIn === null) return null;
-			// Chattiness is only this threshold, never in the questions
-			return { speak: addressed >= gate.addressedAt || chimeIn >= gate.chimeInAt[persona.chattiness], addressed, chimeIn };
+			// How readily it chimes in is only this threshold, never in the questions
+			return { speak: addressed >= gate.addressedAt || chimeIn >= gate.chimeInAt, addressed, chimeIn };
 		},
 
 		async checkGroupChatLine(chat, text) {

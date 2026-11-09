@@ -3,7 +3,6 @@ import { inspect } from 'node:util';
 import { unhandled, type Brain, type Decision, type PersonAction, type Turn } from './brain.js';
 import type { Channel, ChannelId } from './channel.js';
 import { LlmBudgetError, ModelNotConfiguredError, ProviderUnavailableError } from './llm.js';
-import type { PersonaConfig } from './config/personas.js';
 import { betweenMessagesMs, drawIn, fitDelay, glanceMs, interruptionAt, lookingMs, quietMs, readingMs, typingPlan, watchingChance, watchingMs, type Interruption } from './pacing.js';
 import { readableChars } from './perception.js';
 import { between, sleep, weightedPick, type Rng } from './rng.js';
@@ -11,7 +10,7 @@ import { nextSpan, spanAt, type Hours, type Span } from './schedule.js';
 import { MINUTE, SECOND } from './settings.js';
 import type { Person, PersonState, Store } from './store.js';
 
-/** What every persona module shares: the clock, randomness, the store, the halt switch and logging (settings are each persona's own, persona.settings). */
+/** What every persona module shares: the clock, randomness, the store, the halt switch and logging (settings are each brain's, `brain.settings`). */
 export interface Runtime {
 	now: () => number;
 	rng: Rng;
@@ -124,15 +123,15 @@ interface TurnState {
  * and once they stopped writing (`pacing.burst`). Due turns start as soon as the persona is free and back from any
  * interruption, the next drawn by weight among several (`pacing.priority`). Otherwise they wait in the backlog,
  * answered once a span opens: one person at a time, oldest first, with a pause before each. It reads their messages
- * while it writes, and types each message for a time proportional to it.
+ * while it writes, and types each message for a time proportional to it. Its persona and settings are its brain's
+ * (`brain.persona`, `brain.settings`), so the two never run with different ones.
  */
 export function createReplyQueue({
-	persona,
 	brain,
 	runtime,
 	act,
 }: {
-	persona: PersonaConfig;
+	/** The persona's brain: the queue answers with it, by its persona's hours and its settings. */
 	brain: Brain;
 	runtime: Runtime;
 	/**
@@ -141,10 +140,11 @@ export function createReplyQueue({
 	 */
 	act: (personId: number, action: PersonAction) => Promise<void>;
 }) {
-	const { retries, pacing } = persona.settings;
+	const { persona, settings } = brain;
+	const { retries, pacing } = settings;
 	const { burst, priority } = pacing;
 	/** Whether a turn that comes due while others wait is weighed by the Decisions importance check (`brain.assess`, which asks nothing while the checks are off). */
-	const assessing = persona.settings.decisions.importance.enabled;
+	const assessing = settings.decisions.importance.enabled;
 	/** By person: the timer of a turn's delay, a retry or a backlog gap. */
 	const pending = new Map<number, NodeJS.Timeout>();
 	/** The backlog: people owed a turn while no span was open for it, oldest first. */
@@ -482,7 +482,7 @@ export function createReplyQueue({
 	 */
 	const weightOf = (personId: number, since: number, now: number) => {
 		const person = runtime.store.personById(personId);
-		const bond = (1 + person.familiarity) * (persona.settings.relationship.affinity.enabled ? 1 + person.affinity / 2 : 1);
+		const bond = (1 + person.familiarity) * (settings.relationship.affinity.enabled ? 1 + person.affinity / 2 : 1);
 		const fading = 0.5 ** (Math.max(0, now - person.importanceAt) / (priority.importanceHalfLifeMinutes * MINUTE));
 		const importance = 2 + (person.importance - 1) * fading;
 		const last = lastWith.get(personId);
@@ -626,7 +626,7 @@ export function createReplyQueue({
 			state.through = through;
 			state.writing = true;
 			/** What there is to read: their messages this turn answers, together, but for those an earlier draft read. */
-			const toRead = unhandled(runtime.store.history(personId, persona.settings.memory.historyMessages), Math.max(handledAt, readUpTo));
+			const toRead = unhandled(runtime.store.history(personId, settings.memory.historyMessages), Math.max(handledAt, readUpTo));
 			const readChars = toRead.reduce((sum, m) => sum + readableChars(m), 0);
 			const photos = toRead.reduce((sum, m) => sum + (m.media?.images.length ?? 0), 0);
 			readUpTo = through;

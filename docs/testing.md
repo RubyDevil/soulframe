@@ -5,25 +5,33 @@ it. The package's own tests (`test/`, run with Vitest: `npm test`) use the same 
 
 ## A persona without files
 
-`parsePersonas` takes the YAML as values and a `readPrompt` function, so no file is read:
+`parsePersona` takes the config as values and the prompt as text, so no file is read:
 
 ```ts
-import { parsePersonas, type PersonaConfig } from 'soulframe';
+import { parsePersona, parseSettings, type Persona, type Settings } from 'soulframe';
 
-export function testPersona(fields: Record<string, unknown> = {}): PersonaConfig {
-	const loaded = parsePersonas({
-		personas: [{ id: 'test', file: 'test.yaml', raw: { name: 'Test', timezone: 'UTC', window: { start: ['19:00', '19:00'], end: ['23:00', '23:00'] }, ...fields } }],
-		channels: { test: ['chat'] },
-		readPrompt: () => 'A friendly voice.',
+export function testPersona(fields: Record<string, unknown> = {}): Persona {
+	const { persona, issues } = parsePersona({
+		config: { id: 'test', name: 'Test', timezone: 'UTC', schedule: { days: { 'mon-sun': { online: [{ start: ['19:00', '19:00'], end: ['23:00', '23:00'] }] } } }, ...fields },
+		prompt: 'A friendly voice.',
+		channels: ['chat'],
 	});
-	if (loaded.issues.length) throw new Error(loaded.issues.join('\n'));
-	return loaded.personas[0]!;
+	if (!persona) throw new Error(issues.join('\n'));
+	return persona;
+}
+
+/** Settings for a test brain, as written: every other one at its default. */
+export function testSettings(raw: unknown = {}): Settings {
+	const { settings, issues } = parseSettings(raw);
+	if (!settings) throw new Error(issues.join('\n'));
+	return settings;
 }
 ```
 
-To test config errors, assert on `loaded.issues`. `loadPersonas` takes a `files` option (`ConfigFiles`: `read` and
-`exists`) for a folder that lives only in memory. If your application loads its personas with `adult: true` (for 18+
-conversations), pass it to `parsePersonas` too, so the tests run the same checks.
+To test config errors, assert on `issues`. `parsePersonaMarkdown` reads a persona file's text, and `loadPersonas`
+takes a `files` option (`ConfigFiles`: `read` and `exists`) for a folder that lives only in memory. If your
+application loads its personas with `adult: true` (for 18+ conversations), pass it in tests too, so they run the same
+checks.
 
 ## An in-memory store
 
@@ -51,7 +59,7 @@ const rng = () => 0; // or 0.5, or your own seeded source
 
 const store = createStore(openDatabase(':memory:'), now);
 const runtime = createRuntime({ store, dryRun: false, haltFile: '/no/such/file', rng, now });
-const brain = createBrain({ persona, identity: 'a guide made by Example', runtime, llm });
+const brain = createBrain({ persona, settings: testSettings(), identity: 'a guide made by Example', runtime, llm });
 ```
 
 A brain tested without a queue needs only those three: `createBrain({ persona, runtime: { store, now, rng }, llm })`.
@@ -126,8 +134,8 @@ const scripted = (probability: number, score = 0): Decisions => ({
 });
 ```
 
-Return `null` from `ask` to test that a failure behaves as if the checks were off. The settings in
-`persona.settings.decisions` (set in `_shared.yaml`) say which checks run and their thresholds; `enabled` on the
+Return `null` from `ask` to test that a failure behaves as if the checks were off. The brain's `settings.decisions`
+(`createBrain({ settings })`) say which checks run and their thresholds; `enabled` on the
 `Decisions` object is what the brain reads to know whether any can run.
 
 ## The reply queue
@@ -135,9 +143,9 @@ Return `null` from `ask` to test that a failure behaves as if the checks were of
 The reply queue uses real timers (`setTimeout`, `setInterval`) for its delays, typing and backlog. Two ways to keep
 tests fast:
 
-- **Zero the pacing** in the test persona: `settings: { pacing: { glance: { delaySeconds: [0, 0] },
+- **Zero the pacing** in the test brain's settings: `testSettings({ pacing: { glance: { delaySeconds: [0, 0] },
   watching: { delaySeconds: [0, 0] }, interruptions: { meanMinutes: 0 }, typingDurationSeconds: [0, 0],
-  betweenReplyMessagesSeconds: [0, 0] } }` (and `readingDurationSeconds: [0, 0]`, `looking: [0, 0]`, `burst: { settleSeconds: [0, 0] }`),
+  betweenReplyMessagesSeconds: [0, 0] } })` (and `readingDurationSeconds: [0, 0]`, `looking: [0, 0]`, `burst: { settleSeconds: [0, 0] }`),
   then wait
   for the `reply_sent` event (wrap `runtime.log`) or poll the store. A code goodbye (`final`) still waits 2 to 10
   seconds.

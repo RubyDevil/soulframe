@@ -2,14 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { ScheduleSchema } from '../src/config/hours.js';
 import { moodOf } from '../src/mood.js';
 import { seededRng, weightedPick } from '../src/rng.js';
-import { scheduleOfWindow, zonedToUtc } from '../src/schedule.js';
+import { zonedToUtc } from '../src/schedule.js';
+import { everyDay } from './fixtures.js';
 
 const TZ = 'America/Toronto';
 const persona = (
 	moods: { mood: string; weight: number }[],
 	// Always 20:00 to 02:00
-	schedule = scheduleOfWindow({ start: ['20:00', '20:00'], end: ['02:00', '02:00'], skipDayChance: 0 }),
-) => ({ id: 'robin', timezone: TZ, schedule, character: { facts: [], interests: [], boundaries: [], moods } });
+	schedule = ScheduleSchema.parse(everyDay(['20:00', '20:00'], ['02:00', '02:00'])),
+) => ({ id: 'robin', timezone: TZ, schedule, moods });
 const MOODS = ['chill', 'playful', 'curious', 'sleepy', 'chatty', 'dreamy'].map((mood) => ({ mood, weight: 1 }));
 const at = (day: number, minutes: number) => zonedToUtc({ year: 2026, month: 10, day }, minutes, TZ);
 
@@ -18,7 +19,7 @@ describe('moodOf', () => {
 		expect(moodOf(persona(MOODS), at(14, 21 * 60))).toBe(moodOf(persona(MOODS), at(14, 22 * 60)));
 	});
 
-	it('holds across local midnight within one window', () => {
+	it('holds across local midnight within one span', () => {
 		expect(moodOf(persona(MOODS), at(14, 23 * 60))).toBe(moodOf(persona(MOODS), at(15, 60)));
 	});
 
@@ -28,7 +29,7 @@ describe('moodOf', () => {
 		expect([at(13, 10 * 60 + 35), at(13, 15 * 60), at(14, 2 * 60)].map((now) => moodOf(persona(MOODS, schedule), now))).toEqual(['sleepy', 'sleepy', 'sleepy']);
 	});
 
-	it('keeps the mood a window persona had before the agenda', () => {
+	it('keeps the mood a persona with the same hours every day had before the agenda', () => {
 		expect(moodOf(persona(MOODS), at(14, 21 * 60))).toBe('curious');
 	});
 

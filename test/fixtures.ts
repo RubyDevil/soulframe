@@ -1,6 +1,7 @@
 import type { Policy } from '../src/brain.js';
 import type { Channel, ChannelAction, ChannelId } from '../src/channel.js';
-import { parsePersonas } from '../src/config/personas.js';
+import { parsePersona } from '../src/config/personas.js';
+import { parseSettings } from '../src/settings.js';
 import { createStore, openDatabase } from '../src/store.js';
 
 /** A store on its own in-memory database, gone with it: nothing to close. */
@@ -26,37 +27,38 @@ export const postChannel = (maxLength: number): Channel => ({ id: 'chat', where:
 /** An application's policy, as it would pass one: a few rule lines, and its url the only link. */
 export const TEST_POLICY = { rules: ['Never ask for personal data.', 'Respect a no at once.'], allowedLinks: ['https://forum.example'] } satisfies Policy;
 
-/**
- * The 'test' persona's file as written, online 19:00 to 23:00 UTC every day (a LEGACY row in schedule.test.ts), with
- * these fields over its own. Authoritative: an application embedding the package may keep a copy for its own tests.
- */
-export const testPersona = (fields: Record<string, unknown> = {}) => ({
-	name: 'Test',
-	prompt: 'test.md',
-	timezone: 'UTC',
-	window: { start: ['19:00', '19:00'], end: ['23:00', '23:00'] },
-	...fields,
+/** The same online block every day, as a schedule: its start and end ranges (`[earliest, latest]`), and the chance of a day off. */
+export const everyDay = (start: [string, string], end: [string, string], skipDayChance?: number) => ({
+	...(skipDayChance !== undefined && { skipDayChance }),
+	days: { 'mon-sun': { online: [{ start, end }] } },
 });
 
 /**
- * parsePersonas on these persona files as written, by id (each read from `<id>.yaml`, its prompt `prompt`), with
- * `_shared.yaml` when given, each on `channels` (both test channels unless given), for 18+ conversations with `adult`.
+ * The 'test' persona's config as written, online 19:00 to 23:00 UTC every day (a LEGACY row in schedule.test.ts), with
+ * these fields over its own. Authoritative: an application embedding the package may keep a copy for its own tests.
  */
-export const loadedOf = (
-	raws: Record<string, unknown>,
-	{ shared, channels = ['forum', 'chat'], prompt = 'A voice.', adult }: { shared?: unknown; channels?: ChannelId[]; prompt?: string; adult?: boolean } = {},
-) =>
-	parsePersonas({
-		adult,
-		shared,
-		personas: Object.entries(raws).map(([id, raw]) => ({ id, raw, file: `${id}.yaml` })),
-		channels: Object.fromEntries(Object.keys(raws).map((id) => [id, channels])),
-		readPrompt: () => prompt,
-	});
+export const testPersona = (fields: Record<string, unknown> = {}) => ({
+	id: 'test',
+	name: 'Test',
+	timezone: 'UTC',
+	schedule: everyDay(['19:00', '19:00'], ['23:00', '23:00']),
+	...fields,
+});
 
-/** The personas of loadedOf, which must have no problem. */
-export const personasOf = (raws: Record<string, unknown>, options?: Parameters<typeof loadedOf>[1]) => {
-	const loaded = loadedOf(raws, options);
-	if (loaded.issues.length) throw new Error(loaded.issues.join('\n'));
-	return loaded.personas;
+/** parsePersona on this config with `prompt`, on `channels` (both test channels unless given), for 18+ conversations with `adult`. */
+export const parsedOf = (config: unknown, { prompt = 'A voice.', channels = ['forum', 'chat'], adult, source }: { prompt?: string; channels?: ChannelId[]; adult?: boolean; source?: string } = {}) =>
+	parsePersona({ config, prompt, channels, adult, source });
+
+/** The persona of parsedOf, which must have no problem. */
+export const personaOf = (config: unknown, options?: Parameters<typeof parsedOf>[1]) => {
+	const { persona, issues } = parsedOf(config, options);
+	if (!persona) throw new Error(issues.join('\n'));
+	return persona;
+};
+
+/** parseSettings on these settings as written, which must have no problem. */
+export const settingsOf = (raw: unknown = {}) => {
+	const { settings, issues } = parseSettings(raw);
+	if (!settings) throw new Error(issues.join('\n'));
+	return settings;
 };

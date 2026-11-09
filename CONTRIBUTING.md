@@ -69,8 +69,9 @@ own database layouts, and their migrations, are the application's.
 - **Tests next to the behaviour**: a change to `src/schedule.ts` comes with a test in `test/schedule.test.ts`, one to
   the reply queue in `test/runtime.test.ts`, and so on. Tests use `:memory:` stores and never the network.
 - The package ships no content policy and no product voice: what a persona is and may say is the application's to
-  decide (its model, `identity`, `style`, `policy` and channel `notes`), so no rule, filter or product wording of that
-  kind goes into `src/`. What the package does ship only ever gets stricter:
+  decide (its model, the persona's prompt, `identity`, `style`, `policy` and channel `notes`), so no rule, filter or
+  product wording of that kind goes into `src/`. The optional traits (`TRAITS` in `src/prompts.ts`) are neutral
+  sentences an operator picks, never a voice the package imposes. What the package does ship only ever gets stricter:
   a change that weakens the stop handling or the opt-in minors safeguard (`Channel.adult`) will not be merged.
 - Prompt text lives in `src/prompts.ts` (and the fixed messages in `src/safety.ts`): no other file writes text for the
   model.
@@ -90,8 +91,9 @@ versions with the same rules.
 - **npm dist-tags.** A version with a hyphen is published with `npm publish --tag beta` (the tag matches the label), so
   it never becomes `latest`; only a version without a prerelease part does. Install a beta with
   `npm install soulframe@beta`.
-- **What counts as the public API:** the exports of `src/index.ts`, the shape of the persona config files, and the
-  database layout. See [docs/api.md](./docs/api.md).
+- **What counts as the public API:** the exports of `src/index.ts`, the shape of a persona's config and of the settings
+  (and the persona file format: a Markdown file, its config as frontmatter), and the database layout. See
+  [docs/api.md](./docs/api.md).
 - A published version is never changed or reused: fix forward with a new version.
 
 ## Commit messages

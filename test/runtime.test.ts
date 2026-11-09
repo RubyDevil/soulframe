@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createBrain, type Brain, type Turn } from '../src/brain.js';
 import type { Channel, ChannelId } from '../src/channel.js';
 import { ScheduleSchema } from '../src/config/hours.js';
-import type { PersonaConfig } from '../src/config/personas.js';
+import type { Persona } from '../src/config/personas.js';
 import { createScriptedDecisions, type Decisions } from '../src/decisions.js';
 import { LlmBudgetError, ModelNotConfiguredError, ProviderUnavailableError } from '../src/llm.js';
 import { STOP_QUESTION } from '../src/prompts.js';
@@ -13,26 +13,23 @@ import { seededRng, sleep, type Rng } from '../src/rng.js';
 import type { IncomingMessage } from '../src/perception.js';
 import { createReplyQueue, createRuntime, UnreachableError, watchSpans, type Conversation } from '../src/runtime.js';
 import { MINOR_EXIT, STOP_ACK } from '../src/safety.js';
-import { MINUTE, SettingsSchema } from '../src/settings.js';
+import { DEFAULT_SETTINGS, MINUTE, parseSettings, type Settings } from '../src/settings.js';
 import type { Person, Store } from '../src/store.js';
-import { loadedOf, memoryStore, NOTED_DM, PLAIN_DM, personasOf, SNOOZE, TEST_IDENTITY, testPersona } from './fixtures.js';
+import { memoryStore, NOTED_DM, PLAIN_DM, personaOf, settingsOf, SNOOZE, TEST_IDENTITY, testPersona } from './fixtures.js';
 
-// 23:00 in Toronto: inside every night of the window below
+// 23:00 in Toronto: inside every night of the hours below
 const OPEN = Date.UTC(2026, 9, 15, 3);
 
-const personaOf = (id: string, extra: Record<string, unknown> = {}) => ({
-	name: id,
-	prompt: `${id}.md`,
-	timezone: 'America/Toronto',
-	window: { start: ['18:00', '20:00'], end: ['00:30', '02:00'] },
-	...extra,
-});
+/** A persona's config, online every evening in Toronto. */
+const configOf = (id: string) => ({ id, name: id, timezone: 'America/Toronto', schedule: { days: { 'mon-sun': { online: [{ start: ['18:00', '20:00'], end: ['00:30', '02:00'] }] } } } });
 
 const config = {
-	personas: personasOf(
-		{ robin: personaOf('robin', { settings: { retries: { attempts: 1 }, pacing: { glance: { delaySeconds: [1, 1] } } } }), sky: personaOf('sky') },
-		{ shared: { settings: { retries: { attempts: 3 } } } },
-	),
+	personas: [personaOf(configOf('robin')), personaOf(configOf('sky'))],
+	/** The settings each one's brain runs with: robin's of its own, sky's the app's. */
+	settings: {
+		robin: settingsOf({ retries: { attempts: 1 }, pacing: { glance: { delaySeconds: [1, 1] } } }),
+		sky: settingsOf({ retries: { attempts: 3 } }),
+	} as Record<string, Settings>,
 };
 
 const setUp = () => {
@@ -78,8 +75,8 @@ describe('reply scheduling', () => {
 		vi.useFakeTimers();
 		const { runtime, store } = setUp();
 		const persona = config.personas[0]!;
-		const brain = createBrain({ persona, identity: TEST_IDENTITY, runtime, llm: { complete: async () => 'hello' } });
-		const queue = createReplyQueue({ persona, brain, runtime, act: async () => undefined });
+		const brain = createBrain({ persona, settings: config.settings.robin, identity: TEST_IDENTITY, runtime, llm: { complete: async () => 'hello' } });
+		const queue = createReplyQueue({ brain, runtime, act: async () => undefined });
 		const log = vi.spyOn(runtime, 'log').mockImplementation(() => undefined);
 		const timer = vi.spyOn(globalThis, 'setTimeout');
 		try {
@@ -113,7 +110,7 @@ describe('DM lifecycle logs', () => {
 		const runtime = createRuntime({ store, dryRun, haltFile: 'unused', rng: () => 0 });
 		vi.spyOn(runtime, 'log').mockImplementation(() => undefined);
 		const brain = createBrain({ persona, identity: TEST_IDENTITY, runtime, llm: { complete: async () => JSON.stringify({ reply: acceptInvite ? 'joining' : 'not now', acceptInvite, action }) } });
-		const queue = createReplyQueue({ persona, brain, runtime, act: async () => undefined });
+		const queue = createReplyQueue({ brain, runtime, act: async () => undefined });
 		const join = vi.fn(async () => undefined);
 		const conversation = { channel: NOTED_DM, typing: vi.fn(async () => undefined), send: vi.fn(async () => undefined) };
 		try {
@@ -142,7 +139,7 @@ describe('DM lifecycle logs', () => {
 		vi.spyOn(runtime, 'log').mockImplementation(() => undefined);
 		const brain = createBrain({ persona, identity: TEST_IDENTITY, runtime, llm: { complete: async () => JSON.stringify({ reply: 'sure', acceptInvite: true }) } });
 		const compose = vi.spyOn(brain, 'compose');
-		const queue = createReplyQueue({ persona, brain, runtime, act: async () => undefined });
+		const queue = createReplyQueue({ brain, runtime, act: async () => undefined });
 		const join = vi.fn(async () => undefined);
 		// The lines the app adds to each turn there go to compose with the invitation
 		const extraLines = () => ['An app line.'];
@@ -172,7 +169,7 @@ describe('DM lifecycle logs', () => {
 		const runtime = createRuntime({ store, dryRun: false, haltFile: 'unused', rng: () => 0 });
 		const log = vi.spyOn(runtime, 'log').mockImplementation(() => undefined);
 		const brain = createBrain({ persona, identity: TEST_IDENTITY, runtime, llm: { complete: async () => JSON.stringify({ reply: replies ? 'private reply' : null }) } });
-		const queue = createReplyQueue({ persona, brain, runtime, act: async () => undefined });
+		const queue = createReplyQueue({ brain, runtime, act: async () => undefined });
 		const conversation = { channel: NOTED_DM, typing: vi.fn(async () => undefined), send: vi.fn(async () => undefined) };
 		try {
 			const decision = brain.incoming(NOTED_DM, 'user-1', 'Sam', 'private incoming message');
@@ -200,13 +197,13 @@ describe('DM lifecycle logs', () => {
 	});
 });
 
-const utc = { personas: personasOf({ test: testPersona() }, { prompt: 'A friendly persona.' }) };
+const utc = { personas: [personaOf(testPersona(), { prompt: 'A friendly persona.' })] };
 /** That day (Oct 14) at a UTC time; its hours are 19:00 to 23:00. */
 const at = (hours: number, minutes = 0, seconds = 0) => Date.UTC(2026, 9, 14, hours, minutes, seconds);
 // 20:00, inside its hours
 const EVENING = at(20);
 /** Its hours plus a 10-minute break at 12:30, on `breakOn` only when given. */
-const withBreak = (breakOn?: ChannelId[]): PersonaConfig => ({
+const withBreak = (breakOn?: ChannelId[]): Persona => ({
 	...utc.personas[0]!,
 	schedule: everyDay({
 		breaks: [{ start: ['12:30', '12:30'], minutes: [10, 10], ...(breakOn && { on: breakOn }) }],
@@ -218,15 +215,15 @@ const withBreak = (breakOn?: ChannelId[]): PersonaConfig => ({
  * A queue at `now` (in open hours unless given) with a real brain and store (a new one unless given); `message` hands
  * it what someone wrote, as a persona does, and `halt` flips the halt switch.
  */
-const start = ({ decisions, now = EVENING, persona = utc.personas[0]!, rng = () => 0, dryRun = false, store = memoryStore() }: { decisions?: Decisions; now?: number; persona?: PersonaConfig; rng?: Rng; dryRun?: boolean; store?: Store } = {}) => {
+const start = ({ decisions, now = EVENING, persona = utc.personas[0]!, settings, rng = () => 0, dryRun = false, store = memoryStore() }: { decisions?: Decisions; now?: number; persona?: Persona; settings?: Settings; rng?: Rng; dryRun?: boolean; store?: Store } = {}) => {
 	vi.useFakeTimers();
 	vi.setSystemTime(now);
 	let halted = false;
 	const runtime = { ...createRuntime({ store, dryRun, haltFile: 'unused', rng }), halted: () => halted };
 	const log = vi.spyOn(runtime, 'log').mockImplementation(() => undefined);
-	const brain = createBrain({ persona, identity: TEST_IDENTITY, runtime, decisions, llm: { complete: async () => JSON.stringify({ reply: 'hey you' }) } });
+	const brain = createBrain({ persona, settings, identity: TEST_IDENTITY, runtime, decisions, llm: { complete: async () => JSON.stringify({ reply: 'hey you' }) } });
 	const act = vi.fn(async (_personId: number, _action: string) => undefined);
-	const queue = createReplyQueue({ persona, brain, runtime, act });
+	const queue = createReplyQueue({ brain, runtime, act });
 	queue.start();
 	const conversation = { channel: NOTED_DM, typing: vi.fn(async (_on: boolean) => undefined), send: vi.fn(async (_text: string) => undefined) };
 	const message = (text: string, from = 'user-1', channel: Channel = NOTED_DM) => queue.handle(brain.incoming(channel, from, 'Sam', text), { ...conversation, channel }, text);
@@ -451,7 +448,7 @@ describe('a stopped queue (a start that failed, then its retry)', () => {
 
 	it('leaves no timer behind when stopped during an interruption', async () => {
 		const persona = utc.personas[0]!;
-		const [, interruption] = interruptionsOn(persona, { year: 2026, month: 10, day: 14 }, persona.settings.pacing);
+		const [, interruption] = interruptionsOn(persona, { year: 2026, month: 10, day: 14 }, DEFAULT_SETTINGS.pacing);
 		const { log, queue, close } = start({ now: interruption!.start - 5_000 });
 		try {
 			await vi.advanceTimersByTimeAsync(40_000);
@@ -721,8 +718,7 @@ describe('turns still owed (handled_at)', () => {
 		['restartOnNewMessage is off', { restartOnNewMessage: false }],
 		['the reply already started over maxRestarts times', { maxRestarts: 1 }],
 	])('keeps a message that came in during compose owed until its own turn when %s', async (_when, burst) => {
-		const persona = personasOf({ test: testPersona({ settings: { pacing: { burst } } }) }, { prompt: 'A friendly persona.' })[0]!;
-		const { store, log, brain, message, close } = start({ persona });
+		const { store, log, brain, message, close } = start({ settings: settingsOf({ pacing: { burst } }) });
 		const compose = vi.spyOn(brain, 'compose');
 		if (burst.maxRestarts) {
 			// Started over once already: the message in the second draft is too late for a third
@@ -869,7 +865,7 @@ describe('turns still owed (handled_at)', () => {
 		vi.setSystemTime(EVENING);
 		const runtime = createRuntime({ store, dryRun: false, haltFile: 'unused', rng: () => 0 });
 		const log = vi.spyOn(runtime, 'log').mockImplementation(() => undefined);
-		const queue = createReplyQueue({ persona: utc.personas[0]!, brain: {} as Brain, runtime, act: async () => undefined });
+		const queue = createReplyQueue({ brain: { persona: utc.personas[0]!, settings: DEFAULT_SETTINGS } as Brain, runtime, act: async () => undefined });
 		queue.start();
 		// Jo can't be reached any more
 		const conversationOf = vi.fn(async (person: Person) => (person.id === jo ? null : { channel: NOTED_DM, typing: async () => undefined, send: async () => undefined }));
@@ -906,7 +902,7 @@ describe('turns still owed (handled_at)', () => {
 		vi.setSystemTime(Date.UTC(2026, 9, 14, 22, 57, 50));
 		const store = memoryStore();
 		const runtime = createRuntime({ store, dryRun: false, haltFile: 'unused', rng: () => 0 });
-		const queue = createReplyQueue({ persona: utc.personas[0]!, brain: {} as Brain, runtime, act: async () => undefined });
+		const queue = createReplyQueue({ brain: { persona: utc.personas[0]!, settings: DEFAULT_SETTINGS } as Brain, runtime, act: async () => undefined });
 		try {
 			// Not before start(), when its platforms are up
 			await vi.advanceTimersByTimeAsync(MINUTE);
@@ -927,7 +923,7 @@ describe('turns still owed (handled_at)', () => {
 	it('starts its tick once, and never again once stopped', () => {
 		vi.useFakeTimers();
 		const { runtime } = setUp();
-		const queue = createReplyQueue({ persona: utc.personas[0]!, brain: {} as Brain, runtime, act: async () => undefined });
+		const queue = createReplyQueue({ brain: { persona: utc.personas[0]!, settings: DEFAULT_SETTINGS } as Brain, runtime, act: async () => undefined });
 		queue.start();
 		queue.start();
 		expect(vi.getTimerCount()).toBe(1);
@@ -996,8 +992,8 @@ describe('the backlog', () => {
 	});
 
 	it.each([0, 2])('answers it when the span opens, one person at a time, oldest first, with %i extra minutes before the first', async (minutes) => {
-		const settings = SettingsSchema.parse({ pacing: { returnOnlineReplyDelayMinutes: [minutes, minutes] } });
-		const { log, brain, conversation, message, close } = start({ now: at(12), persona: { ...utc.personas[0]!, settings } });
+		const settings = settingsOf({ pacing: { returnOnlineReplyDelayMinutes: [minutes, minutes] } });
+		const { log, brain, conversation, message, close } = start({ now: at(12), settings });
 		const { seen } = turns(brain, ['hey you']);
 		const sent: number[] = [];
 		conversation.send.mockImplementation(async () => void sent.push(Date.now()));
@@ -1212,8 +1208,8 @@ describe('the backlog', () => {
 	});
 });
 
-describe('settings per persona', () => {
-	it("retries a failed answer as many times as the persona's own settings say", async () => {
+describe('settings per brain', () => {
+	it("retries a failed answer as many times as its brain's settings say", async () => {
 		vi.useFakeTimers();
 		vi.spyOn(console, 'log').mockImplementation(() => {});
 		const tries = async (id: string) => {
@@ -1223,7 +1219,7 @@ describe('settings per persona', () => {
 			const compose = vi.fn(async () => {
 				throw new Error('model down');
 			});
-			const queue = createReplyQueue({ persona, brain: { compose } as unknown as Brain, runtime, act: async () => {} });
+			const queue = createReplyQueue({ brain: { persona, settings: config.settings[id], compose } as unknown as Brain, runtime, act: async () => {} });
 			queue.schedule(1, { channel: NOTED_DM, typing: async () => {}, send: async () => {} });
 			for (let i = 0; i < 12; i++) await vi.advanceTimersByTimeAsync(10 * MINUTE);
 			queue.stop();
@@ -1235,8 +1231,8 @@ describe('settings per persona', () => {
 });
 
 describe('typing realism', () => {
-	/** The 'test' persona with these pacing settings. */
-	const typist = (pacing: Record<string, unknown>) => personasOf({ test: testPersona({ settings: { pacing } }) }, { prompt: 'A friendly persona.' })[0]!;
+	/** Settings with these pacing settings. */
+	const typist = (pacing: Record<string, unknown>) => settingsOf({ pacing });
 
 	/** A conversation that records each call the queue makes on it as `<call> @<ms after the first call>`, with these hooks. */
 	const recording = ({ typingRefreshMs, markRead }: { typingRefreshMs?: number; markRead?: 'resolves' | 'rejects' } = {}) => {
@@ -1335,7 +1331,7 @@ describe('typing realism', () => {
 	});
 
 	it('shows their messages read once per reply, then reads for readingDurationSeconds before typing', async () => {
-		const run = start({ persona: typist({ readingDurationSeconds: [2, 2], betweenReplyMessagesSeconds: [1, 1] }) });
+		const run = start({ settings: typist({ readingDurationSeconds: [2, 2], betweenReplyMessagesSeconds: [1, 1] }) });
 		vi.spyOn(run.brain, 'compose').mockResolvedValue({ messages: ['one', 'two'], action: 'none' });
 		const { conversation, events } = recording({ markRead: 'resolves' });
 		try {
@@ -1378,7 +1374,7 @@ describe('typing realism', () => {
 	});
 
 	it('types nothing when halted during the read pause, and keeps the turn owed', async () => {
-		const run = start({ persona: typist({ readingDurationSeconds: [2, 2] }) });
+		const run = start({ settings: typist({ readingDurationSeconds: [2, 2] }) });
 		const { conversation, events } = recording({ markRead: 'resolves' });
 		try {
 			await hi(run, conversation);
@@ -1403,7 +1399,7 @@ describe('typing realism', () => {
 			expected: ['typing on @0', 'typing on @2000', 'typing off @3276', 'typing on @4276', 'typing on @6276', 'typing off @7552', 'typing on @8552', 'typing on @10552', `send ${LONG} @11829`, 'typing off @11829'],
 		},
 	])('stops and starts typing again for each thinking pause of a long message (refresh $typingRefreshMs)', async ({ typingRefreshMs, expected }) => {
-		const run = start({ persona: typist(PAUSES) });
+		const run = start({ settings: typist(PAUSES) });
 		vi.spyOn(run.brain, 'compose').mockResolvedValue({ messages: [LONG], action: 'none' });
 		const { conversation, events } = recording({ typingRefreshMs });
 		try {
@@ -1416,7 +1412,7 @@ describe('typing realism', () => {
 	});
 
 	it('leaves typing off when halted during a thinking pause, with no second typing(false)', async () => {
-		const run = start({ persona: typist(PAUSES) });
+		const run = start({ settings: typist(PAUSES) });
 		vi.spyOn(run.brain, 'compose').mockResolvedValue({ messages: [LONG], action: 'none' });
 		const { conversation, events } = recording();
 		try {
@@ -1432,7 +1428,7 @@ describe('typing realism', () => {
 	});
 
 	it('rehearses all of it in a dry run, sending nothing', async () => {
-		const run = start({ dryRun: true, persona: typist({ readingDurationSeconds: [2, 2] }) });
+		const run = start({ dryRun: true, settings: typist({ readingDurationSeconds: [2, 2] }) });
 		const { conversation, events } = recording({ markRead: 'resolves', typingRefreshMs: 2_000 });
 		try {
 			await hi(run, conversation);
@@ -1511,14 +1507,13 @@ describe('one person at a time', () => {
 	});
 
 	it('has no setting to turn it off', () => {
-		expect(loadedOf({ test: testPersona({ settings: { pacing: { singlePresence: false } } }) }).issues).toEqual(['test.yaml › settings.pacing.singlePresence: unknown key']);
+		expect(parseSettings({ pacing: { singlePresence: false } }).issues).toEqual(['pacing.singlePresence: unknown key']);
 	});
 });
 
 describe('someone who writes in bursts (pacing.burst)', () => {
-	/** The 'test' persona with this `pacing.burst`, and these other pacing settings. */
-	const burstPersona = (burst: Record<string, unknown>, pacing: Record<string, unknown> = {}) =>
-		personasOf({ test: testPersona({ settings: { pacing: { burst, ...pacing } } }) }, { prompt: 'A friendly persona.' })[0]!;
+	/** Settings with this `pacing.burst`, and these other pacing settings. */
+	const burstSettings = (burst: Record<string, unknown>, pacing: Record<string, unknown> = {}) => settingsOf({ pacing: { burst, ...pacing } });
 	/** Sam writes each text at its ms after 20:00. */
 	const writes = async (run: ReturnType<typeof start>, texts: [text: string, after: number][]) => {
 		for (const [text, after] of texts) {
@@ -1538,7 +1533,7 @@ describe('someone who writes in bursts (pacing.burst)', () => {
 	};
 
 	it('waits for them to stop: each message starts the quiet again, up to maxSettleResets of them', async () => {
-		const run = start({ persona: burstPersona({ settleSeconds: [3, 3], maxSettleResets: 2 }) });
+		const run = start({ settings: burstSettings({ settleSeconds: [3, 3], maxSettleResets: 2 }) });
 		const starts = composeStarts(run);
 		try {
 			// Due 4 s after the first; the quiet runs to 3 s, then 5.5 s and 8 s; the fourth message may not start it again
@@ -1555,7 +1550,7 @@ describe('someone who writes in bursts (pacing.burst)', () => {
 
 	it('starts at once when they stopped long before the turn is due, and waits for no quiet with settleSeconds [0, 0]', async () => {
 		for (const settleSeconds of [[2, 5], [0, 0]]) {
-			const run = start({ persona: burstPersona({ settleSeconds }) });
+			const run = start({ settings: burstSettings({ settleSeconds }) });
 			const starts = composeStarts(run);
 			try {
 				await writes(run, [['hi', 0], ['you there?', 3_000]]);
@@ -1572,7 +1567,7 @@ describe('someone who writes in bursts (pacing.burst)', () => {
 		[1_000, 6_000],
 		[5_000, 9_000],
 	])('shows their messages read and reads them while the model writes (%i ms), typing once both are done (at %i ms)', async (composeMs, typingAt) => {
-		const run = start({ persona: burstPersona({}, { readingDurationSeconds: [2, 2] }) });
+		const run = start({ settings: burstSettings({}, { readingDurationSeconds: [2, 2] }) });
 		const events: string[] = [];
 		const record = (event: string) => void events.push(`${event} @${Date.now() - EVENING}`);
 		vi.spyOn(run.brain, 'compose').mockImplementation(async () => {
@@ -1628,7 +1623,7 @@ describe('someone who writes in bursts (pacing.burst)', () => {
 describe('attention: watching a chat, glancing, interruptions', () => {
 	const persona = utc.personas[0]!;
 	/** The interruptions of its Oct 14 (`pacing.interruptions`): the second runs from about 20:51:37 to 20:56:35. */
-	const [, away] = interruptionsOn(persona, { year: 2026, month: 10, day: 14 }, persona.settings.pacing);
+	const [, away] = interruptionsOn(persona, { year: 2026, month: 10, day: 14 }, DEFAULT_SETTINGS.pacing);
 	/** Who wrote when, from what reply_scheduled logged. */
 	const timed = (log: ReturnType<typeof start>['log']) => logged(log, 'reply_scheduled').map((detail) => [detail.personId, detail.delayMs, detail.watching]);
 
@@ -1776,8 +1771,7 @@ describe('attention: watching a chat, glancing, interruptions', () => {
 
 	it('never holds one off with holdAtImportance 4, for small talk, or for a rating from an hour ago', async () => {
 		for (const [holdAtImportance, importance, ratedAgo] of [[4, 3, 0], [2, 1, 0], [2, 3, 60 * MINUTE]] as const) {
-			const persona = personasOf({ test: testPersona({ settings: { pacing: { interruptions: { holdAtImportance } } } }) }, { prompt: 'A friendly persona.' })[0]!;
-			const { store, log, message, close } = start({ persona, now: away!.start - 20_000 });
+			const { store, log, message, close } = start({ settings: settingsOf({ pacing: { interruptions: { holdAtImportance } } }), now: away!.start - 20_000 });
 			try {
 				await message('hey', 'ana');
 				store.updatePerson(1, { importance, importanceAt: Date.now() - ratedAgo });
@@ -1827,8 +1821,8 @@ describe('who goes first when several are due (pacing.priority)', () => {
 	 * Ana writes at 20:00 and her turn, due 52 s later (rng 0.6), is held until the test lets it go; Bo writes at 60 s,
 	 * Cy at 70 s, while it is on its phone with her: both are due within seconds, while Ana's turn is under way.
 	 */
-	const three = async ({ persona = utc.personas[0]!, decisions }: { persona?: PersonaConfig; decisions?: Decisions } = {}) => {
-		const run = start({ persona, decisions, rng: () => 0.6 });
+	const three = async ({ settings, decisions }: { settings?: Settings; decisions?: Decisions } = {}) => {
+		const run = start({ settings, decisions, rng: () => 0.6 });
 		const gate = held<void>();
 		const order: number[] = [];
 		vi.spyOn(run.brain, 'compose').mockImplementation(async (personId) => {
@@ -1861,8 +1855,7 @@ describe('who goes first when several are due (pacing.priority)', () => {
 	});
 
 	it('takes them in the order they came due with weighted off', async () => {
-		const persona = personasOf({ test: testPersona({ settings: { pacing: { priority: { weighted: false } } } }) }, { prompt: 'A friendly persona.' })[0]!;
-		const run = await three({ persona });
+		const run = await three({ settings: settingsOf({ pacing: { priority: { weighted: false } } }) });
 		try {
 			run.store.updatePerson(3, { importance: 3, importanceAt: Date.now(), familiarity: 0.9 });
 			run.gate.resolve();
@@ -1997,11 +1990,11 @@ describe('people waiting in line', () => {
 
 	it('draws the next in line in proportion to their weight: a conversation that matters goes first about two times in three', async () => {
 		// Bo rated 3 (weighs about 3.9 after a couple of minutes), Cy 1 (weighs 2); everything else is equal
-		const persona = personasOf({ test: testPersona({ settings: { pacing: { glance: { delaySeconds: [4, 60] }, interruptions: { meanMinutes: 0 }, burst: { settleSeconds: [0, 0] } } } }) }, { prompt: 'A friendly persona.' })[0]!;
+		const settings = settingsOf({ pacing: { glance: { delaySeconds: [4, 60] }, interruptions: { meanMinutes: 0 }, burst: { settleSeconds: [0, 0] } } });
 		let bo = 0;
 		const trials = 300;
 		for (let trial = 0; trial < trials; trial++) {
-			const run = start({ persona, rng: seededRng(`pick-${trial}`) });
+			const run = start({ settings, rng: seededRng(`pick-${trial}`) });
 			const gate = held<void>();
 			const order: number[] = [];
 			vi.spyOn(run.brain, 'compose').mockImplementation(async (personId) => {
