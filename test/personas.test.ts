@@ -3,8 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { stringify } from 'yaml';
 import { describe, expect, it } from 'vitest';
 import { ScheduleSchema } from '../src/config/hours.js';
-import { loadPersonas, parsePersonaMarkdown, traitSchema, type ConfigFiles } from '../src/config/personas.js';
-import { TRAITS } from '../src/prompts.js';
+import { loadPersonas, parsePersonaMarkdown, type ConfigFiles } from '../src/config/personas.js';
 import { everyDay, parsedOf, personaOf, testPersona } from './fixtures.js';
 
 /** The problems of this config (the test persona's unless given), with parsedOf's options. */
@@ -36,7 +35,8 @@ describe('a persona config', () => {
 	});
 
 	it("refuses a key named like one of an object's own (constructor, toString), as any other it doesn't know", () => {
-		expect(issuesOf(testPersona({ constructor: 'x', toString: true, traits: { valueOf: 1 } }))).toEqual(['constructor: unknown key', 'toString: unknown key', 'traits.valueOf: unknown key']);
+		const schedule = { days: { 'mon-sun': { online: [{ start: ['19:00', '19:00'], end: ['23:00', '23:00'] }], valueOf: 1 } } };
+		expect(issuesOf(testPersona({ constructor: 'x', toString: true, schedule }))).toEqual(['schedule.days.mon-sun.valueOf: unknown key', 'constructor: unknown key', 'toString: unknown key']);
 	});
 
 	it('refuses an id that is not one', () => {
@@ -61,7 +61,7 @@ describe('a persona config', () => {
 		expect(issuesOf(testPersona(old))).toEqual([
 			'window: no longer read: write the same hours as a schedule, `schedule: { skipDayChance, days: { mon-sun: { online: [{ start, end }] } } }`',
 			"prompt: is no path any more: the prompt is the text after the frontmatter (parsePersona's `prompt`)",
-			'chattiness: moved to traits.chattiness',
+			"chattiness: no longer read: say how much it talks in group chats in its prompt (with the group-chat gate on, how readily it speaks is its brain's decisions.groupChatGate.chimeInAt)",
 			"sfw: is the brain's policy now: createBrain({ policy: { sfw: true } })",
 			'character: no longer read: write its facts, interests and boundaries in its prompt; its moods are `moods`',
 			"settings: are its brain's now, never part of a persona: createBrain({ settings }), read with parseSettings",
@@ -83,43 +83,6 @@ describe('moods', () => {
 	it('refuses an empty mood, a negative weight and more than 12', () => {
 		expect(issuesOf(testPersona({ moods: [{ mood: 'chill', weight: -1 }] }))).toHaveLength(1);
 		expect(issuesOf(testPersona({ moods: Array.from({ length: 13 }, (_, i) => `mood ${i}`) }))).toEqual([expect.stringMatching(/^moods: Array must contain at most 12 element\(s\)/)]);
-	});
-});
-
-describe('traits', () => {
-	it('are optional: none by default', () => {
-		expect(test()).not.toHaveProperty('traits');
-		expect(test({ traits: {} }).traits).toEqual({});
-	});
-
-	it('take each value of each trait, and refuse any other, with the values it takes', () => {
-		for (const [name, sentences] of Object.entries(TRAITS)) {
-			for (const value of Object.keys(sentences)) expect(test({ traits: { [name]: value } }).traits).toEqual({ [name]: value });
-		}
-		expect(issuesOf(testPersona({ traits: { chattiness: 'loud' } }))).toEqual([
-			"traits.chattiness: Invalid enum value. Expected 'quiet' | 'easygoing' | 'talkative', received 'loud' (got \"loud\")",
-		]);
-	});
-
-	it('refuses a trait it does not know, with the nearest one', () => {
-		expect(issuesOf(testPersona({ traits: { chatiness: 'quiet' } }))).toEqual(['traits.chatiness: unknown key (did you mean "chattiness"?)']);
-	});
-
-	it('are built from the table of their sentences: a few named values, or a scale of whole numbers', () => {
-		const named = traitSchema({ shy: 'You are shy.', bold: 'You are bold.' });
-		expect(named.safeParse('bold').success).toBe(true);
-		expect(named.safeParse('loud').success).toBe(false);
-		const scale = traitSchema({ 0: 'You never use emoji.', 1: 'You use an emoji now and then.', 2: 'You use emoji all the time.' });
-		expect([0, 1, 2].map((value) => scale.safeParse(value).success)).toEqual([true, true, true]);
-		expect([-1, 3, 1.5, '1'].map((value) => scale.safeParse(value).success)).toEqual([false, false, false, false]);
-		const fromOne = traitSchema({ 1: 'a', 2: 'b', 3: 'c', 4: 'd', 5: 'e' });
-		expect([0, 1, 5, 6].map((value) => fromOne.safeParse(value).success)).toEqual([false, true, true, false]);
-		// Only the values with a sentence: a gap in a scale is refused, never a trait that says nothing
-		const gap = traitSchema({ 1: 'a', 3: 'c' });
-		expect([1, 2, 3].map((value) => gap.safeParse(value).success)).toEqual([true, false, true]);
-		expect(gap.safeParse(2).error?.issues[0]?.message).toBe('one of 1, 3');
-		// Names that only look like numbers are names
-		expect(traitSchema({ '': 'a', '0x1': 'b' }).safeParse('0x1').success).toBe(true);
 	});
 });
 
@@ -235,7 +198,7 @@ describe('the example persona file', () => {
 	it('loads as written, from disk (examples/personas/robin.md, shown in docs/configuration.md)', () => {
 		const loaded = loadPersonas({ dir: fileURLToPath(new URL('../examples/personas', import.meta.url)), channels: { robin: ['chat'] }, adult: true });
 		expect(loaded.issues).toEqual([]);
-		expect(loaded.personas[0]).toMatchObject({ id: 'robin', name: 'Robin', timezone: 'Europe/Lisbon', traits: { chattiness: 'easygoing' } });
+		expect(loaded.personas[0]).toMatchObject({ id: 'robin', name: 'Robin', timezone: 'Europe/Lisbon', moods: [{ mood: 'cheerful', weight: 1 }, { mood: 'a little sleepy', weight: 0.5 }] });
 		expect(loaded.personas[0]!.prompt).toMatch(/^You are Robin, 29,[^]*kindly\.$/);
 	});
 });

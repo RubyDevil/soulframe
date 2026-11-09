@@ -2,8 +2,6 @@
 
 // A persona: its config and its prompt, from wherever the app keeps them; optionally Markdown files, the config as frontmatter
 export { parsePersona, parsePersonaMarkdown, loadPersonas, nodeFiles, PERSONA_ID, type ConfigFiles, type LoadedPersonas, type Persona, type PersonaConfig } from './config/personas.js';
-// The optional traits: a quick way to tune a persona, each trait a fixed sentence after its prompt
-export { traitsPrompt, type Traits } from './prompts.js';
 export { ConfigError, describe, suggest, unknownKeys, unknownKeyIssues, addQuietIssue, shownValue, type Problems } from './config/issues.js';
 // What a brain runs with: models, limits, pacing, the typed checks (never part of a persona)
 export { parseSettings, range, SECOND, MINUTE, HOUR, DAY, type Settings } from './settings.js';

@@ -30,8 +30,6 @@ import {
 	rulesPrompt,
 	stopQuestion,
 	systemPrompt,
-	TRAITS,
-	traitsPrompt,
 } from '../src/prompts.js';
 import { addDays, parseClock, situationAt, zonedToUtc, type Busy, type LocalDate, type Situation, type Span } from '../src/schedule.js';
 import { DEFAULT_SETTINGS, MINUTE, SettingsSchema } from '../src/settings.js';
@@ -365,7 +363,7 @@ describe('groupChatTask', () => {
 	const task = (hosted: boolean, notes: readonly string[] = [], targetLength = 150) => groupChatTask({ selfNotes: '', quiet: false, hosted, notes, targetLength, time: 'TIME' });
 	const HOSTING = "This is your own group chat: you're hosting it. ";
 
-	it('tells it a group chat it hosts is its own, first, and says nothing of how much it talks (its prompt or traits do)', () => {
+	it('tells it a group chat it hosts is its own, first, and says nothing of how much it talks (its prompt does)', () => {
 		expect(task(true).split('\n')[0]).toBe(`${HOSTING}Decide like a person in a group chat whether to say something now:`);
 		expect(task(false)).toBe(task(true).replace(HOSTING, ''));
 		expect(task(false)).not.toMatch(/quiet in|easygoing|talkative/);
@@ -432,34 +430,6 @@ describe('typed check questions (Decisions API)', () => {
 		const client = readFileSync(new URL('../src/decisions.ts', import.meta.url), 'utf8');
 		expect(client).not.toMatch(/instructions:\s*['"`]/);
 		expect(client).not.toMatch(/description:\s*['"`]/);
-	});
-});
-
-describe('traits', () => {
-	const args = { personaPrompt: 'Voice: warm.', name: 'Robin', identity: TEST_IDENTITY, channel: NOTED_DM, rules: [ADULTS_ONLY_RULE], task: 'TASK' };
-
-	it('give one fixed sentence for each value of each trait', () => {
-		expect(traitsPrompt({ chattiness: 'quiet' })).toBe('You are quiet in group chats.');
-		expect(traitsPrompt({ chattiness: 'easygoing' })).toBe('You are easygoing in group chats.');
-		expect(traitsPrompt({ chattiness: 'talkative' })).toBe('You are talkative in group chats.');
-		for (const [name, sentences] of Object.entries(TRAITS)) {
-			for (const [value, sentence] of Object.entries(sentences)) expect(traitsPrompt({ [name]: value })).toBe(sentence);
-		}
-	});
-
-	it('say nothing without traits, or with none set', () => {
-		expect(traitsPrompt(undefined)).toBe('');
-		expect(traitsPrompt({})).toBe('');
-		expect(systemPrompt({ ...args, traits: {} })).toBe(systemPrompt(args));
-	});
-
-	it('are the same every time (nothing is drawn)', () => {
-		expect(new Set(Array.from({ length: 5 }, () => traitsPrompt({ chattiness: 'quiet' }))).size).toBe(1);
-	});
-
-	it('come right after the persona prompt and before identity, rules and task', () => {
-		const prompt = systemPrompt({ ...args, traits: { chattiness: 'quiet' } });
-		expect(prompt).toBe(['Voice: warm.', 'You are quiet in group chats.', identityPrompt('Robin', TEST_IDENTITY, NOTED_DM), rulesPrompt([ADULTS_ONLY_RULE]), 'TASK'].join('\n\n'));
 	});
 });
 

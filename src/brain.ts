@@ -329,7 +329,7 @@ export function createBrain({
 
 	// Every prompt's text is in prompts.ts (and the channel's, in the app's Channel); this only fills in the persona
 	const system = (channel: Channel, rules: readonly string[], task: string) =>
-		systemPrompt({ personaPrompt: persona.prompt, traits: persona.traits, name: persona.name, identity, style, channel, rules, task });
+		systemPrompt({ personaPrompt: persona.prompt, name: persona.name, identity, style, channel, rules, task });
 
 	const lookLimit = settings.perception.timeoutSeconds * SECOND;
 

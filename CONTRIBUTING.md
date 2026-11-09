@@ -70,8 +70,7 @@ own database layouts, and their migrations, are the application's.
   the reply queue in `test/runtime.test.ts`, and so on. Tests use `:memory:` stores and never the network.
 - The package ships no content policy and no product voice: what a persona is and may say is the application's to
   decide (its model, the persona's prompt, `identity`, `style`, `policy` and channel `notes`), so no rule, filter or
-  product wording of that kind goes into `src/`. The optional traits (`TRAITS` in `src/prompts.ts`) are neutral
-  sentences an operator picks, never a voice the package imposes. What the package does ship only ever gets stricter:
+  product wording of that kind goes into `src/`. What the package does ship only ever gets stricter:
   a change that weakens the stop handling or the opt-in minors safeguard (`Channel.adult`) will not be merged.
 - Prompt text lives in `src/prompts.ts` (and the fixed messages in `src/safety.ts`): no other file writes text for the
   model.

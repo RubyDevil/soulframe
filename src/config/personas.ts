@@ -6,9 +6,8 @@
  * of them).
  *
  * The config holds only what the code computes with: who it is to the code (its id and name), its hours and their
- * time zone, and the moods it draws one of each day; and its optional `traits`, a shortcut that only adds sentences to
- * its prompt (prompts.ts traitsPrompt). Everything it says is its prompt's; how its brain runs (models, limits, pacing)
- * is the brain's settings (settings.ts), never a persona's. The app says which channels each persona is on: the names
+ * time zone, and the moods it draws one of each day. Everything it says is its prompt's; how its brain runs (models,
+ * limits, pacing) is the brain's settings (settings.ts), never a persona's. The app says which channels each persona is on: the names
  * its hours' `on:` may use.
  *
  * Every problem is returned, never thrown, each with its path (after its source, when given); a key the schema
@@ -21,7 +20,6 @@ import { parse } from 'yaml';
 import { z } from 'zod';
 import type { ChannelId } from '../channel.js';
 import { isPlainObject } from '../merge.js';
-import { TRAITS, type Traits } from '../prompts.js';
 import { refuseSchool, ScheduleSchema, type ScheduleConfig } from './hours.js';
 import { schemaProblems, sourced, suggest, unknownKeyProblem, unknownKeys, type Problem } from './issues.js';
 
@@ -47,21 +45,7 @@ const MoodSchema = z.union([
 	z.object({ mood: z.string().trim().min(1).max(80), weight: z.number().min(0).default(1) }),
 ]);
 
-/** A trait's values (prompts.ts TRAITS): a scale's whole numbers when every key is one, else the names of its values. */
-export const traitSchema = (sentences: Readonly<Record<string, string>>) => {
-	const values = Object.keys(sentences);
-	if (!values.every((value) => /^-?\d+$/.test(value))) return z.enum(values as [string, ...string[]]);
-	// Only the numbers it has a sentence for, so a gap in a scale is refused rather than saying nothing
-	return z
-		.number()
-		.int()
-		.refine((value) => Object.hasOwn(sentences, String(value)), { message: `one of ${values.join(', ')}` });
-};
-
-/** The optional traits, each one of its values (prompts.ts TRAITS, which this is built from); a trait left out says nothing. */
-const TraitsSchema = z.object(Object.fromEntries(Object.entries(TRAITS).map(([name, sentences]) => [name, traitSchema(sentences).optional()]))) as unknown as z.ZodType<Traits>;
-
-/** A persona's config: only what the code computes with (and the optional `traits`). */
+/** A persona's config: only what the code computes with. */
 const PersonaConfigSchema = z.object({
 	/** The key of everything stored about it and the seed of its days (`PERSONA_ID`); a persona file's name gives it. */
 	id: z.string().regex(PERSONA_ID, 'a persona id: 2 to 32 of a-z, 0-9 and -'),
@@ -73,11 +57,6 @@ const PersonaConfigSchema = z.object({
 	schedule: ScheduleSchema,
 	/** One picked per day (the agenda day of its online time), by weight, the same after a restart (mood.ts); none for no mood line. */
 	moods: z.array(MoodSchema).max(12).default([]),
-	/**
-	 * Optional, a quick way to tune it: each trait it sets adds one fixed sentence right after its prompt (prompts.ts
-	 * traitsPrompt). They must not contradict its prompt: nothing checks that they don't.
-	 */
-	traits: TraitsSchema.optional(),
 });
 
 /** With `adult`, refusing busy reasons about school too (config/hours.ts refuseSchool). */
@@ -96,7 +75,7 @@ export interface Persona extends PersonaConfig {
 const MOVED: Readonly<Record<string, string>> = {
 	window: 'no longer read: write the same hours as a schedule, `schedule: { skipDayChance, days: { mon-sun: { online: [{ start, end }] } } }`',
 	prompt: "is no path any more: the prompt is the text after the frontmatter (parsePersona's `prompt`)",
-	chattiness: 'moved to traits.chattiness',
+	chattiness: "no longer read: say how much it talks in group chats in its prompt (with the group-chat gate on, how readily it speaks is its brain's decisions.groupChatGate.chimeInAt)",
 	sfw: "is the brain's policy now: createBrain({ policy: { sfw: true } })",
 	character: 'no longer read: write its facts, interests and boundaries in its prompt; its moods are `moods`',
 	settings: 'are its brain\'s now, never part of a persona: createBrain({ settings }), read with parseSettings',

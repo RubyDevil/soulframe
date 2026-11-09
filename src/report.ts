@@ -1,6 +1,6 @@
 /**
  * What an app's config check says of one persona and of the settings its brain runs with: their warnings, what is in
- * effect for it (what it is doing now, today's and tomorrow's agenda, its models, traits and today's mood), and the
+ * effect for it (what it is doing now, today's and tomorrow's agenda, its models and today's mood), and the
  * system prompt of a sample DM turn, built by the brain itself. Nothing is started and nothing touches the network.
  */
 
@@ -10,7 +10,7 @@ import type { Persona, PersonaConfig } from './config/personas.js';
 import { providerSet, type Llm, type LlmMessage } from './llm.js';
 import { moodOf } from './mood.js';
 import { interruptionsOn } from './pacing.js';
-import { clockText, traitsPrompt } from './prompts.js';
+import { clockText } from './prompts.js';
 import { addDays, agendaOn, isOn, localDateOf, nextSpan, onlineMinutesByWeekday, spanAt, weekdayOf, WEEKDAYS, type DayAgenda, type LocalDate } from './schedule.js';
 import { DAY, MINUTE, type Settings } from './settings.js';
 import { createStore, openDatabase, type Person } from './store.js';
@@ -83,9 +83,8 @@ const nowText = (persona: PersonaConfig, now: number) => {
 
 /**
  * A config check's lines on one persona, after the app's header line, with the settings its brain runs with: its
- * prompt's length, the sentences its traits add (`traitsPrompt`: read them against the prompt), now (`status` in place
- * of what its hours say, when the app gives one), today, tomorrow, today's interruptions (`pacing.interruptions`), its
- * models and its moods with today's.
+ * prompt's length, now (`status` in place of what its hours say, when the app gives one), today, tomorrow, today's
+ * interruptions (`pacing.interruptions`), its models and its moods with today's.
  */
 export function personaReport(persona: Persona, { settings, now, status }: { settings: Settings; now: number; status?: string }): string[] {
 	const today = localDateOf(now, persona.timezone);
@@ -93,7 +92,6 @@ export function personaReport(persona: Persona, { settings, now, status }: { set
 	const provider = providerSet(settings);
 	return [
 		`  prompt: ${persona.prompt.length} characters`,
-		`  traits: ${traitsPrompt(persona.traits) || 'none'}`,
 		`  now: ${status ?? nowText(persona, now)}`,
 		`  today (${dayKey(today)}, ${persona.timezone}, ${offsetText(now, persona.timezone)}): ${agendaText(agendaOn(persona, today), persona.timezone)}`,
 		`  tomorrow (${dayKey(tomorrow)}): ${agendaText(agendaOn(persona, tomorrow), persona.timezone)}`,

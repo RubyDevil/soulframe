@@ -9,12 +9,11 @@ What a brain runs with (models, token limits, memory, pacing, the typed checks) 
 persona: you give them to `createBrain({ persona, settings })` and read them with `parseSettings`.
 
 Everything below is taken from the package's schemas (`src/config/personas.ts`, `src/config/hours.ts`,
-`src/settings.ts`; the traits from `src/prompts.ts`).
+`src/settings.ts`).
 
 - [A persona file](#a-persona-file)
 - [The config](#the-config)
 - [The prompt](#the-prompt)
-- [`traits`](#traits)
 - [`schedule`](#schedule)
 - [`moods`](#moods)
 - [Your own loader](#your-own-loader)
@@ -62,8 +61,6 @@ moods:
   - cheerful
   - mood: a little sleepy
     weight: 0.5
-traits:
-  chattiness: easygoing
 ---
 
 You are Robin, 29, living in a small coastal town with a ginger cat called Biscuit. You work in a bookshop and
@@ -87,9 +84,8 @@ conversations: a busy reason about school is then refused (see [`schedule`](#sch
 
 ## The config
 
-Only what the code computes with: who the persona is to the code, its hours and their time zone, the moods it draws
-one of each day, and the optional `traits`. Everything it says is its prompt's; how its brain runs is its
-[settings](#settings).
+Only what the code computes with: who the persona is to the code, its hours and their time zone, and the moods it
+draws one of each day. Everything it says is its prompt's; how its brain runs is its [settings](#settings).
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
@@ -98,7 +94,6 @@ one of each day, and the optional `traits`. Everything it says is its prompt's; 
 | `timezone` | IANA time zone | required | e.g. `America/Toronto`. Checked with `Intl`; a near miss gets a suggestion. |
 | `schedule` | [schedule](#schedule) | required | Its hours by weekday. |
 | `moods` | list of up to 12 [moods](#moods) | `[]` | One picked per day by weight; none for no mood line. |
-| `traits` | [traits](#traits) | none | Optional sentences after its prompt, a quick way to tune it. |
 
 A key the schema doesn't know is an error, with the nearest known one; a key the 0.1 betas read says where it went
 (see [Coming from 0.1.0-beta.1](#coming-from-010-beta1)).
@@ -107,32 +102,10 @@ A key the schema doesn't know is an error, with the nearest known one; a key the
 
 The persona's voice and background, in Markdown: the body of its file, or `parsePersona`'s `prompt`. It is first in
 every system prompt (DMs, group chats, posts), trimmed, written by you; soulframe adds nothing to it. What used to be
-fixed config (facts about it, its interests, its own limits) is written here, in your words. A limit every persona
+fixed config (facts about it, its interests, its own limits, how much it talks in group chats) is written here, in
+your words. A limit every persona
 keeps belongs in your `policy.rules` ([concepts](./concepts.md#safeguards-and-policy)), which come after the prompt and
 win over it. See [system prompts](./prompts.md#the-persona-prompt).
-
-## `traits`
-
-Optional: a quick way to tune a persona without writing it into its prompt. Each trait it sets adds one fixed sentence
-right after the prompt, in every system prompt (`traitsPrompt`, the same text every time: nothing is drawn).
-
-| Trait | Values | The sentence |
-| --- | --- | --- |
-| `chattiness` | `quiet`, `easygoing`, `talkative` | "You are quiet in group chats." (and so on for each value) |
-
-```yaml
-traits:
-  chattiness: quiet
-```
-
-> [!WARNING]
-> The sentences don't read your prompt, and nothing checks that the two agree. A prompt that says the persona loves a
-> crowd and `chattiness: quiet` tell the model two things at once, and it will follow either. Write each trait in one
-> place: in the prompt or in `traits`, never both. `personaReport` and `samplePrompt` show the sentences next to the
-> prompt, so you can read them together.
-
-A trait only adds text: it changes no computation. With the group-chat gate on, how readily the persona speaks there is
-its brain's `decisions.groupChatGate.chimeInAt`, which `chattiness` never changes.
 
 ## `schedule`
 
@@ -361,7 +334,7 @@ failure behaves as if the checks were off, so a wrong endpoint would only show i
 | `importance.enabled` | boolean | `true` | How much their new messages matter (0 small talk to 3 something big), asked with the other DM checks, and ahead of a turn that comes due while others wait (alone when no other check is on), so the reply queue can weigh it (`pacing.priority`). Off, or on any failure, the model's own rating of their last turn is used. |
 | `groupChatGate.enabled` | boolean | `true` | Whether to gate group chats (`brain.wantsToSpeak`). |
 | `groupChatGate.addressedAt` | number, 0 to 1 | `0.5` | Speaks when the newest lines are addressed to it at or above this (0 always speaks). |
-| `groupChatGate.chimeInAt` | number, 0 to 3 | `1.7` | "Chime in" score (0 intrude, 1 optional, 2 opening, 3 expected) at or above which it speaks: higher for a persona that rarely speaks unasked (about `2.2` waits for a clear opening), lower for a chatty one (about `1.2` takes even an optional remark). Give such a persona's brain its own; `traits.chattiness` never changes it. |
+| `groupChatGate.chimeInAt` | number, 0 to 3 | `1.7` | "Chime in" score (0 intrude, 1 optional, 2 opening, 3 expected) at or above which it speaks: higher for a persona that rarely speaks unasked (about `2.2` waits for a clear opening), lower for a chatty one (about `1.2` takes even an optional remark). Give such a persona's brain its own. |
 | `groupChatGate.perHour` | integer, 1 or more | `120` | The most gate checks per group chat in any hour, counted by `wantsToSpeak` per its `chatId`; past it, it answers `null` without asking and the model decides. |
 
 ### `memory`
@@ -533,8 +506,8 @@ Each issue names its source and path, and the value it got when that helps: `<so
 
 ```text
 personas/robin.md › schedule.days: no plan for sat, sun (add them, or "sat,sun: {}" for days with nothing)
-personas/robin.md › traits.chatiness: unknown key (did you mean "chattiness"?)
-personas/robin.md › chattiness: moved to traits.chattiness
+personas/robin.md › nmae: unknown key (did you mean "name"?)
+personas/robin.md › sfw: is the brain's policy now: createBrain({ policy: { sfw: true } })
 personas/kai.md: no frontmatter: a persona file starts with its config between two --- lines
 settings.yaml › pacing.replySplitChance: Number must be less than or equal to 1 (got 1.5)
 settings.yaml › pacng: unknown key (did you mean "pacing"?)
@@ -554,7 +527,7 @@ For a config check command (none of them starts anything or touches the network)
 - **`settingsWarnings(settings)`**: the same for settings: a reply that may be written again more than once
   (`pacing.burst.maxRestarts`), and no text provider.
 - **`personaReport(persona, { settings, now, status? })`**: lines describing what is in effect: its prompt's length,
-  the sentences its traits add, what it is doing now (or `status`), today's and tomorrow's agenda, today's
+  what it is doing now (or `status`), today's and tomorrow's agenda, today's
   interruptions, its models and its moods with today's.
 - **`samplePrompt({ persona, settings, identity?, style?, channel, extraLines?, now, policy? })`**: the system prompt of
   a sample DM turn on `channel`, built by the brain itself on a throwaway in-memory store. Offline at `now`, it is
@@ -568,7 +541,7 @@ For a config check command (none of them starts anything or touches the network)
 | `_shared.yaml` | Gone: each persona's config is its own. Settings go to each brain (one object for all, or one of their own); a limit every persona keeps goes in `policy.rules` |
 | `prompt: robin.md` | The file's body, or `parsePersona`'s `prompt` |
 | `window: { start, end, skipDayChance }` | `schedule: { skipDayChance, days: { mon-sun: { online: [{ start, end }] } } }` (the same hours drawn) |
-| `chattiness: quiet` | `traits: { chattiness: quiet }`; with the group-chat gate on, its brain's `decisions.groupChatGate.chimeInAt` (`2.2` was quiet's, `1.7` easygoing's, `1.2` talkative's) |
+| `chattiness: quiet` | Gone: say in the prompt how much it talks in group chats; with the group-chat gate on, how readily it speaks is its brain's `decisions.groupChatGate.chimeInAt` (`2.2` was quiet's, `1.7` easygoing's, `1.2` talkative's) |
 | `sfw: true` | `createBrain({ policy: { sfw: true } })` |
 | `character.facts`, `interests`, `boundaries` | In the prompt, in your words |
 | `character.moods` | `moods` |

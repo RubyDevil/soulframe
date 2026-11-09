@@ -45,7 +45,7 @@ package offers, a Markdown file per persona with its config as YAML frontmatter.
 
 ```ts
 function parsePersona(options: {
-	config: unknown;                    // id, name, timezone, schedule, moods?, traits?
+	config: unknown;                    // id, name, timezone, schedule, moods?
 	prompt: string;                     // the persona's voice and background, in Markdown
 	channels: readonly ChannelId[];     // the channels it is on: the names its hours' `on:` may use
 	adult?: boolean;                    // for 18+ conversations: busy reasons about school are refused
@@ -134,7 +134,6 @@ interface PersonaConfig {
 	timezone: string;
 	schedule: ScheduleConfig;                     // its hours by weekday
 	moods: { mood: string; weight: number }[];
-	traits?: Traits;                              // optional sentences after its prompt
 }
 ```
 
@@ -150,28 +149,6 @@ interface Persona extends PersonaConfig {
 ```
 
 A persona: its config and its prompt. What `createBrain` takes.
-
-### `Traits`
-
-```ts
-type Traits = {
-	chattiness?: 'quiet' | 'easygoing' | 'talkative';
-};
-```
-
-The optional `traits` of a persona's config: for each trait it sets, one of its values (a name, or a whole number of a
-scale). See [configuration](./configuration.md#traits).
-
-### `traitsPrompt`
-
-```ts
-function traitsPrompt(traits: Traits | undefined): string;
-```
-
-The sentences a persona's `traits` add right after its prompt, in every system prompt, as one paragraph (`''` without
-traits): `traitsPrompt({ chattiness: 'quiet' })` is `"You are quiet in group chats."`. The same text every time, never
-drawn. It does not read the persona's prompt: a trait that contradicts it tells the model two things at once, so write
-each trait in one place, the prompt or `traits`.
 
 ## Config problems
 
@@ -354,8 +331,8 @@ What is valid but probably wrong in settings: a reply that may be written again 
 function personaReport(persona: Persona, options: { settings: Settings; now: number; status?: string }): string[];
 ```
 
-Indented lines describing the persona, run with `settings` (its brain's): its prompt's length, the sentences its traits
-add (`traitsPrompt`, to read against the prompt), now (or `status`), today's and tomorrow's agenda, today's
+Indented lines describing the persona, run with `settings` (its brain's): its prompt's length, now (or `status`),
+today's and tomorrow's agenda, today's
 interruptions, its models, and its moods with today's.
 
 ### `samplePrompt`

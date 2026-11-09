@@ -36,8 +36,6 @@ const parsed = parsePersona({
 		timezone: 'UTC',
 		schedule: { days: { 'mon-sun': { online: [{ start: ['19:00', '19:00'], end: ['23:00', '23:00'] }] } } },
 		moods: ['cheerful', { mood: 'a little sleepy', weight: 0.5 }],
-		// Optional: each trait adds one fixed sentence after the prompt, which must not contradict it
-		traits: { chattiness: 'easygoing' },
 	},
 	prompt: 'You are Robin, 29, living in a small coastal town: warm and curious, into board games, baking and indie music. You write in lowercase and are always up for a good story.',
 	// The channels it is on: the names its hours' `on:` may use

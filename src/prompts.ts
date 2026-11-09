@@ -8,13 +8,12 @@
  * How a system prompt is built (`systemPrompt`):
  *   1. the persona's own prompt (its voice and background: the text after its persona file's frontmatter, or
  *      `parsePersona`'s `prompt`);
- *   2. `traitsPrompt`: the sentences of its optional `traits`, empty without them;
- *   3. `identityPrompt`: who it is, the app's identity phrase, where it is talking, and the channel's note on what
+ *   2. `identityPrompt`: who it is, the app's identity phrase, where it is talking, and the channel's note on what
  *      people see of it;
- *   4. the app's `style` block, if any;
- *   5. `rulesPrompt`: the rules it never breaks, if any (after the persona's own text, so they win over it): the 18+
+ *   3. the app's `style` block, if any;
+ *   4. `rulesPrompt`: the rules it never breaks, if any (after the persona's own text, so they win over it): the 18+
  *      line on an adult channel, the sfw line of an sfw policy (`Policy.sfw`), then the app's `Policy.rules`;
- *   6. the task: a DM turn, a post or a group-chat decision, with its answer format and the model's notes (and in
+ *   5. the task: a DM turn, a post or a group-chat decision, with its answer format and the model's notes (and in
  *      DMs, how things stand with the person); a DM turn and a group-chat decision end with the time line: the time
  *      and its day, what it is doing now and next, from its agenda (schedule.ts). A post has none. What changes on
  *      every call goes last, so a provider's prompt cache can reuse the rest.
@@ -59,52 +58,9 @@ export const SFW_RULE = 'Keep every conversation free of sexual or explicit cont
 /** The rules it never breaks, one "- " line each under one heading; nothing without rules. */
 export const rulesPrompt = (rules: readonly string[]) => (rules.length ? `Rules you never break:\n${rules.map((rule) => `- ${rule}`).join('\n')}` : '');
 
-// ---------------------------------------------------------------------------------------------------
-// Traits (`traits` in a persona's config): an optional shortcut to tune a persona, each value one fixed sentence
-// ---------------------------------------------------------------------------------------------------
-
-/**
- * The traits a persona's config may set (`traits`), each with the sentence every value of it gives (`traitsPrompt`).
- * A trait is a few named values (an enum) or a scale of whole numbers, its keys every number from the least to the
- * most; config/personas.ts builds the schema of `traits` from this table, so a trait added here can be set at once.
- * An empty sentence says nothing.
- */
-export const TRAITS = {
-	/**
-	 * How much it talks in group chats. With the group-chat gate on, how readily it speaks there is the gate's threshold
-	 * (settings.decisions.groupChatGate.chimeInAt), which this never changes.
-	 */
-	chattiness: {
-		quiet: 'You are quiet in group chats.',
-		easygoing: 'You are easygoing in group chats.',
-		talkative: 'You are talkative in group chats.',
-	},
-} as const satisfies Record<string, Readonly<Record<string, string>>>;
-
-/** A persona's traits: for each trait of TRAITS it sets, one of that trait's values (a name, or a whole number of a scale). */
-export type Traits = { -readonly [Name in keyof typeof TRAITS]?: keyof (typeof TRAITS)[Name] };
-
-/**
- * The sentences of a persona's `traits`, in the order of TRAITS, as one paragraph: in every system prompt, right after
- * the persona's own prompt; empty without traits. Deterministic (no draw), and optional: a quick way to tune a
- * persona, never required. Nothing here reads the persona's own prompt, so a trait that contradicts it (a prompt
- * that loves a crowd with `chattiness: quiet`) tells the model two things at once: write each trait in one place.
- */
-export const traitsPrompt = (traits: Traits | undefined) =>
-	!traits
-		? ''
-		: (Object.keys(TRAITS) as (keyof typeof TRAITS)[])
-				.map((name) => {
-					const value = traits[name];
-					return value === undefined ? '' : ((TRAITS[name] as Readonly<Record<string, string>>)[value] ?? '');
-				})
-				.filter(Boolean)
-				.join(' ');
-
-/** The whole system prompt: the persona's own prompt and its traits, then identity, the app's style and the rules, then the task. */
+/** The whole system prompt: the persona's own prompt, then identity, the app's style and the rules, then the task. */
 export const systemPrompt = ({
 	personaPrompt,
-	traits,
 	name,
 	identity,
 	style,
@@ -113,8 +69,6 @@ export const systemPrompt = ({
 	task,
 }: {
 	personaPrompt: string;
-	/** Its optional `traits` (`traitsPrompt`); without them the part is left out. */
-	traits?: Traits;
 	name: string;
 	/** The app's phrase after its name in the identity line (`createBrain`'s `identity`); none for the name alone. */
 	identity?: string;
@@ -125,7 +79,7 @@ export const systemPrompt = ({
 	/** The lines of `rulesPrompt`: the brain's own (the 18+ line, the sfw line), then the app's (`Policy.rules`); none for no rules block. */
 	rules: readonly string[];
 	task: string;
-}) => [personaPrompt.trim(), traitsPrompt(traits), identityPrompt(name, identity, channel), style?.trim() ?? '', rulesPrompt(rules), task].filter(Boolean).join('\n\n');
+}) => [personaPrompt.trim(), identityPrompt(name, identity, channel), style?.trim() ?? '', rulesPrompt(rules), task].filter(Boolean).join('\n\n');
 
 // ---------------------------------------------------------------------------------------------------
 // Memory: the small notes the model keeps and rewrites itself
@@ -529,7 +483,7 @@ export const POST_REQUEST = '[post] Write the post.';
  * to, sometimes chimes in to keep the chat going, greets some arrivals, and stays quiet otherwise. `quiet` when the
  * chat has been silent a while; `hosted` in its own; `notes`, the channel's, listed with the instructions;
  * `targetLength`, the soft limit of its line (the channel's, brain.ts lineTarget). It reads only the chat and its
- * notices. How much the persona talks there is its own prompt's, or its `traits.chattiness` (`traitsPrompt`).
+ * notices. How much the persona talks there is its own prompt's to say.
  */
 export const groupChatTask = ({
 	selfNotes,

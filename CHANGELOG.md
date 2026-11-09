@@ -12,17 +12,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **A persona is its config and its prompt.** `parsePersona({ config, prompt, channels })` checks a persona from
   wherever the application keeps it (its own loader, a database, values in code) and answers `{ persona?, issues }`,
   never throwing. The config (`PersonaConfig`) holds only what the code computes with: `id`, `name`, `timezone`,
-  `schedule`, `moods` and the optional `traits`; everything else about the persona is its prompt, free Markdown. A
-  loaded persona is a `Persona` (`PersonaConfig` with its `prompt`).
+  `schedule` and `moods`; everything else about the persona is its prompt, free Markdown. A loaded persona is a
+  `Persona` (`PersonaConfig` with its `prompt`).
 - **Persona files with frontmatter**, the one file format the package reads, and only if you want it: `<id>.md`, its
   config as YAML frontmatter between two `---` lines, its prompt the rest. `parsePersonaMarkdown(text, { id, channels })`
   reads one file's text (a YAML error points at the file's own line); `loadPersonas({ dir, channels })` reads a folder
   of them. [`examples/personas/robin.md`](./examples/personas/robin.md) is one, loaded by the tests.
-- **Traits** (`traits` in a persona's config, `traitsPrompt`, `Traits`): an optional, quick way to tune a persona.
-  Each trait it sets adds one fixed sentence right after its prompt, in every system prompt, the same every time
-  (nothing is drawn). The first is `chattiness` (`quiet`, `easygoing`, `talkative`). The sentences don't read the
-  prompt: don't let the two contradict each other (the docs say so where traits are described, and `personaReport`
-  shows the sentences next to the prompt's length).
 - `parseSettings(raw, { source })`: the settings a brain runs with, read from wherever the application keeps them,
   every default filled in, every problem returned with its path (an unknown key with the nearest known one).
 - `createBrain({ settings })` (required: `parseSettings({})` gives every default), and `brain.persona` and
@@ -40,21 +35,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
-- **BREAKING: settings are the brain's, never a persona's.** Give them to `createBrain({ persona, settings })` (every
-  default when left out), the same object for every persona or one of their own, and the same settings to `llmsFor`
+- **BREAKING: settings are the brain's, never a persona's.** Give them to `createBrain({ persona, settings })`
+  (required: `parseSettings({})` gives every default), the same object for every persona or one of their own, and the same settings to `llmsFor`
   (whose `{ id, settings }` entries are unchanged). `createReplyQueue({ brain, runtime, act })` takes no `persona`: it
   answers with its brain's persona and settings, so the two can't differ.
 - **BREAKING: `decisions.groupChatGate.chimeInAt` is one number** (default `1.7`), no longer one per chattiness: give a
   quieter persona's brain a higher one (`2.2` was `quiet`'s, `1.2` `talkative`'s). The old shape is refused with a
-  message that says so. No trait changes it.
-- **BREAKING: the group-chat task says nothing of how much the persona talks.** "You are easygoing in group chats." was
-  in every persona's group-chat prompt; that sentence now comes only from `traits.chattiness`, after the persona's
-  prompt in every system prompt (DMs and posts too). Set `traits: { chattiness: easygoing }` to keep it.
+  message that says so.
+- **BREAKING: the group-chat task says nothing of how much the persona talks.** "You are easygoing in group chats." (or
+  quiet, or talkative, by `chattiness`) was in every persona's group-chat prompt; it is gone. Say in the persona's
+  prompt how much it talks in group chats.
 - **BREAKING: `loadPersonas` reads `<dir>/<id>.md`** (frontmatter and prompt in one file) and answers
   `{ issues, personas }`, without `shared`.
 - **BREAKING: `personaReport(persona, { settings, now, status? })`** takes the settings its brain runs with in place
-  of `shared`: no `overrides` lines; `prompt:` gives the prompt's length; a new `traits:` line gives their sentences;
-  `moods:` replaces `character:`.
+  of `shared`: no `overrides` lines; `prompt:` gives the prompt's length; `moods:` replaces
+  `character:`.
 - `personaWarnings` warns only about the persona (its time zone, hours and channels); `samplePrompt` takes `settings`.
 
 ### Removed
@@ -65,12 +60,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **BREAKING: the `window` form of the hours.** Write the same hours every day as a schedule:
   `schedule: { skipDayChance, days: { mon-sun: { online: [{ start, end }] } } }`, which draws exactly the hours the
   window did.
-- **BREAKING: `chattiness`, `sfw` and `character` in a persona's config.** `chattiness` moved to `traits.chattiness`
-  (and the gate's threshold to `chimeInAt`), `sfw` to `Policy.sfw`, `character.moods` to `moods`; write the persona's
-  facts, interests and boundaries in its prompt, in your words (the fixed "Facts about you that never change…",
+- **BREAKING: `chattiness`, `sfw` and `character` in a persona's config.** `chattiness` is gone (say in the prompt how
+  much it talks in group chats; the gate's threshold is `chimeInAt`), `sfw` moved to `Policy.sfw`, `character.moods`
+  to `moods`; write the persona's facts, interests and boundaries in its prompt, in your words (the fixed "Facts about you that never change…",
   "Things you're into…" and "Things you won't do…" blocks are gone).
 - **BREAKING: `settings:` in a persona's file**, and the split of settings into per-persona and global groups.
-- **BREAKING: `parsePersonas`** (use `parsePersona` per persona), the `Chattiness` type (`Traits['chattiness']`), the
+- **BREAKING: `parsePersonas`** (use `parsePersona` per persona), the `Chattiness` type, the
   `prompt:` path key (the prompt is the file's body), and `PersonaConfig`'s `promptText`, `source` and `settings`.
 
 ### Fixed

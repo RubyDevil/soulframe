@@ -14,7 +14,7 @@ flowchart LR
         incoming["brain.incoming"] --> decision{{"Decision"}}
         decision --> handle["queue.handle"]
         handle --> wait["delay, inside an open span"]
-        wait --> compose["brain.compose<br/><i>system prompt: prompt + traits + rules + task + time</i>"]
+        wait --> compose["brain.compose<br/><i>system prompt: prompt + rules + task + time</i>"]
         compose --> complete["Llm.complete"]
         complete --> turn["Turn"]
         turn --> send["Conversation.typing / send"]
@@ -43,7 +43,6 @@ frontmatter, is optional (`loadPersonas`, `parsePersonaMarkdown`). A loaded pers
 | `timezone` | An IANA time zone; its hours are local to it. |
 | `schedule` | Its hours by weekday. |
 | `moods` | The moods it draws one of each day, by weight. |
-| `traits` | Optional: each trait it sets adds one fixed sentence after its prompt (`traitsPrompt`). |
 | `prompt` | Its voice and background, trimmed. |
 
 Nothing else: what it says is its prompt's, and how its brain runs (models, limits, memory, pacing, the typed checks)
@@ -53,14 +52,12 @@ One settings object may serve every persona, or a persona's brain may get its ow
 The **system prompt** of every task is assembled in this order, so what comes later wins:
 
 1. the persona's own prompt;
-2. the sentences of its `traits`, if any. They don't read the prompt: a trait the prompt contradicts tells the model
-   two things at once, so write each in one place;
-3. the identity line: its name, your phrase on what it is (`createBrain({ identity })`) and where it is talking
+2. the identity line: its name, your phrase on what it is (`createBrain({ identity })`) and where it is talking
    (`Channel.where`), then the channel's `identityNote` when there is one;
-4. your style block, if any (`createBrain({ style })`): how your personas write. soulframe has no voice of its own;
-5. the rules, if any (see [Safeguards and policy](#safeguards-and-policy)): the 18+ line on an adult channel, the
+3. your style block, if any (`createBrain({ style })`): how your personas write. soulframe has no voice of its own;
+4. the rules, if any (see [Safeguards and policy](#safeguards-and-policy)): the 18+ line on an adult channel, the
    `sfw` line of a safe-for-work policy (`policy.sfw`), then your `policy.rules`;
-6. the task (a DM turn, a group-chat line or a post) with its answer format and the model's notes. A DM turn and a
+5. the task (a DM turn, a group-chat line or a post) with its answer format and the model's notes. A DM turn and a
    group-chat line end with the time line: the time and the persona's day. A post has no time line. What changes on
    every call goes last, so a provider's prompt cache can reuse the rest.
 
@@ -243,8 +240,8 @@ loads; `node --disable-warning=ExperimentalWarning` hides it.
    turn: up to three messages or none (left on read), the rewritten notes, an action (`none`, one of the
    channel's `actions` there, `block`) and, where the channel takes invitations, whether to accept one. The queue calls it for you.
 2. **Group chats.** `composeGroupChatLine(chat, recent, quiet, hosted)` reads the recent lines (`GroupChatLine[]`)
-   and answers one short line, or `null` to stay quiet. How much it talks there is its prompt's (or its
-   `traits.chattiness`), and the channel's `notes` are listed with its instructions. `wantsToSpeak(chatId, recent)` is the optional cheap gate before it (at most
+   and answers one short line, or `null` to stay quiet. How much it talks there is its prompt's to say, and
+   the channel's `notes` are listed with its instructions. `wantsToSpeak(chatId, recent)` is the optional cheap gate before it (at most
    `groupChatGate.perHour` checks per chat in any hour), and
    `checkGroupChatLine(chat, text)` the optional age check of a line someone wrote in an 18+ group chat.
 3. **Posts.** `composePost(channel, { rules, examples, recent })` writes one short post in the persona's voice, with the
@@ -260,7 +257,7 @@ breaks, plain text), and an answer that cannot be read is never sent as it is: i
 ## Safeguards and policy
 
 soulframe is unrestricted by default: it adds no content rules and removes no links. What a persona may say is up to
-your model and its provider, the persona's own prompt and traits, and the policy you pass to `createBrain`. What it
+your model and its provider, the persona's own prompt, and the policy you pass to `createBrain`. What it
 ships:
 
 - **Stop requests, always.** Before the model is called, `incoming` checks every message on every channel: a request

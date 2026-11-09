@@ -50,12 +50,11 @@ describe('the report on a persona', () => {
 		expect(reportOf({ schedule: daily({ start: ['11:00', '11:00'], end: ['13:00', '13:00'] }) }, 'paused')).toContain('  now: paused');
 	});
 
-	it('lists its prompt, the sentences its traits add, its models and its moods', () => {
+	it('lists its prompt, its models and its moods', () => {
 		const lines = reportOf({ schedule: daily(evening), moods: ['chill'] });
-		expect(lines.slice(0, 2)).toEqual(['  prompt: 8 characters', '  traits: none']);
+		expect(lines[0]).toBe('  prompt: 8 characters');
 		expect(lines).toContain('  models: directMessage chat-model, groupChat chat-model, post chat-model');
 		expect(lines.at(-1)).toBe('  moods: 1; today: chill');
-		expect(reportOf({ schedule: daily(evening), traits: { chattiness: 'quiet' } })[1]).toBe('  traits: You are quiet in group chats.');
 		expect(reportOf({ schedule: daily(evening) }, undefined, settingsOf())).toContain('  models: directMessage (canned), groupChat (canned), post (canned)');
 		expect(reportOf({ schedule: daily(evening) }).at(-1)).toBe('  moods: 0; today: no mood');
 	});
@@ -113,9 +112,9 @@ describe('the sample prompt', () => {
 		);
 	});
 
-	it("gives the app's identity phrase and style, where, the channel's note, the app's lines and the persona's traits", async () => {
-		const system = await samplePrompt({ settings: TEXT, persona: persona({ schedule: daily(evening), traits: { chattiness: 'talkative' } }), identity: TEST_IDENTITY, style: TEST_STYLE, channel: NOTED_DM, extraLines: () => ['A line the app adds.'], now });
-		expect(system).toContain(`A voice.\n\nYou are talkative in group chats.\n\nYou are Test, a guide made by Forum (https://forum.example), chatting by text in Forum direct messages. Forum shows everyone your name marked [bot].\n\n${TEST_STYLE}`);
+	it("gives the persona's prompt, the app's identity phrase and style, where, the channel's note and the app's lines", async () => {
+		const system = await samplePrompt({ settings: TEXT, persona: persona({ schedule: daily(evening) }), identity: TEST_IDENTITY, style: TEST_STYLE, channel: NOTED_DM, extraLines: () => ['A line the app adds.'], now });
+		expect(system).toContain(`A voice.\n\nYou are Test, a guide made by Forum (https://forum.example), chatting by text in Forum direct messages. Forum shows everyone your name marked [bot].\n\n${TEST_STYLE}`);
 		expect(system).toContain('A line the app adds.');
 	});
 

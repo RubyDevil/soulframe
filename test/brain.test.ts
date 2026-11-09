@@ -759,11 +759,9 @@ describe('typed checks (settings.decisions)', () => {
 		expect(await gate({ chat_addressed: 0.1 })).toBeNull();
 		expect(await gate(down as () => never)).toBeNull();
 		expect(await setUp('unused').brain.wantsToSpeak('chat-1', lines)).toBeNull();
-		// A quieter brain waits for a clear opening: its settings, never its traits
-		const quieter = (traits?: Record<string, unknown>) =>
-			createBrain({ persona: personaOf(robin({ traits })), settings: settingsOf({ decisions: { groupChatGate: { chimeInAt: 2.2 } } }), runtime: { store: memoryStore(() => NOW), rng: () => 0.5, now: () => NOW }, llm: { complete: async () => 'unused' }, decisions: scripted({ chat_addressed: 0.1, chat_chime_in: 2 }) });
-		expect(await quieter().wantsToSpeak('chat-1', lines)).toMatchObject({ speak: false });
-		expect(await quieter({ chattiness: 'talkative' }).wantsToSpeak('chat-1', lines)).toMatchObject({ speak: false });
+		// A quieter brain waits for a clear opening: its settings
+		const quieter = createBrain({ persona, settings: settingsOf({ decisions: { groupChatGate: { chimeInAt: 2.2 } } }), runtime: { store: memoryStore(() => NOW), rng: () => 0.5, now: () => NOW }, llm: { complete: async () => 'unused' }, decisions: scripted({ chat_addressed: 0.1, chat_chime_in: 2 }) });
+		expect(await quieter.wantsToSpeak('chat-1', lines)).toMatchObject({ speak: false });
 	});
 
 	it('asks the gate at most groupChatGate.perHour times per chat in any hour, then lets the model decide', async () => {
@@ -830,7 +828,7 @@ describe('typed checks (settings.decisions)', () => {
 	});
 });
 
-describe('settings, traits, moods and relationship', () => {
+describe('settings, moods and relationship', () => {
 	const turn = (reply: string, fields: Record<string, unknown> = {}) => JSON.stringify({ reply, notes: null, self: null, action: 'none', ...fields });
 	/**
 	 * A brain for a persona with these extra fields of its config, its `settings` (as written) given to the brain, and the
@@ -870,27 +868,20 @@ describe('settings, traits, moods and relationship', () => {
 		expect(seen.at(-1)!.slice(1)).toHaveLength(2);
 	});
 
-	it('puts the sentences of its traits right after its prompt and before identity and rules, in DMs, group chats and posts', async () => {
-		const { dm, brain, seen, store } = withPersona({ traits: { chattiness: 'quiet' } });
+	it('puts its prompt first, then identity and rules, in DMs, group chats and posts, and says nothing of how much it talks', async () => {
+		const { dm, brain, seen, store } = withPersona({});
 		const { system } = await dm('hey');
 		await brain.composeGroupChatLine(groupChannel('Trip planning'), [{ name: 'Sam', text: 'hi Robin', mine: false }], false, false);
 		await brain.composePost(postChannel(300), { rules: '', examples: [], recent: [] });
 		for (const prompt of [system, seen[1]![0]!.content, seen[2]![0]!.content]) {
-			expect(prompt.startsWith(`You are playful and warm.\n\nYou are quiet in group chats.\n\n${identityPrompt('Robin', TEST_IDENTITY, DM.forum).slice(0, 40)}`)).toBe(true);
-			expect(prompt.indexOf('You are quiet in group chats.')).toBeLessThan(prompt.indexOf('Rules you never break'));
+			expect(prompt.startsWith(`You are playful and warm.\n\n${identityPrompt('Robin', TEST_IDENTITY, DM.forum).slice(0, 40)}`)).toBe(true);
+			expect(prompt).not.toMatch(/in group chats\./);
 		}
 		expect(system).toContain(identityPrompt('Robin', TEST_IDENTITY, DM.forum));
 		expect(system).toContain(rulesPrompt([ADULTS_ONLY_RULE, ...TEST_POLICY.rules]));
-		// A flagged person still gets the caution, traits or not
+		// A flagged person gets the caution
 		store.cautionMinor('forum', 'p1', 0.6);
 		expect((await dm('so?')).system).toContain(MINOR_CAUTION_PROMPT);
-	});
-
-	it('says nothing of traits without them, and nothing of how much it talks in a group chat', async () => {
-		const { dm, brain, seen } = withPersona({});
-		expect((await dm('hey')).system.startsWith(`You are playful and warm.\n\n${identityPrompt('Robin', TEST_IDENTITY, DM.forum).slice(0, 40)}`)).toBe(true);
-		await brain.composeGroupChatLine(groupChannel('Trip planning'), [{ name: 'Sam', text: 'hi Robin', mine: false }], false, false);
-		expect(seen.at(-1)![0]!.content).not.toMatch(/in group chats\./);
 	});
 
 	it.each(['https://forum.example/join', 'https://example.org/chat', 'www.example.org/chat'])('removes every channel-post link, including its own site: %s', async (url) => {
