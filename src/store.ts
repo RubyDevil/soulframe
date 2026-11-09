@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { ChannelId } from './channel.js';
+import type { MessageMedia } from './perception.js';
 
 // Loaded at run time, not imported: Vite (under the tests) doesn't know node:sqlite yet and fails to resolve it, and
 // getBuiltinModule works the same in the ESM and the CJS build (import.meta.url would not exist in CJS)
@@ -38,10 +39,13 @@ export interface Person {
 }
 
 export interface StoredMessage {
+	id: number;
 	channel: ChannelId;
 	direction: 'in' | 'out';
 	text: string;
 	at: number;
+	/** The photos and links that came with it, if any. */
+	media?: MessageMedia;
 }
 
 const SCHEMA = `
@@ -77,7 +81,8 @@ CREATE TABLE IF NOT EXISTS messages (
 	channel TEXT NOT NULL,
 	direction TEXT NOT NULL,
 	text TEXT NOT NULL,
-	at INTEGER NOT NULL
+	at INTEGER NOT NULL,
+	media TEXT
 );
 CREATE INDEX IF NOT EXISTS messages_person ON messages (person_id, at);
 CREATE INDEX IF NOT EXISTS messages_at ON messages (at);
@@ -218,6 +223,8 @@ export function createStore(db: Database, now: () => number = Date.now) {
 			}
 		});
 	}
+	// A database made before messages could carry photos and links
+	if (!(db.prepare('PRAGMA table_info(messages)').all() as unknown as { name: string }[]).some((column) => column.name === 'media')) db.exec('ALTER TABLE messages ADD COLUMN media TEXT');
 
 	const byId = (id: number) => {
 		const row = db.prepare(`${PERSON_SELECT} WHERE p.id = ?`).get(id) as unknown as PersonRow | undefined;
@@ -257,16 +264,20 @@ export function createStore(db: Database, now: () => number = Date.now) {
 			}
 			return byId(id);
 		},
-		addMessage(personId: number, channel: ChannelId, direction: 'in' | 'out', text: string, at = now()) {
-			db.prepare('INSERT INTO messages (person_id, channel, direction, text, at) VALUES (?, ?, ?, ?, ?)').run(personId, channel, direction, text, at);
+		addMessage(personId: number, channel: ChannelId, direction: 'in' | 'out', text: string, at = now(), media?: MessageMedia) {
+			db.prepare('INSERT INTO messages (person_id, channel, direction, text, at, media) VALUES (?, ?, ?, ?, ?, ?)').run(personId, channel, direction, text, at, media ? JSON.stringify(media) : null);
 			if (direction === 'in') db.prepare('UPDATE people SET incoming = incoming + 1, updated_at = ? WHERE id = ?').run(now(), personId);
+		},
+		/** What is known of a message's photos and links, once they were looked at. */
+		setMedia(messageId: number, media: MessageMedia) {
+			db.prepare('UPDATE messages SET media = ? WHERE id = ?').run(JSON.stringify(media), messageId);
 		},
 		/** The last `limit` messages with the person, oldest first. */
 		history(personId: number, limit = 40): StoredMessage[] {
 			const rows = db
-				.prepare('SELECT channel, direction, text, at FROM messages WHERE person_id = ? ORDER BY at DESC, id DESC LIMIT ?')
-				.all(personId, limit) as unknown as StoredMessage[];
-			return rows.reverse();
+				.prepare('SELECT id, channel, direction, text, at, media FROM messages WHERE person_id = ? ORDER BY at DESC, id DESC LIMIT ?')
+				.all(personId, limit) as unknown as (Omit<StoredMessage, 'media'> & { media: string | null })[];
+			return rows.reverse().map(({ media, ...message }) => ({ ...message, ...(media !== null && { media: JSON.parse(media) as MessageMedia }) }));
 		},
 		/**
 		 * Active people still owed a turn who last wrote at `since` or later, oldest first, each with the channel they

@@ -10,6 +10,7 @@ import { LlmBudgetError, ModelNotConfiguredError, ProviderUnavailableError } fro
 import { STOP_QUESTION } from '../src/prompts.js';
 import { interruptionsOn } from '../src/pacing.js';
 import { seededRng, sleep, type Rng } from '../src/rng.js';
+import type { IncomingMessage } from '../src/perception.js';
 import { createReplyQueue, createRuntime, UnreachableError, watchSpans, type Conversation } from '../src/runtime.js';
 import { MINOR_EXIT, STOP_ACK } from '../src/safety.js';
 import { MINUTE, SettingsSchema } from '../src/settings.js';
@@ -1275,6 +1276,34 @@ describe('typing realism', () => {
 		} finally {
 			run.close();
 		}
+	});
+
+	describe('what came with a message', () => {
+		// Read receipt first, so the wait before typing shows; with this rng each photo takes the shortest look (1.5 s)
+		const gapBeforeTyping = async (message: string | IncomingMessage) => {
+			const run = start();
+			const { conversation, events } = recording({ markRead: 'resolves' });
+			try {
+				const text = typeof message === 'string' ? message : message.text;
+				run.queue.handle(run.brain.incoming(NOTED_DM, 'user-1', 'Sam', message), conversation, text);
+				await vi.advanceTimersByTimeAsync(MINUTE);
+				return events[1];
+			} finally {
+				run.close();
+			}
+		};
+		const photo = { url: 'https://cdn.example/p.jpg' };
+
+		it('looks at a photo sent alone before it types', async () => {
+			expect(await gapBeforeTyping({ text: '', images: [photo] })).toBe('typing on @1500');
+		});
+		it('takes longer over two photos', async () => {
+			expect(await gapBeforeTyping({ text: '', images: [photo, photo] })).toBe('typing on @3000');
+		});
+		it('spends no time reading a URL', async () => {
+			// At once: a timer of nothing still takes its one tick
+			expect(await gapBeforeTyping(`https://example.com/${'long/'.repeat(30)}`)).toMatch(/^typing on @[01]$/);
+		});
 	});
 
 	it('shows typing again every typingRefreshMs while a message is typed', async () => {

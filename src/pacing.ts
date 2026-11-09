@@ -174,6 +174,13 @@ export function readingMs(chars: number, rng: Rng, pacing: Pacing = DEFAULT_SETT
 	return Math.round(Math.min(pacing.readingDurationSeconds[1] * SECOND, Math.max(pacing.readingDurationSeconds[0] * SECOND, ms)));
 }
 
+/** How long it spends on `images` photos (`pacing.looking` each); nothing, and no draw, with none. */
+export function lookingMs(images: number, rng: Rng, pacing: Pacing = DEFAULT_SETTINGS.pacing): number {
+	let ms = 0;
+	for (let i = 0; i < images; i++) ms += msIn(rng, pacing.looking);
+	return ms;
+}
+
 /** A pause between two messages of the same reply. */
 export const betweenMessagesMs = (rng: Rng, pacing: Pacing = DEFAULT_SETTINGS.pacing) => msIn(rng, pacing.betweenReplyMessagesSeconds);
 

@@ -128,7 +128,27 @@ export const SettingsSchema = z
 				groupChat: ModelSchema({ maxTokens: 100, temperature: 0.9 }),
 				/** A post in a channel. */
 				post: ModelSchema({ maxTokens: 160, temperature: 1 }),
+				/**
+				 * Describing a photo someone sent in a DM, once, when it is looked at. Called only with `model` set here (never
+				 * `llm.model`, which may not take images): left out, photos show as not loading. A chat model that takes images can be named here too.
+				 */
+				vision: ModelSchema({ maxTokens: 200, temperature: 0.2 }),
 			})
+			.default({}),
+
+		/** What comes with a message in a DM: its photos (`models.vision`) and the preview cards of its links, which is all it knows of a link. */
+		perception: z
+			.object({
+				/** Characters of a photo's description, stored with the message and sent with every turn it stays in the history. */
+				descriptionChars: z.number().int().min(40).max(2000).default(400),
+				/** The most photos of one message that are looked at; 0 for none. */
+				imagesPerMessage: z.number().int().min(0).max(10).default(4),
+				/** The most links of one message it notices; 0 leaves them plain text, with no rule against claiming to have opened them. */
+				linksPerMessage: z.number().int().min(0).max(10).default(3),
+				/** Seconds a photo's description or a link's card may take; past them it goes on without it. */
+				timeoutSeconds: z.number().min(1).max(120).default(15),
+			})
+			.strict()
 			.default({}),
 
 		/**
@@ -367,6 +387,8 @@ export const SettingsSchema = z
 				readingCharsPerSecond: drawn(15, 25, 'normal', 1),
 				/** The shortest and longest the reading takes, in seconds. */
 				readingDurationSeconds: range(1, 20),
+				/** Seconds it spends on each photo, on top of the reading. */
+				looking: drawn(1.5, 5, 'lognormal'),
 				/** Pauses while typing a long message: the indicator goes off a moment, as when someone stops to think, then on again. */
 				thinkingPauses: z
 					.object({
@@ -452,7 +474,7 @@ export type Settings = z.infer<typeof SettingsSchema>;
  * The setting groups a persona may set for itself (its file's `settings:`), deep-merged over `_shared.yaml`'s
  * (config/personas.ts). Everything else is set once for every persona.
  */
-export const PERSONA_SETTINGS = ['models', 'memory', 'relationship', 'pacing', 'context', 'retries'] as const;
+export const PERSONA_SETTINGS = ['models', 'perception', 'memory', 'relationship', 'pacing', 'context', 'retries'] as const;
 /** Set once for every persona: the text provider and its daily cap, the Decisions checks. */
 export const GLOBAL_SETTINGS = ['llm', 'decisions'] as const;
 /** Why a group can't be set per persona, for the error message. */
@@ -469,7 +491,8 @@ export function checkSettings(settings: Settings): { path: (string | number)[]; 
 	const issues: { path: (string | number)[]; message: string }[] = [];
 	const { llm, models } = settings;
 	for (const [task, model] of Object.entries(models)) {
-		if (llm.baseUrl === undefined && model.baseUrl === undefined) continue;
+		// Optional, and never falls back to llm.model
+		if (task === 'vision' || (llm.baseUrl === undefined && model.baseUrl === undefined)) continue;
 		if (!model.model && !llm.model) issues.push({ path: ['models', task], message: 'no model named (set it, or settings.llm.model)' });
 	}
 	return issues;

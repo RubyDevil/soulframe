@@ -7,6 +7,8 @@ import type { Store } from './store.js';
 export interface LlmMessage {
 	role: 'system' | 'user' | 'assistant';
 	content: string;
+	/** Images for the model to look at with this message (URLs or `data:` URIs): only the `vision` task sends any. */
+	images?: readonly string[];
 }
 
 /** The kinds of task, each with its own model settings (`settings.models`). */
@@ -61,6 +63,13 @@ export function createTokenMeter(store: Store, dailyLimit: number, now: () => nu
 }
 
 export type TokenMeter = ReturnType<typeof createTokenMeter>;
+
+/** A message as the provider takes it: its images, if any, as content parts after its text. */
+const wireMessage = ({ role, content, images }: LlmMessage) =>
+	images?.length ? { role, content: [{ type: 'text', text: content }, ...images.map((url) => ({ type: 'image_url', image_url: { url } }))] } : { role, content };
+
+/** Roughly what an image costs at a provider that reports no usage: its bytes would say nothing. */
+const IMAGE_TOKENS = 800;
 
 /** Statuses worth one more try: a timeout, a rate limit, a server error (here and in decisions.ts). */
 const RETRYABLE = new Set([408, 429, 500, 502, 503, 504]);
@@ -124,6 +133,8 @@ export const keyEnvFor = (settings: Settings, task: LlmTask) => settings.models[
 export function modelKeys(settings: Settings): Map<string, string> {
 	const keys = new Map<string, string>();
 	for (const task of Object.keys(settings.models) as LlmTask[]) {
+		// A task that is off needs no key
+		if (task === 'vision' && !settings.models.vision.model) continue;
 		const name = keyEnvFor(settings, task);
 		if (!name || keys.has(name) || !(settings.models[task].baseUrl ?? settings.llm.baseUrl)) continue;
 		keys.set(name, settings.models[task].apiKeyEnv === undefined ? 'settings.llm.apiKeyEnv' : `settings.models.${task}.apiKeyEnv`);
@@ -164,17 +175,19 @@ export function createConfiguredLlm({
 			const jsonMode = taskModel.jsonMode ?? (taskModel.baseUrl ? false : settings.llm.jsonMode);
 			// Checked and counted within its turn, so the calls waiting behind llm.concurrency never spend past their share
 			const text = await limit(async () => {
-				if (meter?.exceeded(task === 'directMessage' ? 1 : 1 - settings.llm.directMessageReserve)) throw new LlmBudgetError();
+				// A photo is looked at only in a DM, so it spends what is kept for them
+				if (meter?.exceeded(task === 'directMessage' || task === 'vision' ? 1 : 1 - settings.llm.directMessageReserve)) throw new LlmBudgetError();
 				const body = (await postModelJson(`${baseUrl.replace(/\/+$/, '')}/chat/completions`, apiKey, {
 					model,
-					messages,
+					messages: messages.map(wireMessage),
 					...(openAi ? { max_completion_tokens: taskModel.maxTokens } : { max_tokens: taskModel.maxTokens }),
 					...(!(openAi && model.startsWith('gpt-5')) && { temperature: taskModel.temperature }),
 					...(jsonMode && json && { response_format: { type: 'json_object' } }),
 				}, settings.llm.timeoutSeconds * 1000, () => between(rng, 2_000, 6_000), 'LLM')) as { choices?: { message?: { content?: string } }[]; usage?: { total_tokens?: number } };
 				const answer = body.choices?.[0]?.message?.content?.trim();
 				// A provider that reports no usage is counted at about four characters a token
-				meter?.add(body.usage?.total_tokens ?? Math.ceil((JSON.stringify(messages).length + (answer?.length ?? 0)) / 4));
+				const images = messages.reduce((sum, message) => sum + (message.images?.length ?? 0), 0);
+				meter?.add(body.usage?.total_tokens ?? Math.ceil((JSON.stringify(messages, (key, value: unknown) => (key === 'images' ? undefined : value)).length + (answer?.length ?? 0)) / 4) + images * IMAGE_TOKENS);
 				return answer;
 			});
 			if (!text) throw new Error('LLM answered no text');
@@ -187,7 +200,8 @@ export function createConfiguredLlm({
 export function createCannedLlm(rng: Rng): Llm {
 	const lines = ['haha yeah, tell me more', 'oh nice, how did that go?', 'what are you up to today?', 'that sounds fun'];
 	return {
-		async complete(messages) {
+		async complete(messages, options) {
+			if (options.task === 'vision') return JSON.stringify({ seen: 'a slightly blurry photo of someone smiling' });
 			const task = messages[messages.length - 1]?.content ?? '';
 			if (task === POST_REQUEST) return 'around for a while today, say hi if you feel like a chat';
 			return JSON.stringify({ reply: pick(rng, lines)!, notes: null, self: null, action: 'none' });
@@ -195,8 +209,8 @@ export function createCannedLlm(rng: Rng): Llm {
 	};
 }
 
-/** Whether a text provider is set: `llm.baseUrl`, or a task's own `baseUrl` (never `decisions.baseUrl`). */
-export const providerSet = (settings: Settings) => !!(settings.llm.baseUrl || Object.values(settings.models).some((model) => model.baseUrl));
+/** Whether a text provider is set: `llm.baseUrl`, or a text task's own `baseUrl` (never `models.vision`'s or `decisions.baseUrl`). */
+export const providerSet = ({ llm, models: { vision: _vision, ...text } }: Settings) => !!(llm.baseUrl || Object.values(text).some((model) => model.baseUrl));
 
 /**
  * One model client per persona, by id, so its own `settings.models` apply (the meter, `llm.dailyTokens`, and the

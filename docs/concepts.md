@@ -172,7 +172,7 @@ delivers:
   Each of these values is drawn from its range with a shape that fits it: speeds on a bell curve around the middle,
   waits and pauses skewed like the time people take (see [configuration](./configuration.md#settings)).
   While the model writes the reply, it reads what they wrote, as long as that takes at its reading speed
-  (`readingCharsPerSecond`, `readingDurationSeconds`); typing starts once both are done. Three opt-in touches make it
+  (`readingCharsPerSecond`, `readingDurationSeconds`, then `looking` per photo); typing starts once both are done. Three opt-in touches make it
   look closer to a person typing: the conversation's `typingRefreshMs` keeps the
   indicator on while a long message is typed (platforms drop it after a few seconds), its `markRead()` shows their
   messages read as it starts writing the reply, and `thinkingPauses` lets typing
@@ -208,7 +208,8 @@ loads; `node --disable-warning=ExperimentalWarning` hides it.
   `brain.incoming` creates the person on a first message; `store.link` attaches an account on another channel, so the
   history, notes and relationship follow them across channels.
 - **Messages.** The history, both directions, across channels. Only the newest `memory.historyMessages` are sent with
-  each turn: the notes carry what matters from older ones.
+  each turn: the notes carry what matters from older ones. A photo is kept as its description and a link as its
+  preview card ([attention](./attention.md#perception-photos-and-links)).
 - **Notes.** The model rewrites, at most each turn, its notes on the person (`Person.summary`, up to
   `memory.personNotes` characters) and on itself (made-up details it must keep consistent, up to `memory.selfNotes`,
   shared by all its conversations).
@@ -230,7 +231,8 @@ loads; `node --disable-warning=ExperimentalWarning` hides it.
 
 `createBrain` gives a persona its brain, with three capabilities:
 
-1. **Direct messages.** `incoming(channel, externalId, name, text, at?)` (`channel`: the `Channel`) is synchronous: it
+1. **Direct messages.** `incoming(channel, externalId, name, message, at?)` (`channel`: the `Channel`; `message`: their words, or an
+   `IncomingMessage` with photos and links) is synchronous: it
    records the message, runs the code's own checks and answers a `Decision`: `ignore` (denied, stopped, blocked), `final` (the code's
    goodbye: the conversation is over) or `reply` (answer later). `compose(personId, channel, options?)` writes the
    turn: up to three messages or none (left on read), the rewritten notes, an action (`none`, one of the

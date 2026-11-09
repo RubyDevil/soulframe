@@ -98,6 +98,7 @@ export function personaReport(persona: PersonaConfig, { shared, now, status }: {
 		`  overrides:${overrides.length ? '' : ' none'}`,
 		...overrides.map((at) => `    ${at}: ${short(valueAt(shared, at.split('.')))} → ${short(valueAt(persona.settings, at.split('.')))}`),
 		`  models: ${Object.entries(persona.settings.models)
+			.filter(([task, model]) => task !== 'vision' || model.model)
 			.map(([task, model]) => `${task} ${(provider && (model.model ?? persona.settings.llm.model)) || '(canned)'}`)
 			.join(', ')}`,
 		`  character: ${character.facts.length} facts, ${character.interests.length} interests, ${character.boundaries.length} boundaries, ${character.moods.length} moods; today: ${moodOf(persona, now) ?? 'no mood'}`,

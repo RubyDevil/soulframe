@@ -9,6 +9,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Personas see photos and link previews in DMs.** `brain.incoming` also takes an `IncomingMessage` (`text`, `images`,
+  `links`), and a photo sent alone now gets a turn. A photo is described once by `models.vision` (off until it names a
+  model, never `llm.model`), the description stored in place of its URL, and the chat model reads only that. It takes
+  `pacing.looking` per photo (default `[1.5, 5]` s), and a description that fails or takes over
+  `perception.timeoutSeconds` (default 15) leaves a photo that "wouldn't load" (or only its `alt`) instead of holding the reply up. A link
+  is only its preview card (from the app, or `createBrain`'s new `previewLink`), else its site's name: the prompt says
+  it has not opened it and must not claim to have. soulframe fetches no URL itself. New `perception` settings,
+  `store.setMedia`, a `media` column on `messages` added on open, `LlmMessage.images`, and an `image_unseen` audit
+  line. A URL no longer counts as reading time.
 - **Bursts** (`pacing.burst`). Someone who writes several messages in a row gets one reply, once they stop:
   `settleSeconds` (default `[2, 5]`) of quiet after their newest message, each message starting the wait again, up to
   `maxSettleResets` (default 3) times. A message that lands while the reply is being written, before its first message
