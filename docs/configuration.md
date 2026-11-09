@@ -178,8 +178,8 @@ relationship:
   familiarity: { growth: 0.008 }
 ```
 
-They are merged over its brain's settings key by key (a list or a range replaces whole), and `createBrain` runs with
-the result (`brain.settings`). `parsePersona` and the loaders check them over the `settings` you give them (the
+They are merged over its brain's settings key by key (a list or a range replaces whole, keeping the shape the brain's
+settings give a drawn range; `null` is back to the default), and `createBrain` runs with the result (`brain.settings`). `parsePersona` and the loaders check them over the `settings` you give them (the
 defaults unless given): give the ones its brain will run with, since `createBrain` checks again and throws a
 `ConfigError` if they don't fit.
 
@@ -421,7 +421,7 @@ Unknown keys here are refused.
 | `burst.settleSeconds` | drawn range, lognormal | `[2, 5]` | Quiet after their newest message before it starts writing the reply: a message in that time starts the wait again. `[0, 0]` for none. |
 | `burst.maxSettleResets` | integer, 0 to 20 | `3` | The most messages that may start that wait again; past them it starts writing anyway. |
 | `burst.restartOnNewMessage` | boolean | `true` | A message that comes in while it writes the reply, before the reply's first message is sent, drops the draft: it is written again with that message read. `false`: that message gets a turn of its own once this one is sent. |
-| `burst.maxRestarts` | integer, 1 to 5 | `1` | The most times in a row one reply may be written again so. Each dropped draft was paid for (a whole DM turn of tokens): `personaWarnings` warns above 1. Unknown keys under `burst` are refused too. |
+| `burst.maxRestarts` | integer, 1 to 5 | `1` | The most times in a row one reply may be written again so. Each dropped draft was paid for (a whole DM turn of tokens): `settingsWarnings` warns above 1 (`personaWarnings` for a persona's own). Unknown keys under `burst` are refused too. |
 | `betweenReplyMessagesSeconds` | drawn range, lognormal | `[0.8, 3.5]` | Between two messages of the same reply. |
 | `replySplitChance` | number, 0 to 1 | `0.35` | Chance that a single reply over 90 characters is sent as two messages. |
 | `returnOnlineReplyDelayMinutes` | drawn range, lognormal | `[0, 0]` | Extra wait after a span opens, before its first backlog reply; `[0, 0]` for none. |
@@ -586,7 +586,8 @@ For a config check command (none of them starts anything or touches the network)
 
 - **`personaWarnings(persona, channels)`**: what is valid but probably wrong in a persona: a time zone that is no
   city's (an abbreviation or a fixed offset), a weekday over 20 hours online, under an hour a day on average, more than
-  every other day skipped, and one of `channels` that no span ever includes (its DMs would wait forever).
+  every other day skipped, one of `channels` that no span ever includes (its DMs would wait forever), and its own
+  `pacing.burst.maxRestarts` above 1.
 - **`settingsWarnings(settings)`**: the same for settings: a reply that may be written again more than once
   (`pacing.burst.maxRestarts`), and no text provider.
 - **`personaReport(persona, { settings, now, status? })`**: lines describing what is in effect: its prompt's length,

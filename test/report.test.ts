@@ -80,6 +80,13 @@ describe('the warnings on a persona', () => {
 		expect(warningsOf({ schedule: daily(evening) })).toEqual([]);
 	});
 
+	it('warns about its own pacing.burst.maxRestarts above 1, unless it never starts over', () => {
+		expect(warningsOf({ schedule: WINDOW, pacing: { burst: { maxRestarts: 3 } } })).toEqual([
+			'"test" has its own pacing.burst.maxRestarts 3: each restart drops a draft already paid for, so one reply may cost up to 4 DM turns of tokens',
+		]);
+		expect(warningsOf({ schedule: WINDOW, pacing: { burst: { maxRestarts: 3, restartOnNewMessage: false } } })).toEqual([]);
+	});
+
 	it('warns about one of its channels that no span includes', () => {
 		const days = { 'mon-sun': { online: [{ ...evening, on: ['forum'] }] } };
 		expect(warningsOf({ schedule: { days } }, ['forum', 'chat'])).toEqual(['"test" is never online on chat: its DMs there would wait forever']);

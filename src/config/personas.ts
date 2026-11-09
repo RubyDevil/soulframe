@@ -159,8 +159,10 @@ export function parsePersonaMarkdown(
 		return whole(error instanceof Error ? error.message : String(error));
 	}
 	if (!isPlainObject(config)) return whole("its frontmatter must be a mapping (the persona's config: name, timezone, schedule…)");
-	if (config.id !== undefined && config.id !== id) return { issues: [sourced(source, { path: ['id'], message: `${JSON.stringify(config.id)} but its id is "${id}" (its file's name without .md)` })] };
-	return parsePersona({ config: { ...config, id }, prompt: split.body, channels, adult, settings, source });
+	const parsed = parsePersona({ config: { ...config, id }, prompt: split.body, channels, adult, settings, source });
+	if (config.id === undefined || config.id === id) return parsed;
+	// Another id is one problem among the others: every one shows at once
+	return { issues: [sourced(source, { path: ['id'], message: `${JSON.stringify(config.id)} but its id is "${id}" (its file's name without .md)` }), ...parsed.issues] };
 }
 
 /** Reads files for loadPersonas (injected so tests stay off the disk). */

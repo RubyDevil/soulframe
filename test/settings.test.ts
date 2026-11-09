@@ -101,12 +101,15 @@ describe('the example settings files', () => {
 describe('mergedSettings', () => {
 	const app = settingsOf({ pacing: { glance: { medianSeconds: 40, p90Seconds: 600 }, typingCharsPerSecond: { range: [4, 8], shape: 'uniform' } } });
 
-	it("merges a persona's own pacing and relationship over the settings key by key; a bare range takes the setting's own shape", () => {
+	it("merges a persona's own pacing and relationship over the settings key by key; a bare range keeps the shape they give it", () => {
 		expect(mergedSettings({}, app).value).toBe(app);
 		const { value } = mergedSettings({ pacing: { glance: { medianSeconds: 90 }, typingCharsPerSecond: [2, 3] }, relationship: { affinity: { enabled: false } } }, app);
 		expect(value?.pacing.glance).toEqual({ ...app.pacing.glance, medianSeconds: 90 });
-		expect(value?.pacing.typingCharsPerSecond).toEqual({ range: [2, 3], shape: DEFAULT_SETTINGS.pacing.typingCharsPerSecond.shape });
+		expect(value?.pacing.typingCharsPerSecond).toEqual({ range: [2, 3], shape: 'uniform' });
 		expect(value?.relationship.affinity).toEqual({ ...app.relationship.affinity, enabled: false });
+		// A shape of its own, and null for the default
+		expect(mergedSettings({ pacing: { typingCharsPerSecond: { range: [2, 3], shape: 'normal' } } }, app).value?.pacing.typingCharsPerSecond.shape).toBe('normal');
+		expect(mergedSettings({ pacing: { glance: null } as never }, app).value?.pacing.glance).toEqual(DEFAULT_SETTINGS.pacing.glance);
 	});
 });
 

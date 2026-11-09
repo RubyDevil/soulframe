@@ -1038,7 +1038,7 @@ It is Saturday, November 7, 8:00 PM for you. Their last message was just now. Yo
 hey, how was your day?
 ```
 
-`samplePrompt({ persona, channel, now })` (report.ts:111) returns the same system prompt: it runs the same brain on a
+`samplePrompt({ persona, channel, now })` (report.ts:119) returns the same system prompt: it runs the same brain on a
 throwaway store, with a person "Sam" who wrote "hey".
 
 ### Group-chat line

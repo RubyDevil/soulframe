@@ -342,7 +342,8 @@ function personaWarnings(persona: PersonaConfig, channels: readonly ChannelId[])
 ```
 
 What is valid but probably wrong in a persona: a time zone that is no city's, a weekday over 20 hours online, under an
-hour a day on average, more than every other day skipped, a channel of `channels` that no span ever includes.
+hour a day on average, more than every other day skipped, a channel of `channels` that no span ever includes, its own
+`pacing.burst.maxRestarts` above 1.
 
 ### `settingsWarnings`
 
@@ -359,8 +360,9 @@ What is valid but probably wrong in settings: a reply that may be written again 
 function personaReport(persona: Persona, options: { settings: Settings; now: number; status?: string }): string[];
 ```
 
-Indented lines describing the persona, run with `settings` (its brain's): its prompt's length, now (or `status`),
-today's and tomorrow's agenda, today's interruptions and its models.
+Indented lines describing the persona, run with `settings` (its brain's) and its own pacing and relationship over them,
+a `ConfigError` if they don't fit (as from `createBrain`, which `samplePrompt` runs): its prompt's length, now (or
+`status`), today's and tomorrow's agenda, today's interruptions and its models.
 
 ### `samplePrompt`
 

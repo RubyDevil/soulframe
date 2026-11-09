@@ -57,7 +57,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `{ issues, personas }`, without `shared`.
 - **BREAKING: `personaReport(persona, { settings, now, status? })`** takes the settings its brain runs with in place
   of `shared`: no `overrides` lines; `prompt:` gives the prompt's length; no `character:` line.
-- `personaWarnings` warns only about the persona (its time zone, hours and channels); `samplePrompt` takes `settings`.
+- `personaWarnings` warns only about the persona (its time zone, hours, channels and own `pacing.burst.maxRestarts`);
+  `samplePrompt` takes `settings`.
 - **BREAKING: the Decisions client's settings are the service settings'.** `decisions.enabled`, `baseUrl`,
   `apiKeyEnv`, `model`, `timeoutSeconds` and `dailyTokens` moved there (each refused in a brain's settings with where
   it went), and `createConfiguredDecisions` takes the service settings' `decisions`, giving `DISABLED_DECISIONS` while

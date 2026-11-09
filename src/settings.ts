@@ -14,7 +14,7 @@
 
 import { z } from 'zod';
 import { ConfigError, schemaProblems, sourced, unknownKeyProblems, unknownKeys, type Problem } from './config/issues.js';
-import { deepMerge } from './merge.js';
+import { deepMerge, isPlainObject } from './merge.js';
 
 /** [least, most]: the bounds a value is kept within, or drawn from evenly (soulframe's own drawn ranges are `drawn`, with a shape). */
 export const range = (min: number, max: number, floor = 0) =>
@@ -624,13 +624,20 @@ type SettingsInput = NonNullable<z.input<typeof SettingsSchema>>;
 /** A persona's own pacing and relationship, as its config writes them: only the keys it changes. */
 export type PersonaSettings = { pacing?: NonNullable<SettingsInput['pacing']>; relationship?: NonNullable<SettingsInput['relationship']> };
 
+/** `own` with each bare `[least, most]` written over a drawn range of `base` given that range's shape. */
+const keepShapes = (own: unknown, base: unknown): unknown => {
+	if (Array.isArray(own) && isPlainObject(base) && 'shape' in base) return { range: own, shape: base.shape };
+	return isPlainObject(own) && isPlainObject(base) ? Object.fromEntries(Object.entries(own).map(([key, value]) => [key, keepShapes(value, base[key])])) : own;
+};
+
 /**
- * `settings` with a persona's own pacing and relationship merged over them, key by key (a list or a range replaces;
- * a bare `[least, most]` takes the setting's own shape), checked again: a rule across keys may depend on both.
+ * `settings` with a persona's own pacing and relationship merged over them (deepMerge: key by key, a list or a range
+ * replacing, `null` back to the default; a bare `[least, most]` keeps the shape `settings` give it), checked again: a
+ * rule across keys may depend on both.
  */
 export function mergedSettings({ pacing, relationship }: PersonaSettings, settings: Settings): { value?: Settings; problems: Problem[] } {
 	if (pacing === undefined && relationship === undefined) return { value: settings, problems: [] };
-	return readWith(SettingsSchema, deepMerge(settings, { pacing, relationship }), {}, checkSettings);
+	return readWith(SettingsSchema, deepMerge(settings, keepShapes({ pacing, relationship }, settings)), {}, checkSettings);
 }
 
 /** mergedSettings' value, else a ConfigError naming the persona: what createBrain and personaReport run with. */

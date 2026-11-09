@@ -17,9 +17,18 @@ import { createStore, openDatabase, type Person } from './store.js';
 /** A city's zone follows its daylight saving; an abbreviation (EST) or a fixed offset (Etc/GMT+5) never does. UTC is meant as it is. */
 const isCityZone = (timeZone: string) => timeZone === 'UTC' || (timeZone.includes('/') && !timeZone.startsWith('Etc/'));
 
+/** The warning on a reply that may be written again more than once, each time paid for (`pacing.burst.maxRestarts` above 1). */
+const restartsWarning = (burst: { maxRestarts?: number; restartOnNewMessage?: boolean } | undefined, before = '') => {
+	const restarts = burst?.maxRestarts ?? 1;
+	return burst?.restartOnNewMessage !== false && restarts > 1
+		? [`${before}pacing.burst.maxRestarts ${restarts}: each restart drops a draft already paid for, so one reply may cost up to ${restarts + 1} DM turns of tokens`]
+		: [];
+};
+
 /**
  * Warnings about a persona: a time zone that is no city's, a weekday over 20 hours online, under an hour a day on
- * average, more than every other day off, and one of its `channels` that no span ever includes.
+ * average, more than every other day off, one of its `channels` that no span ever includes, and its own
+ * `pacing.burst.maxRestarts` above 1.
  */
 export function personaWarnings(persona: PersonaConfig, channels: readonly ChannelId[]): string[] {
 	const { id, schedule, timezone } = persona;
@@ -34,16 +43,14 @@ export function personaWarnings(persona: PersonaConfig, channels: readonly Chann
 		...(average < 1 ? [`"${id}" is online about ${average.toFixed(1)} hours a day on average`] : []),
 		...skips.filter(({ chance }) => chance > 0.5).map(({ where, chance }) => `"${id}" takes more than every other day off${where} (skipDayChance ${chance})`),
 		...channels.filter((channel) => !spans.some((span) => isOn(span, channel))).map((channel) => `"${id}" is never online on ${channel}: its DMs there would wait forever`),
+		...restartsWarning(persona.pacing?.burst, `"${id}" has its own `),
 	];
 }
 
 /** Warnings about the settings a brain runs with: a reply that may be written again more than once (`pacing.burst.maxRestarts`), and no text provider. */
 export function settingsWarnings(settings: Settings): string[] {
-	const { burst } = settings.pacing;
 	return [
-		...(burst.restartOnNewMessage && burst.maxRestarts > 1
-			? [`pacing.burst.maxRestarts ${burst.maxRestarts}: each restart drops a draft already paid for, so one reply may cost up to ${burst.maxRestarts + 1} DM turns of tokens`]
-			: []),
+		...restartsWarning(settings.pacing.burst),
 		...(providerSet(settings) ? [] : ['no text provider (models.default.baseUrl): llmsFor refuses to make its model outside a dry run, which uses canned lines']),
 	];
 }
@@ -82,8 +89,9 @@ const nowText = (persona: PersonaConfig, now: number) => {
 
 /**
  * A config check's lines on one persona, after the app's header line, with the settings its brain runs with (its own
- * pacing and relationship over `settings`): its prompt's length, now (`status` in place of what its hours say, when
- * the app gives one), today, tomorrow, today's interruptions (`pacing.interruptions`) and its models.
+ * pacing and relationship over `settings`; a ConfigError if they don't fit, as from createBrain): its prompt's length,
+ * now (`status` in place of what its hours say, when the app gives one), today, tomorrow, today's interruptions
+ * (`pacing.interruptions`) and its models.
  */
 export function personaReport(persona: Persona, { settings: given, now, status }: { settings: Settings; now: number; status?: string }): string[] {
 	const settings = ownSettings(persona, given);
@@ -119,7 +127,7 @@ export async function samplePrompt({
 	policy,
 }: {
 	persona: Persona;
-	/** As createBrain's: the settings its brain runs with. */
+	/** As createBrain's: the settings its brain runs with, its own pacing and relationship over them (a ConfigError if they don't fit). */
 	settings: Settings;
 	/** As createBrain's. */
 	identity?: string;

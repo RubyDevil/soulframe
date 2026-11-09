@@ -101,6 +101,11 @@ describe('a persona file (parsePersonaMarkdown)', () => {
 	it('takes an id in the frontmatter only when it is its own', () => {
 		expect(parse(markdown(fileConfig({ id: 'test' }))).persona?.id).toBe('test');
 		expect(parse(markdown(fileConfig({ id: 'other' })), 'test.md').issues).toEqual(['test.md › id: "other" but its id is "test" (its file\'s name without .md)']);
+		// With the file's other problems, all at once
+		expect(parse(markdown(fileConfig({ id: 'other', nmae: 'Test' })), 'test.md').issues).toEqual([
+			'test.md › id: "other" but its id is "test" (its file\'s name without .md)',
+			'test.md › nmae: unknown key (did you mean "name"?)',
+		]);
 	});
 
 	it('reads Windows line endings and a byte order mark, and a file with no prompt after its frontmatter', () => {
