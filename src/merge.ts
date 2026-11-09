@@ -1,6 +1,7 @@
 /**
- * Merging config layers: plain objects merge key by key; arrays ([least, most] ranges, lists) and scalars replace;
- * `null` for a key removes what the layers below set there, back to the schema's default (or none).
+ * Merging config values (a persona's own settings over its brain's): plain objects merge key by key; arrays
+ * ([least, most] ranges, lists) and scalars replace; `null` for a key removes what was set there, back to the schema's
+ * default (or none).
  */
 export const isPlainObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -35,7 +36,3 @@ export function valueAt(value: unknown, path: readonly (string | number)[]): unk
 	}
 	return at;
 }
-
-/** Only the given keys of `value` (a plain object; anything else gives {}). */
-export const pickKeys = (value: unknown, keys: readonly string[]): Record<string, unknown> =>
-	isPlainObject(value) ? Object.fromEntries(Object.entries(value).filter(([key]) => keys.includes(key))) : {};

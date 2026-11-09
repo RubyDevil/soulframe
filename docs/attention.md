@@ -3,7 +3,9 @@
 How a persona decides **when** it answers, **who** it answers first, and **how well it knows and likes** each person,
 with every setting that changes it explained in plain terms. The [configuration reference](./configuration.md#settings)
 lists the same keys in tables, with their types and ranges; this page says what each one does, and what to expect when
-you change it. All of them are per persona: set them in `_shared.yaml` for everyone, or in a persona's own file.
+you change it. All of them are settings of a persona's brain (`createBrain({ settings })`): one object for every
+persona, with [its own](./configuration.md#its-own-pacing-and-relationship) over them for one that should answer
+differently.
 
 - [The model in one minute](#the-model-in-one-minute)
 - [`relationship`: getting to know and like each person](#relationship-getting-to-know-and-like-each-person)
@@ -65,15 +67,14 @@ put together, are in [system prompts](./prompts.md) (`FAMILIARITY_LEVELS`, `AFFI
 Your own levels, with thresholds of your own:
 
 ```yaml
-settings:
-  relationship:
-    familiarity:
-      levels:
-        - { from: 0, text: "{name} is new here; you're still a bit formal." }
-        - { from: 0.25, text: "You and {name} chat often and easily." }
-        - { from: 0.6, text: "{name} is a friend: you joke around and check in on each other." }
-    affinity:
-      enabled: false
+relationship:
+  familiarity:
+    levels:
+      - { from: 0, text: "{name} is new here; you're still a bit formal." }
+      - { from: 0.25, text: "You and {name} chat often and easily." }
+      - { from: 0.6, text: "{name} is a friend: you joke around and check in on each other." }
+  affinity:
+    enabled: false
 ```
 
 A database made by `0.1.0-beta.0` is upgraded when the store opens: familiarity starts from each person's
@@ -168,9 +169,10 @@ or affinity are thrown away with it.
 
 | Key | Default | What it does |
 | --- | --- | --- |
-| `decisions.importance.enabled` | `true` | Only with the Decisions API on (`decisions.enabled`). Asks how much someone's new messages matter (0 to 3) when their turn comes due while others wait, so the pick weighs a confession before the model has read it, and with the other checks of every DM turn. Usually it rides along with the stop and age checks, at the cost of one more question; with those off, it is a request of its own. Off, or on any failure, the model's own rating of their last turn is used. |
+| `decisions.importance.enabled` | `true` | Only with the Decisions client on (the service settings' `decisions.enabled`). Asks how much someone's new messages matter (0 to 3) when their turn comes due while others wait, so the pick weighs a confession before the model has read it, and with the other checks of every DM turn. Usually it rides along with the stop and age checks, at the cost of one more question; with those off, it is a request of its own. Off, or on any failure, the model's own rating of their last turn is used. |
 
-It is set once for every persona, with the rest of `decisions`, in `_shared.yaml`.
+Like the other checks' switches and thresholds, it is in the settings your code gives each brain; the client itself is
+the service settings'.
 
 ## `perception`: photos and links
 

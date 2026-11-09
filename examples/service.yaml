@@ -1,0 +1,4 @@
+text:
+  dailyTokens: 400000
+decisions:
+  enabled: true

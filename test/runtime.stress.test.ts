@@ -14,7 +14,7 @@ import { seededRng, sleep, type Rng } from '../src/rng.js';
 import { createReplyQueue, createRuntime, UnreachableError, type Conversation } from '../src/runtime.js';
 import { MINOR_EXIT, STOP_ACK } from '../src/safety.js';
 import { MINUTE } from '../src/settings.js';
-import { memoryStore, NOTED_DM, personasOf, TEST_IDENTITY, testPersona } from './fixtures.js';
+import { memoryStore, NOTED_DM, personaOf, settingsOf, TEST_IDENTITY, testPersona } from './fixtures.js';
 
 // 20:00 UTC: inside the persona's hours (19:00 to 23:00)
 const START = Date.UTC(2026, 9, 14, 20);
@@ -30,24 +30,18 @@ const world = (seed: number, { interruptions = true }: { interruptions?: boolean
 	vi.useFakeTimers();
 	vi.setSystemTime(START);
 	const luck: Rng = seededRng(`stress-luck-${seed}`);
-	const persona = personasOf(
-		{
-			test: testPersona({
-				settings: {
-					retries: { attempts: 3, delayMinutes: [1, 1] },
-					// Often enough to meet a few in an hour
-					pacing: { interruptions: interruptions ? { meanMinutes: 12, minutes: [1, 3] } : { meanMinutes: 0 } },
-				},
-			}),
-		},
-		{ prompt: 'A friendly persona.' },
-	)[0]!;
+	const persona = personaOf(testPersona(), { prompt: 'A friendly persona.' });
+	const settings = settingsOf({
+		retries: { attempts: 3, delayMinutes: [1, 1] },
+		// Often enough to meet a few in an hour
+		pacing: { interruptions: interruptions ? { meanMinutes: 12, minutes: [1, 3] } : { meanMinutes: 0 } },
+	});
 	const store = memoryStore();
 	let halted = false;
 	const runtime = { ...createRuntime({ store, dryRun: false, haltFile: 'unused', rng: seededRng(`stress-queue-${seed}`) }), halted: () => halted };
 	vi.spyOn(runtime, 'log').mockImplementation(() => undefined);
-	const brain = createBrain({ persona, identity: TEST_IDENTITY, runtime, llm: { complete: async () => '{"reply": null}' } });
-	const queue = createReplyQueue({ persona, brain, runtime, act: async () => undefined });
+	const brain = createBrain({ persona, settings, identity: TEST_IDENTITY, runtime, llm: { complete: async () => '{"reply": null}' } });
+	const queue = createReplyQueue({ brain, runtime, act: async () => undefined });
 
 	const violations: string[] = [];
 	const composing = new Set<number>();

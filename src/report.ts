@@ -1,28 +1,32 @@
 /**
- * What an app's config check says of one persona: its warnings, what is in effect for it (what it is doing now, today's and
- * tomorrow's agenda, its overrides, models, character, today's mood), and the system prompt of a sample DM turn,
- * built by the brain itself. Nothing is started and nothing touches the network.
+ * What an app's config check says of one persona and of the settings its brain runs with: their warnings, what is in
+ * effect for it (what it is doing now, today's and tomorrow's agenda, its models), and the
+ * system prompt of a sample DM turn, built by the brain itself. Nothing is started and nothing touches the network.
  */
 
 import { createBrain, type Policy } from './brain.js';
 import type { Channel, ChannelId } from './channel.js';
-import type { PersonaConfig } from './config/personas.js';
+import type { Persona, PersonaConfig } from './config/personas.js';
 import { providerSet, type Llm, type LlmMessage } from './llm.js';
-import { diffPaths, valueAt } from './merge.js';
-import { moodOf } from './mood.js';
 import { interruptionsOn } from './pacing.js';
 import { clockText } from './prompts.js';
 import { addDays, agendaOn, isOn, localDateOf, nextSpan, onlineMinutesByWeekday, spanAt, weekdayOf, WEEKDAYS, type DayAgenda, type LocalDate } from './schedule.js';
-import { DAY, MINUTE, type Settings } from './settings.js';
+import { DAY, MINUTE, ownSettings, parseSettings, TASKS, taskModel, type Settings } from './settings.js';
 import { createStore, openDatabase, type Person } from './store.js';
 
 /** A city's zone follows its daylight saving; an abbreviation (EST) or a fixed offset (Etc/GMT+5) never does. UTC is meant as it is. */
 const isCityZone = (timeZone: string) => timeZone === 'UTC' || (timeZone.includes('/') && !timeZone.startsWith('Etc/'));
 
+/** The warning on a reply that may be written again more than once, each time paid for (`pacing.burst.maxRestarts` above 1). */
+const restartsWarning = ({ maxRestarts, restartOnNewMessage }: Settings['pacing']['burst'], before = '') =>
+	restartOnNewMessage && maxRestarts > 1
+		? [`${before}pacing.burst.maxRestarts ${maxRestarts}: each restart drops a draft already paid for, so one reply may cost up to ${maxRestarts + 1} DM turns of tokens`]
+		: [];
+
 /**
  * Warnings about a persona: a time zone that is no city's, a weekday over 20 hours online, under an hour a day on
- * average, more than every other day off, one of its `channels` that no span ever includes, a reply that may be written
- * again more than once (`pacing.burst.maxRestarts`), and no text provider.
+ * average, more than every other day off, one of its `channels` that no span ever includes, and its own
+ * `pacing.burst.maxRestarts` above 1.
  */
 export function personaWarnings(persona: PersonaConfig, channels: readonly ChannelId[]): string[] {
 	const { id, schedule, timezone } = persona;
@@ -31,16 +35,23 @@ export function personaWarnings(persona: PersonaConfig, channels: readonly Chann
 	const average = minutes.reduce((sum, day) => sum + day, 0) / 7 / 60;
 	const skips = [{ where: '', chance: schedule.skipDayChance }, ...Object.entries(schedule.days).map(([key, plan]) => ({ where: ` on ${key}`, chance: plan.skipDayChance ?? 0 }))];
 	const spans = Object.values(schedule.days).flatMap((plan) => [...plan.online, ...plan.breaks]);
+	// Its own burst, read as settings: what it leaves out at its default
+	const ownBurst = persona.pacing?.burst && parseSettings({ pacing: { burst: persona.pacing.burst } }).settings?.pacing.burst;
 	return [
 		...(isCityZone(timezone) ? [] : [`"${id}" has timezone "${timezone}": not a city's zone (an abbreviation or a fixed offset): use the city's own, e.g. America/New_York`]),
 		...(long.length ? [`"${id}" is online over 20 hours a day on ${long.join(', ')}`] : []),
 		...(average < 1 ? [`"${id}" is online about ${average.toFixed(1)} hours a day on average`] : []),
 		...skips.filter(({ chance }) => chance > 0.5).map(({ where, chance }) => `"${id}" takes more than every other day off${where} (skipDayChance ${chance})`),
 		...channels.filter((channel) => !spans.some((span) => isOn(span, channel))).map((channel) => `"${id}" is never online on ${channel}: its DMs there would wait forever`),
-		...(persona.settings.pacing.burst.restartOnNewMessage && persona.settings.pacing.burst.maxRestarts > 1
-			? [`"${id}" has pacing.burst.maxRestarts ${persona.settings.pacing.burst.maxRestarts}: each restart drops a draft already paid for, so one reply may cost up to ${persona.settings.pacing.burst.maxRestarts + 1} DM turns of tokens`]
-			: []),
-		...(providerSet(persona.settings) ? [] : [`"${id}" has no text provider (settings.llm.baseUrl): the app refuses to start without it; a dry run uses canned lines`]),
+		...(ownBurst ? restartsWarning(ownBurst, `"${id}" has its own `) : []),
+	];
+}
+
+/** Warnings about the settings a brain runs with: a reply that may be written again more than once (`pacing.burst.maxRestarts`), and no text provider. */
+export function settingsWarnings(settings: Settings): string[] {
+	return [
+		...restartsWarning(settings.pacing.burst),
+		...(providerSet(settings) ? [] : ['no text provider (models.default.baseUrl): llmsFor refuses to make its model outside a dry run, which uses canned lines']),
 	];
 }
 
@@ -76,42 +87,38 @@ const nowText = (persona: PersonaConfig, now: number) => {
 	return `offline; next: ${next.kind} ${dayKey(localDateOf(next.start, timezone))} ${clockText(next.start, timezone)} (${new Date(next.start).toISOString().slice(11, 16)} UTC)`;
 };
 
-const short = (value: unknown) => JSON.stringify(value) ?? 'undefined';
-
 /**
- * A config check's lines on one persona, after the app's header line: prompt, now (`status` in place of what its hours
- * say, when the app gives one), today, tomorrow, today's interruptions (`pacing.interruptions`), overrides of `shared`,
- * models, character and today's mood.
+ * A config check's lines on one persona, after the app's header line, with the settings its brain runs with (its own
+ * pacing and relationship over `settings`; a ConfigError if they don't fit, as from createBrain): its prompt's length,
+ * now (`status` in place of what its hours say, when the app gives one), today, tomorrow, today's interruptions
+ * (`pacing.interruptions`) and its models.
  */
-export function personaReport(persona: PersonaConfig, { shared, now, status }: { shared: Settings; now: number; status?: string }): string[] {
+export function personaReport(persona: Persona, { settings: given, now, status }: { settings: Settings; now: number; status?: string }): string[] {
+	const settings = ownSettings(persona, given);
 	const today = localDateOf(now, persona.timezone);
 	const tomorrow = addDays(today, 1);
-	const overrides = diffPaths(shared, persona.settings);
-	const { character } = persona;
-	const provider = providerSet(persona.settings);
+	const provider = providerSet(settings);
 	return [
-		`  prompt: ${persona.prompt} (${persona.promptText.length} characters)`,
+		`  prompt: ${persona.prompt.length} characters`,
 		`  now: ${status ?? nowText(persona, now)}`,
 		`  today (${dayKey(today)}, ${persona.timezone}, ${offsetText(now, persona.timezone)}): ${agendaText(agendaOn(persona, today), persona.timezone)}`,
 		`  tomorrow (${dayKey(tomorrow)}): ${agendaText(agendaOn(persona, tomorrow), persona.timezone)}`,
-		`  interruptions today: ${interruptionsOn(persona, today, persona.settings.pacing).map((away) => `${clockText(away.start, persona.timezone)} to ${clockText(away.end, persona.timezone)}`).join(', ') || 'none'}`,
-		`  overrides:${overrides.length ? '' : ' none'}`,
-		...overrides.map((at) => `    ${at}: ${short(valueAt(shared, at.split('.')))} → ${short(valueAt(persona.settings, at.split('.')))}`),
-		`  models: ${Object.entries(persona.settings.models)
-			.filter(([task, model]) => task !== 'vision' || model.model)
-			.map(([task, model]) => `${task} ${(provider && (model.model ?? persona.settings.llm.model)) || '(canned)'}`)
+		`  interruptions today: ${interruptionsOn(persona, today, settings.pacing).map((away) => `${clockText(away.start, persona.timezone)} to ${clockText(away.end, persona.timezone)}`).join(', ') || 'none'}`,
+		`  models: ${TASKS.map((task) => ({ task, used: taskModel(settings, task) }))
+			.filter(({ used }) => !used.off)
+			.map(({ task, used }) => `${task} ${(provider && used.model) || '(canned)'}${provider && used.ownProvider && used.baseUrl ? ` (${new URL(used.baseUrl).host})` : ''}`)
 			.join(', ')}`,
-		`  character: ${character.facts.length} facts, ${character.interests.length} interests, ${character.boundaries.length} boundaries, ${character.moods.length} moods; today: ${moodOf(persona, now) ?? 'no mood'}`,
 	];
 }
 
 /**
- * The system prompt of a sample DM turn on `channel`, with the app's `identity`, `style`, `policy` and `extraLines`: the brain's own
- * assembly, on a throwaway store, with a model that only records what it is sent. Offline at `now`, it is a minute into
- * its next span on `channel.id`, so the lines on its day show.
+ * The system prompt of a sample DM turn on `channel`, with the app's `settings`, `identity`, `style`, `policy` and
+ * `extraLines`: the brain's own assembly, on a throwaway store, with a model that only records what it is sent. Offline
+ * at `now`, it is a minute into its next span on `channel.id`, so the lines on its day show.
  */
 export async function samplePrompt({
 	persona,
+	settings,
 	identity,
 	style,
 	channel,
@@ -119,7 +126,9 @@ export async function samplePrompt({
 	now,
 	policy,
 }: {
-	persona: PersonaConfig;
+	persona: Persona;
+	/** As createBrain's: the settings its brain runs with, its own pacing and relationship over them (a ConfigError if they don't fit). */
+	settings: Settings;
 	/** As createBrain's. */
 	identity?: string;
 	/** As createBrain's. */
@@ -141,7 +150,7 @@ export async function samplePrompt({
 	const db = openDatabase(':memory:');
 	try {
 		const runtime = { store: createStore(db, () => at), now: () => at, rng: () => 0.5 };
-		const brain = createBrain({ persona, identity, style, runtime, llm: capture, policy });
+		const brain = createBrain({ persona, settings, identity, style, runtime, llm: capture, policy });
 		const decision = brain.incoming(channel, 'sample', 'Sam', 'hey');
 		if (decision.kind === 'reply') await brain.compose(decision.person.id, channel, { extraLines });
 	} finally {

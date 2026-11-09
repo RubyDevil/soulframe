@@ -21,7 +21,7 @@ The pieces an adapter uses:
 The client below is a stand-in for whatever SDK your platform has.
 
 ```ts
-import { UnreachableError, watchSpans, type Brain, type Channel, type Conversation, type LinkPreview, type PersonaConfig, type ReplyQueue, type Runtime } from 'soulframe';
+import { UnreachableError, watchSpans, type Brain, type Channel, type Conversation, type LinkPreview, type Persona, type ReplyQueue, type Runtime } from 'soulframe';
 
 /** A stand-in for your platform's SDK. */
 interface ChatClient {
@@ -34,7 +34,7 @@ interface ChatClient {
 
 const CHAT_DM: Channel = { id: 'chat', where: 'Example Chat direct messages', maxLength: 2000 };
 
-export function createChatAdapter({ persona, brain, queue, runtime, client }: { persona: PersonaConfig; brain: Brain; queue: ReplyQueue; runtime: Runtime; client: ChatClient }) {
+export function createChatAdapter({ persona, brain, queue, runtime, client }: { persona: Persona; brain: Brain; queue: ReplyQueue; runtime: Runtime; client: ChatClient }) {
 	const conversationWith = (userId: string): Conversation => ({
 		channel: CHAT_DM,
 		async typing(on) {
@@ -86,15 +86,32 @@ stranger sent, so if `previewLink` does, guard it the way you would guard any se
 (no private addresses, a size and time limit). URLs in the text are found for you; with no card, the persona knows
 only the site's name. In DMs only: for group chats, write what you want the persona to know into `GroupChatLine.text`.
 
-And the wiring, once per persona:
+And the wiring. What every persona shares is built once, from the
+[service settings](./configuration.md#service-settings) (`service` from `parseServiceSettings`): the token meters,
+every persona's model client and the Decisions client (`personas` from `loadPersonas` or `parsePersona`, `settings`
+from `parseSettings`, the same for every persona or its own):
+
+```ts
+const meter = createTokenMeter(runtime.store, service.text.dailyTokens, runtime.now);
+const llms = llmsFor(personas.map(({ id }) => ({ id, settings })), { dryRun: false, apiKeyOf: (name) => process.env[name] ?? '', meter, budget: service.text });
+const decisions = createConfiguredDecisions({
+	settings: service.decisions,
+	apiKeyOf: (name) => process.env[name] ?? '',
+	meter: createTokenMeter(runtime.store, service.decisions.dailyTokens, runtime.now, 'decisionTokens'),
+	now: runtime.now,
+});
+```
+
+Then, once per persona (its `llm` is `llms.get(persona.id)!`):
 
 ```ts
 // What your personas are, how they write, your rules and allowed links, all optional: left out, the identity line is
 // the name alone, there is no style block, no rule is added and every link is kept
 const policy: Policy = { rules: ['Never ask for real names or addresses.'], allowedLinks: ['https://example.com'] };
 const style = 'Write like a person chatting:\n- Short messages, no lists, no markdown.';
-const brain = createBrain({ persona, identity: 'a guide made by Example (https://example.com)', style, runtime, llm, decisions, policy });
-const queue = createReplyQueue({ persona, brain, runtime, act: (personId, action) => chat.act(personId, action) });
+const brain = createBrain({ persona, settings, identity: 'a guide made by Example (https://example.com)', style, runtime, llm, decisions, policy });
+// The queue answers with its brain's persona and settings
+const queue = createReplyQueue({ brain, runtime, act: (personId, action) => chat.act(personId, action) });
 const chat = createChatAdapter({ persona, brain, queue, runtime, client });
 await chat.start();      // every channel of the persona
 queue.start();           // once all of them are up
@@ -180,11 +197,11 @@ described above: one `typing(true)` per message, the typing time, the send, one 
   are done. That reading happens without `markRead` too. A reply halted or cancelled before then types nothing. A
   rejection counts as a failed delivery, as for `typing`: swallow it if a missing receipt doesn't matter. A turn the
   persona leaves on read shows their messages read too, as a person who read them and chose not to answer.
-- **Thinking pauses** are the persona's setting, not the adapter's (`pacing.thinkingPauses`, off by default): a long
+- **Thinking pauses** are the brain's setting, not the adapter's (`pacing.thinkingPauses`, off by default): a long
   message may stop typing a moment (`typing(false)`) and start again (`typing(true)`), as when someone stops to think.
   Your `typing` sees nothing new: stretches of typing, each ended by one `typing(false)`.
 
-How fast each persona types is its own `pacing` too (`typingCharsPerSecond`, `typingDurationSeconds`; see
+How fast each persona types is its brain's `pacing` too (`typingCharsPerSecond`, `typingDurationSeconds`; see
 [configuration](./configuration.md#pacing)). In a dry run the queue makes the same calls and waits (`markRead` and
 `typing` included) and only logs in place of `send`: check `runtime.dryRun` in them if a rehearsal must not show
 anything on the platform.

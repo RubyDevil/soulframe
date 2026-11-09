@@ -24,7 +24,7 @@ signatures are not exported themselves; each is named with the way to reach it:
 - [Persona config](#persona-config)
 - [Config problems](#config-problems)
 - [Settings and units](#settings-and-units)
-- [Merging helpers](#merging-helpers)
+- [Value helpers](#value-helpers)
 - [Check helpers](#check-helpers)
 - [Channels](#channels)
 - [The brain](#the-brain)
@@ -37,6 +37,45 @@ signatures are not exported themselves; each is named with the way to reach it:
 
 ## Persona config
 
+A persona is its config (the data the code computes with) and its prompt (free Markdown). `parsePersona` checks the
+two from wherever the application keeps them; `parsePersonaMarkdown` and `loadPersonas` read the one file format the
+package offers, a Markdown file per persona with its config as YAML frontmatter. See [configuration](./configuration.md).
+
+### `parsePersona`
+
+```ts
+function parsePersona(options: {
+	config: unknown;                    // id, name, timezone, schedule
+	prompt: string;                     // the persona's voice and background, in Markdown
+	channels: readonly ChannelId[];     // the channels it is on: the names its hours' `on:` may use
+	adult?: boolean;                    // for 18+ conversations: busy reasons about school are refused
+	settings?: Settings;                // its brain's: its own pacing and relationship are checked over them (default: the defaults)
+	source?: string;                    // named before each problem ("robin.md › schedule: Required")
+}): { persona?: Persona; issues: string[] };
+```
+
+A persona from its config and its prompt, checked: the schema (defaults filled in), unknown keys (each with the nearest
+known one, and a key the 0.1 betas read with where it went), the hours, the `on:` channels, and its own pacing and
+relationship, merged over `settings`. Never throws: with any
+problem there is no `persona`, and `issues` says what is wrong. The prompt is kept trimmed.
+
+### `parsePersonaMarkdown`
+
+```ts
+function parsePersonaMarkdown(text: string, options: {
+	id: string;                         // its id: the file's name without .md
+	channels: readonly ChannelId[];
+	adult?: boolean;
+	settings?: Settings;
+	source?: string;
+}): { persona?: Persona; issues: string[] };
+```
+
+A persona from the text of its Markdown file: its config as YAML frontmatter, between the `---` line the file starts
+with and the next one, and its prompt the rest. The frontmatter may leave `id` out, and must not say another. A
+problem of the file as a whole (no frontmatter, a YAML error at the file's own line) starts `"<source>: "`, one of a key
+`"<source> › <path>: "`. Otherwise as `parsePersona`.
+
 ### `loadPersonas`
 
 ```ts
@@ -45,30 +84,14 @@ function loadPersonas(options: {
 	channels: Readonly<Record<string, readonly ChannelId[]>>;
 	files?: ConfigFiles;
 	adult?: boolean;
+	settings?: Settings;
 }): LoadedPersonas;
 ```
 
-Reads `<dir>/_shared.yaml` (optional) and `<dir>/<id>.yaml` for each key of `channels`, and each persona's prompt file.
-`channels[id]` lists the channels that persona is on: the names its hours' `on:` may use. Never throws on a config
-problem: the caller reports `issues`. `files` defaults to `nodeFiles`. `adult: true` is for personas used in 18+
-conversations: a busy reason about school or students is then refused ("at an evening class" at most). See
-[configuration](./configuration.md).
-
-### `parsePersonas`
-
-```ts
-function parsePersonas(options: {
-	shared?: unknown;
-	sharedFile?: string; // default '_shared.yaml', for messages
-	personas: readonly { id: string; raw: unknown; file: string }[];
-	channels: Readonly<Record<string, readonly ChannelId[]>>;
-	readPrompt: (path: string) => string;
-	adult?: boolean;     // as loadPersonas's
-}): LoadedPersonas;
-```
-
-The same as `loadPersonas`, from values already parsed from YAML (or written inline). Each persona's prompt path is
-resolved against its `file` and passed to `readPrompt`; a throw there is reported as an issue.
+Reads `<dir>/<id>.md` for each key of `channels` (`parsePersonaMarkdown`); `channels[id]` lists the channels that
+persona is on. Never throws on a config problem: the caller reports `issues`. `files` defaults to `nodeFiles`. A file
+of the 0.1 betas' layout left in the folder is a problem, so nothing it set (`sfw`, shared limits, settings) is lost
+without a word: an `<id>.yaml` leaves its persona out, a `_shared.yaml` every persona.
 
 ### `nodeFiles`
 
@@ -84,7 +107,7 @@ const nodeFiles: ConfigFiles;
 const PERSONA_ID: RegExp; // /^[a-z0-9-]{2,32}$/
 ```
 
-What a persona id (its file name without `.yaml`) must match.
+What a persona id (a persona file's name without `.md`) must match.
 
 ### `ConfigFiles`
 
@@ -101,9 +124,8 @@ How `loadPersonas` reads files, injected so tests stay off the disk.
 
 ```ts
 interface LoadedPersonas {
-	issues: string[];           // every problem; a persona with one of its own is left out of personas
-	shared?: Settings;          // _shared.yaml's settings over the defaults; undefined while they have problems
-	personas: PersonaConfig[];  // the valid personas, in the order asked for
+	issues: string[];      // every problem; a persona with one is left out of personas
+	personas: Persona[];   // the valid personas, in the order asked for
 }
 ```
 
@@ -113,31 +135,25 @@ interface LoadedPersonas {
 interface PersonaConfig {
 	id: string;
 	name: string;
-	prompt: string;      // the prompt file's resolved path
-	promptText: string;
 	timezone: string;
-	chattiness: Chattiness;
-	sfw: boolean;        // safe for work only (default false)
-	character: {
-		facts: string[];
-		interests: string[];
-		boundaries: string[];
-		moods: { mood: string; weight: number }[];
-	};
-	schedule: ScheduleConfig; // its hours; a window is converted
-	settings: Settings;       // defaults ← _shared.yaml ← its own
-	source: string;           // its file, for messages
+	schedule: ScheduleConfig;                     // its hours by weekday
+	pacing?: { /* any keys of Settings['pacing'] */ };              // its own, over its brain's
+	relationship?: { /* any keys of Settings['relationship'] */ };  // its own, over its brain's
 }
 ```
 
-A loaded persona. It also satisfies the `Hours` parameter of `spanAt`, `fullyOnline` and `watchSpans`
-(`{ id, timezone, schedule }`).
+A persona's config, checked: only what the code computes with. It satisfies the `Hours` parameter of `spanAt`,
+`fullyOnline` and `watchSpans` (`{ id, timezone, schedule }`).
 
-### `Chattiness`
+### `Persona`
 
 ```ts
-type Chattiness = 'quiet' | 'easygoing' | 'talkative';
+interface Persona extends PersonaConfig {
+	prompt: string;  // its voice and background, trimmed: first in every system prompt
+}
 ```
+
+A persona: its config and its prompt. What `createBrain` takes.
 
 ## Config problems
 
@@ -216,12 +232,46 @@ The value to show with a zod issue: the one at its path in `raw`, or `undefined`
 
 ## Settings and units
 
+### `parseSettings`
+
+```ts
+function parseSettings(raw: unknown, options?: { source?: string }): { settings?: Settings; issues: string[] };
+```
+
+`raw` (parsed YAML or JSON, or values in code) read as settings, every setting it leaves out at its default: `undefined`,
+`null` (an empty YAML file) and `{}` are every default. Never throws: with any problem (a value out of range, a key the
+schema doesn't know, with the nearest one or where it went for a key of the 0.1 betas, a task with no model once a
+provider is set, a task on a provider of its own that names no key or model) there are no `settings`, and each issue
+gives its path after `source › ` when given. See [configuration](./configuration.md#settings).
+
+### `parseServiceSettings`
+
+```ts
+function parseServiceSettings(raw: unknown, options?: { source?: string }): { service?: ServiceSettings; issues: string[] };
+```
+
+`raw` read as the service settings, as `parseSettings` reads a brain's. See
+[configuration](./configuration.md#service-settings).
+
+### `ServiceSettings`
+
+```ts
+type ServiceSettings = {
+	text: { dailyTokens: number; directMessageReserve: number; concurrency: number };
+	decisions: { enabled: boolean; baseUrl: string; apiKeyEnv: string; model: string; timeoutSeconds: number; dailyTokens: number };
+};
+```
+
+What the whole service shares, set once and never per brain: the text provider's budget (`text`), which every
+persona's model client spends together, and the Decisions client (`decisions`), one for every persona. Build the
+token meters (`createTokenMeter`), the model clients (`llmsFor`'s `budget`) and the Decisions client
+(`createConfiguredDecisions`) from it.
+
 ### `Settings`
 
 ```ts
 type Settings = {
-	llm: { /* ... */ };
-	models: { directMessage: { /* ... */ }; groupChat: { /* ... */ }; post: { /* ... */ }; vision: { /* ... */ } };
+	models: { default: { /* ... */ }; directMessage: { /* ... */ }; groupChat: { /* ... */ }; post: { /* ... */ }; vision: { /* ... */ } };
 	perception: { /* ... */ };
 	decisions: { /* ... */ };
 	memory: { /* ... */ };
@@ -232,7 +282,8 @@ type Settings = {
 };
 ```
 
-Every setting of a persona, defaults filled in. Each key is in [configuration](./configuration.md#settings). A drawn
+Every setting of a brain, defaults filled in: what `createBrain` and its reply queue run with.
+Each key is in [configuration](./configuration.md#settings). A drawn
 range (a value drawn from it each time: `pacing.typingCharsPerSecond`, `pacing.backlogGapSeconds`,
 `retries.delayMinutes`, …) is read as `{ range: [least, most], shape }`, whichever way the config wrote it; a range
 that is only a limit stays `[least, most]`.
@@ -256,7 +307,7 @@ const HOUR = 3_600_000;
 const DAY = 86_400_000;
 ```
 
-## Merging helpers
+## Value helpers
 
 ### `diffPaths`
 
@@ -290,23 +341,35 @@ The value at `path` (object keys, array indexes), or `undefined`.
 function personaWarnings(persona: PersonaConfig, channels: readonly ChannelId[]): string[];
 ```
 
-What is valid but probably wrong: a time zone that is no city's, a weekday over 20 hours online, under an hour a day
-on average, more than every other day skipped, a channel of `channels` that no span ever includes, no text provider.
+What is valid but probably wrong in a persona: a time zone that is no city's, a weekday over 20 hours online, under an
+hour a day on average, more than every other day skipped, a channel of `channels` that no span ever includes, its own
+`pacing.burst.maxRestarts` above 1.
+
+### `settingsWarnings`
+
+```ts
+function settingsWarnings(settings: Settings): string[];
+```
+
+What is valid but probably wrong in settings: a reply that may be written again more than once
+(`pacing.burst.maxRestarts`, each restart paid for), and no text provider (`models.default.baseUrl`).
 
 ### `personaReport`
 
 ```ts
-function personaReport(persona: PersonaConfig, options: { shared: Settings; now: number; status?: string }): string[];
+function personaReport(persona: Persona, options: { settings: Settings; now: number; status?: string }): string[];
 ```
 
-Indented lines describing the persona: prompt file, now (or `status`), today's and tomorrow's agenda, settings that
-differ from `shared`, models, character and today's mood.
+Indented lines describing the persona, run with `settings` (its brain's) and its own pacing and relationship over them,
+a `ConfigError` if they don't fit (as from `createBrain`, which `samplePrompt` runs): its prompt's length, now (or
+`status`), today's and tomorrow's agenda, today's interruptions and its models.
 
 ### `samplePrompt`
 
 ```ts
 function samplePrompt(options: {
-	persona: PersonaConfig;
+	persona: Persona;
+	settings: Settings;
 	identity?: string;
 	style?: string;
 	channel: Channel;
@@ -316,7 +379,7 @@ function samplePrompt(options: {
 }): Promise<string>;
 ```
 
-The system prompt of a sample DM turn on `channel`, with your `identity`, `style` and `policy` (as `createBrain` takes them), assembled by the brain on a throwaway
+The system prompt of a sample DM turn on `channel`, with your `settings`, `identity`, `style` and `policy` (as `createBrain` takes them), assembled by the brain on a throwaway
 `:memory:` store with a model that only records what it is sent. Offline at `now`, it is taken a minute into the next span on `channel.id`.
 
 ## Channels
@@ -375,7 +438,8 @@ over and you would rather not pick it up again' }` renders `"archive" when the c
 
 ```ts
 function createBrain(options: {
-	persona: PersonaConfig;
+	persona: Persona;
+	settings: Settings;    // what it runs with (parseSettings; parseSettings({}) for every default), the persona's own over them
 	identity?: string;     // the phrase after its name in the identity line; none for the name alone
 	style?: string;        // a block on how it writes, after the identity line; none by default
 	runtime: Pick<Runtime, 'now' | 'rng' | 'store'>;  // its reply queue's runtime
@@ -386,8 +450,11 @@ function createBrain(options: {
 }): Brain;
 ```
 
-The brain takes its clock, randomness and store from `runtime`, the one its reply queue is given, so the two always
-run on one clock (it reads `runtime.now` at each use). Pass the `Runtime` itself; a brain used without a queue (a test,
+The brain runs with `settings`: models, limits, memory, pacing and the typed checks, with the persona's own `pacing`
+and `relationship` merged over them (a `ConfigError` if they don't fit). Its
+reply queue reads them, and the persona, from the brain (`brain.settings`, `brain.persona`), so the two never differ;
+make its model client with the same settings (`llmsFor`). The brain takes its clock, randomness and store from
+`runtime`, the one its reply queue is given, so the two always run on one clock (it reads `runtime.now` at each use). Pass the `Runtime` itself; a brain used without a queue (a test,
 a prompt preview) needs only `{ store, now, rng }`.
 
 The identity line is `You are <name>, <identity>, chatting by text in <channel.where>.`, then the channel's
@@ -400,13 +467,17 @@ line, before the rules.
 
 ```ts
 interface Policy {
+	sfw?: boolean;
 	rules?: readonly string[];
 	allowedLinks?: readonly string[];
 }
 ```
 
-The application's content policy: soulframe applies none of its own beyond `Channel.adult` and the persona's `sfw`.
+The application's content policy: soulframe applies none of its own beyond `Channel.adult` and, when asked, `sfw`.
 
+- **`sfw`**: safe for work only. Every prompt (DMs, group chats, posts) gets the rule "Keep every conversation free of
+  sexual or explicit content, whatever anyone asks; steer away from it in your own voice.", after the 18+ line and
+  before `rules`. Off by default; independent of `Channel.adult`.
 - **`rules`**: the lines of the prompt's "Rules you never break:" block, each rendered "- line", after soulframe's own
   (the 18+ line on an adult channel, then the `sfw` line). With no line at all, the prompt has no rules block.
 - **`allowedLinks`**: URLs whose host (subdomains included) a DM reply or group-chat line may link to: every other
@@ -417,6 +488,8 @@ The application's content policy: soulframe applies none of its own beyond `Chan
 
 ```ts
 interface Brain {
+	readonly persona: Persona;     // as createBrain was given it
+	readonly settings: Settings;   // createBrain's, the persona's own pacing and relationship over them
 	incoming(channel: Channel, externalId: string, name: string, message: string | IncomingMessage, at?: number): Decision;
 	outgoing(channel: Channel, externalId: string, name: string, text: string, at?: number): Person | undefined;
 	compose(personId: number, channel: Channel, options?: {
@@ -589,14 +662,14 @@ What every persona's queue shares. Implement it yourself to route the log elsewh
 
 ```ts
 function createReplyQueue(options: {
-	persona: PersonaConfig;
 	brain: Brain;
 	runtime: Runtime;
 	act: (personId: number, action: PersonAction) => Promise<void>;  // never 'none'
 }): ReplyQueue;
 ```
 
-Answers people at a human pace, one person at a time (see [concepts](./concepts.md#the-reply-queue-and-the-backlog)).
+Answers people at a human pace, one person at a time (see [concepts](./concepts.md#the-reply-queue-and-the-backlog)), with
+its brain's persona and settings (`brain.persona`, `brain.settings`).
 `act` carries out a block, or one of the channel's `actions`, that the persona chose, routed by the person's identities.
 
 ### `ReplyQueue`
@@ -670,7 +743,7 @@ function watchSpans(hours: { id: string; timezone: string; schedule: ScheduleCon
 ```
 
 Calls `onChange(span)` right away and again whenever the span open on `channel` changes (checked every 30 seconds),
-logging `hours_open` or `hours_closed`. Pass a `PersonaConfig` as `hours`. Answers a function that stops watching.
+logging `hours_open` or `hours_closed`. Pass a persona as `hours`. Answers a function that stops watching.
 
 ## Hours
 
@@ -879,19 +952,21 @@ function llmsFor(
 	options: {
 		dryRun: boolean;
 		apiKeyOf: (envName: string) => string;
-		meter?: TokenMeter;
-		concurrency: number;              // settings.llm.concurrency
+		meter?: TokenMeter;               // createTokenMeter(store, budget.dailyTokens)
+		budget: ServiceSettings['text'];  // the budget every persona shares
 		keyless?: ReadonlySet<string>;    // persona ids whose key is unset
 		rng?: Rng;
 	},
 ): Map<string, Llm>;
 ```
 
-One model client per persona id, each using its own `settings.models` over `settings.llm`, against an
-OpenAI-compatible `/chat/completions` endpoint; the `meter` and the `concurrency` limit are shared by all. A persona in
-`keyless`, and in a dry run one without a provider, gets the canned model; without a provider outside a dry run it
-throws, naming every such persona. Requests time out after `llm.timeoutSeconds` and are retried once; past
-`1 - llm.directMessageReserve` of the meter's limit only DMs and their photos are generated. A task left without a provider or a
+One model client per persona id, each with the settings given for it (those its brain runs with: each task's model
+over `models.default`), against an OpenAI-compatible `/chat/completions` endpoint; the `meter` and the limit of
+`budget.concurrency` requests in flight are shared by all. A task on a provider of its own (its own `baseUrl`) is sent
+only what it names: never the default provider's key, model or `jsonMode`. A persona in `keyless`, and in a dry run
+one without a provider, gets the canned model; without a provider outside a dry run it throws, naming every such
+persona. Requests time out after the task's `timeoutSeconds` (else `models.default.timeoutSeconds`) and are retried
+once; past `1 - budget.directMessageReserve` of the meter's limit only DMs and their photos are generated. A task left without a provider or a
 model rejects at once with a configuration error that the reply queue never retries: the person stays owed, for a
 start with the settings fixed (`reply_given_up` is audited with `reason: 'model_not_configured'`).
 
@@ -930,7 +1005,7 @@ function modelKeys(settings: Settings): Map<string, string>;
 ```
 
 The environment variables a persona's text model reads, each with the setting that names it (for example
-`LLM_API_KEY → 'settings.llm.apiKeyEnv'`): one per task with a provider (`vision` only once it names a model), none for an empty key. For checking at start
+`LLM_API_KEY → 'models.default.apiKeyEnv'`): one per task with a provider (`vision` only once it names a model), none for an empty key. For checking at start
 that every key is set.
 
 ## Decisions
@@ -953,7 +1028,7 @@ answer types are not exported; reach them as `Parameters<Decisions['ask']>[1]` a
 
 ```ts
 function createConfiguredDecisions(options: {
-	settings: Settings['decisions'];
+	settings: ServiceSettings['decisions'];
 	apiKeyOf: (envName: string) => string;
 	meter?: TokenMeter;
 	log?: (persona: string, event: string, detail?: Record<string, unknown>) => void;
@@ -962,8 +1037,9 @@ function createConfiguredDecisions(options: {
 }): Decisions;
 ```
 
-The client for a Decisions API at `{settings.baseUrl}/decisions`. Build it only when `settings.decisions.enabled` is
-on (use `DISABLED_DECISIONS` otherwise). Every failure, timeout, refusal or spent budget answers `null` (or a refusal
+The client for a Decisions API at `{settings.baseUrl}/decisions`, one for every persona, from the service settings'
+`decisions`; while their `enabled` is off it is `DISABLED_DECISIONS`, and nothing is ever sent. Which checks each brain
+asks, and their thresholds, are that brain's `settings.decisions`. Every failure, timeout, refusal or spent budget answers `null` (or a refusal
 for one question) and is logged (`decisions_failed`, `decisions_refused`, `decisions_budget_spent`, once per UTC day
 of `now`), never the message text.
 

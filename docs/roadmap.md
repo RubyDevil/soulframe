@@ -7,13 +7,18 @@ Where the beta stands and what is planned before 1.0.
 - **No stability promise.** The exports, the persona config and the database layout may change between betas, and
   there is no migration policy yet.
 - **One kind of text provider.** Text generation speaks the OpenAI-compatible `/chat/completions` API only.
-- **A small default budget.** `llm.dailyTokens` defaults to 200,000 tokens a day for every persona together, about
-  55 DM turns at the shipped prompt sizes: size it to your fleet ([configuration](./configuration.md#llm)).
+- **A small default budget.** The service settings' `text.dailyTokens` defaults to 200,000 tokens a day for every
+  persona together, about 55 DM turns at the shipped prompt sizes: size it to your fleet
+  ([configuration](./configuration.md#text)).
 - **No adapters.** You write the channel adapters ([guide](./channels.md)).
 - **Test helpers and model error classes are not exported** (a scripted Decisions client, a seeded random source,
   the errors a custom model client needs to signal a spent budget or an outage).
 
 ## Before 1.0
+
+- **How readily it speaks in group chats, per persona.** A persona's config sets its own `pacing` and
+  `relationship`; `decisions.groupChatGate.chimeInAt` may join them, so a quiet persona and a talkative one can share
+  their settings.
 
 - Export the test helpers (a scripted Decisions client, a seeded random source) and the error classes a custom model
   client needs to signal a spent budget or an outage.
@@ -22,6 +27,14 @@ Where the beta stands and what is planned before 1.0.
 
 ## Planned: realism
 
+- **A mood that follows what happens, shared by everyone it talks with.** A persona has no mood today. Planned: one
+  mood per persona, not per person, kept in the store and moved by the code from what it lives through: its
+  conversations (how much they mattered and how they went: a warm one, a fight, bad news someone shared), its day (a
+  long shift, an evening it skipped) and the time since, drifting back to its own baseline while nothing happens. So a
+  hard conversation can leave it a little flat with the next person, and a good one carries over. The time lines of DM
+  turns and group-chat lines say how it feels now and, roughly, why ("you're still a bit shaken after an earlier
+  conversation"), never naming the other person or repeating what they said. How fast it moves and fades are
+  settings; off by default.
 - **Opening a link later.** Today a persona only ever knows a link's preview. A durable "I'll look at it" that comes
   back once it has had the time, with a turn of its own.
 - **Interruptions with a reason, told to the model.** Each interruption gets a reason fitting how long it lasts

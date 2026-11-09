@@ -9,7 +9,6 @@ import {
 	fullyOnline,
 	nextSpan,
 	onlineMinutesByWeekday,
-	scheduleOfWindow,
 	situationAt,
 	spanAt,
 	zonedToUtc,
@@ -17,6 +16,7 @@ import {
 	type LocalDate,
 } from '../src/schedule.js';
 import { MINUTE } from '../src/settings.js';
+import { everyDay } from './fixtures.js';
 
 const TZ = 'America/Toronto';
 
@@ -49,28 +49,30 @@ const LEGACY_DATES = [
 ];
 /**
  * Every window configured when the agenda replaced windowOn, with the instants windowOn gave them (captured then): camille to
- * theo and aisha as their persona files had them (most use schedule: now), and the test fixtures' (test/fixtures.ts testPersona and the windows in the other tests).
+ * theo and aisha as their persona files had them (most use schedule: now), and the test fixtures' (test/fixtures.ts testPersona
+ * and the daily hours in the other tests). The `window:` form is gone; the same hours as a schedule (`daily`, one online block
+ * every day) still draw them.
  */
 const LEGACY = [
-	{ id: 'camille', timezone: 'America/Toronto', window: W(['21:00', '21:45'], ['01:00', '01:45'], 0.15), pins: [['2026-01-16T02:30Z', '2026-01-16T06:42Z'], ['2026-03-09T01:17Z', '2026-03-09T05:06Z'], ['2026-03-30T01:15Z', '2026-03-30T05:10Z'], ['2026-07-05T01:30Z', '2026-07-05T05:05Z'], ['2026-11-02T02:09Z', '2026-11-02T06:30Z']] },
-	{ id: 'jade', timezone: 'America/Los_Angeles', window: W(['19:45', '20:30'], ['00:15', '01:00'], 0.1), pins: [['2026-01-16T03:52Z', '2026-01-16T08:35Z'], ['2026-03-09T02:55Z', '2026-03-09T07:19Z'], ['2026-03-30T03:15Z', '2026-03-30T07:34Z'], ['2026-07-05T03:07Z', '2026-07-05T07:26Z'], ['2026-11-02T04:28Z', '2026-11-02T08:30Z']] },
-	{ id: 'marcus', timezone: 'America/New_York', window: W(['18:30', '19:15'], ['22:30', '23:15'], 0.1), pins: [['2026-01-15T23:31Z', '2026-01-16T03:41Z'], ['2026-03-08T22:55Z', '2026-03-09T02:30Z'], ['2026-03-29T22:35Z', '2026-03-30T02:36Z'], ['2026-07-04T23:06Z', '2026-07-05T02:43Z'], ['2026-11-01T23:52Z', '2026-11-02T03:45Z']] },
-	{ id: 'nadia', timezone: 'America/Chicago', window: W(['22:45', '23:30'], ['04:00', '05:00'], 0.3), pins: [['2026-01-16T05:15Z', '2026-01-16T10:12Z'], ['2026-03-09T03:57Z', '2026-03-09T09:06Z'], ['2026-03-30T04:24Z', '2026-03-30T09:40Z'], null, null] },
-	{ id: 'rin', timezone: 'America/Denver', window: W(['20:00', '20:45'], ['02:30', '03:15'], 0.05), pins: [['2026-01-16T03:17Z', '2026-01-16T09:32Z'], ['2026-03-09T02:24Z', '2026-03-09T09:05Z'], ['2026-03-30T02:21Z', '2026-03-30T08:48Z'], ['2026-07-05T02:07Z', '2026-07-05T08:58Z'], ['2026-11-02T03:25Z', '2026-11-02T10:08Z']] },
-	{ id: 'theo', timezone: 'Europe/London', window: W(['19:45', '20:30'], ['00:00', '00:45'], 0.1), pins: [['2026-01-15T19:59Z', '2026-01-16T00:31Z'], ['2026-03-08T19:46Z', '2026-03-09T00:20Z'], ['2026-03-29T18:54Z', '2026-03-29T23:00Z'], ['2026-07-04T19:12Z', '2026-07-04T23:23Z'], ['2026-11-01T20:10Z', '2026-11-02T00:03Z']] },
-	{ id: 'aisha', timezone: 'America/New_York', window: W(['19:00', '20:00'], ['01:00', '02:00']), pins: [['2026-01-16T00:57Z', '2026-01-16T06:41Z'], ['2026-03-08T23:21Z', '2026-03-09T05:30Z'], ['2026-03-29T23:26Z', '2026-03-30T05:29Z'], ['2026-07-04T23:10Z', '2026-07-05T05:55Z'], ['2026-11-02T00:38Z', '2026-11-02T06:32Z']] },
-	{ id: 'aisha', timezone: 'America/New_York', window: W(['19:00', '21:00'], ['01:00', '03:00']), pins: [['2026-01-16T01:55Z', '2026-01-16T07:23Z'], ['2026-03-08T23:42Z', '2026-03-09T06:01Z'], ['2026-03-29T23:51Z', '2026-03-30T05:58Z'], ['2026-07-04T23:21Z', '2026-07-05T06:50Z'], ['2026-11-02T01:17Z', '2026-11-02T07:04Z']] },
-	{ id: 'robin', timezone: TZ, window: W(['18:00', '20:00'], ['00:30', '02:00']), pins: [['2026-01-15T23:03Z', '2026-01-16T05:58Z'], ['2026-03-08T23:03Z', '2026-03-09T05:54Z'], ['2026-03-29T22:37Z', '2026-03-30T05:28Z'], ['2026-07-04T22:49Z', '2026-07-05T05:26Z'], ['2026-11-01T23:10Z', '2026-11-02T05:36Z']] },
-	{ id: 'sky', timezone: TZ, window: W(['18:00', '20:00'], ['00:30', '02:00']), pins: [['2026-01-16T00:20Z', '2026-01-16T06:06Z'], ['2026-03-08T22:58Z', '2026-03-09T05:16Z'], ['2026-03-29T23:56Z', '2026-03-30T04:44Z'], ['2026-07-04T22:25Z', '2026-07-05T05:12Z'], ['2026-11-02T00:17Z', '2026-11-02T05:38Z']] },
-	{ id: 'robin', timezone: TZ, window: W(['20:00', '20:00'], ['02:00', '02:00']), pins: [['2026-01-16T01:00Z', '2026-01-16T07:00Z'], ['2026-03-09T00:00Z', '2026-03-09T06:00Z'], ['2026-03-30T00:00Z', '2026-03-30T06:00Z'], ['2026-07-05T00:00Z', '2026-07-05T06:00Z'], ['2026-11-02T01:00Z', '2026-11-02T07:00Z']] },
-	{ id: 'test', timezone: 'UTC', window: W(['19:00', '19:00'], ['23:00', '23:00']), pins: [['2026-01-15T19:00Z', '2026-01-15T23:00Z'], ['2026-03-08T19:00Z', '2026-03-08T23:00Z'], ['2026-03-29T19:00Z', '2026-03-29T23:00Z'], ['2026-07-04T19:00Z', '2026-07-04T23:00Z'], ['2026-11-01T19:00Z', '2026-11-01T23:00Z']] },
-	{ id: 'robin', timezone: 'UTC', window: W(['08:00', '08:00'], ['23:00', '23:00']), pins: [['2026-01-15T08:00Z', '2026-01-15T23:00Z'], ['2026-03-08T08:00Z', '2026-03-08T23:00Z'], ['2026-03-29T08:00Z', '2026-03-29T23:00Z'], ['2026-07-04T08:00Z', '2026-07-04T23:00Z'], ['2026-11-01T08:00Z', '2026-11-01T23:00Z']] },
+	{ id: 'camille', timezone: 'America/Toronto', daily: W(['21:00', '21:45'], ['01:00', '01:45'], 0.15), pins: [['2026-01-16T02:30Z', '2026-01-16T06:42Z'], ['2026-03-09T01:17Z', '2026-03-09T05:06Z'], ['2026-03-30T01:15Z', '2026-03-30T05:10Z'], ['2026-07-05T01:30Z', '2026-07-05T05:05Z'], ['2026-11-02T02:09Z', '2026-11-02T06:30Z']] },
+	{ id: 'jade', timezone: 'America/Los_Angeles', daily: W(['19:45', '20:30'], ['00:15', '01:00'], 0.1), pins: [['2026-01-16T03:52Z', '2026-01-16T08:35Z'], ['2026-03-09T02:55Z', '2026-03-09T07:19Z'], ['2026-03-30T03:15Z', '2026-03-30T07:34Z'], ['2026-07-05T03:07Z', '2026-07-05T07:26Z'], ['2026-11-02T04:28Z', '2026-11-02T08:30Z']] },
+	{ id: 'marcus', timezone: 'America/New_York', daily: W(['18:30', '19:15'], ['22:30', '23:15'], 0.1), pins: [['2026-01-15T23:31Z', '2026-01-16T03:41Z'], ['2026-03-08T22:55Z', '2026-03-09T02:30Z'], ['2026-03-29T22:35Z', '2026-03-30T02:36Z'], ['2026-07-04T23:06Z', '2026-07-05T02:43Z'], ['2026-11-01T23:52Z', '2026-11-02T03:45Z']] },
+	{ id: 'nadia', timezone: 'America/Chicago', daily: W(['22:45', '23:30'], ['04:00', '05:00'], 0.3), pins: [['2026-01-16T05:15Z', '2026-01-16T10:12Z'], ['2026-03-09T03:57Z', '2026-03-09T09:06Z'], ['2026-03-30T04:24Z', '2026-03-30T09:40Z'], null, null] },
+	{ id: 'rin', timezone: 'America/Denver', daily: W(['20:00', '20:45'], ['02:30', '03:15'], 0.05), pins: [['2026-01-16T03:17Z', '2026-01-16T09:32Z'], ['2026-03-09T02:24Z', '2026-03-09T09:05Z'], ['2026-03-30T02:21Z', '2026-03-30T08:48Z'], ['2026-07-05T02:07Z', '2026-07-05T08:58Z'], ['2026-11-02T03:25Z', '2026-11-02T10:08Z']] },
+	{ id: 'theo', timezone: 'Europe/London', daily: W(['19:45', '20:30'], ['00:00', '00:45'], 0.1), pins: [['2026-01-15T19:59Z', '2026-01-16T00:31Z'], ['2026-03-08T19:46Z', '2026-03-09T00:20Z'], ['2026-03-29T18:54Z', '2026-03-29T23:00Z'], ['2026-07-04T19:12Z', '2026-07-04T23:23Z'], ['2026-11-01T20:10Z', '2026-11-02T00:03Z']] },
+	{ id: 'aisha', timezone: 'America/New_York', daily: W(['19:00', '20:00'], ['01:00', '02:00']), pins: [['2026-01-16T00:57Z', '2026-01-16T06:41Z'], ['2026-03-08T23:21Z', '2026-03-09T05:30Z'], ['2026-03-29T23:26Z', '2026-03-30T05:29Z'], ['2026-07-04T23:10Z', '2026-07-05T05:55Z'], ['2026-11-02T00:38Z', '2026-11-02T06:32Z']] },
+	{ id: 'aisha', timezone: 'America/New_York', daily: W(['19:00', '21:00'], ['01:00', '03:00']), pins: [['2026-01-16T01:55Z', '2026-01-16T07:23Z'], ['2026-03-08T23:42Z', '2026-03-09T06:01Z'], ['2026-03-29T23:51Z', '2026-03-30T05:58Z'], ['2026-07-04T23:21Z', '2026-07-05T06:50Z'], ['2026-11-02T01:17Z', '2026-11-02T07:04Z']] },
+	{ id: 'robin', timezone: TZ, daily: W(['18:00', '20:00'], ['00:30', '02:00']), pins: [['2026-01-15T23:03Z', '2026-01-16T05:58Z'], ['2026-03-08T23:03Z', '2026-03-09T05:54Z'], ['2026-03-29T22:37Z', '2026-03-30T05:28Z'], ['2026-07-04T22:49Z', '2026-07-05T05:26Z'], ['2026-11-01T23:10Z', '2026-11-02T05:36Z']] },
+	{ id: 'sky', timezone: TZ, daily: W(['18:00', '20:00'], ['00:30', '02:00']), pins: [['2026-01-16T00:20Z', '2026-01-16T06:06Z'], ['2026-03-08T22:58Z', '2026-03-09T05:16Z'], ['2026-03-29T23:56Z', '2026-03-30T04:44Z'], ['2026-07-04T22:25Z', '2026-07-05T05:12Z'], ['2026-11-02T00:17Z', '2026-11-02T05:38Z']] },
+	{ id: 'robin', timezone: TZ, daily: W(['20:00', '20:00'], ['02:00', '02:00']), pins: [['2026-01-16T01:00Z', '2026-01-16T07:00Z'], ['2026-03-09T00:00Z', '2026-03-09T06:00Z'], ['2026-03-30T00:00Z', '2026-03-30T06:00Z'], ['2026-07-05T00:00Z', '2026-07-05T06:00Z'], ['2026-11-02T01:00Z', '2026-11-02T07:00Z']] },
+	{ id: 'test', timezone: 'UTC', daily: W(['19:00', '19:00'], ['23:00', '23:00']), pins: [['2026-01-15T19:00Z', '2026-01-15T23:00Z'], ['2026-03-08T19:00Z', '2026-03-08T23:00Z'], ['2026-03-29T19:00Z', '2026-03-29T23:00Z'], ['2026-07-04T19:00Z', '2026-07-04T23:00Z'], ['2026-11-01T19:00Z', '2026-11-01T23:00Z']] },
+	{ id: 'robin', timezone: 'UTC', daily: W(['08:00', '08:00'], ['23:00', '23:00']), pins: [['2026-01-15T08:00Z', '2026-01-15T23:00Z'], ['2026-03-08T08:00Z', '2026-03-08T23:00Z'], ['2026-03-29T08:00Z', '2026-03-29T23:00Z'], ['2026-07-04T08:00Z', '2026-07-04T23:00Z'], ['2026-11-01T08:00Z', '2026-11-01T23:00Z']] },
 ];
 
 
 describe('legacy hours', () => {
-	it.each(LEGACY)('$id ($timezone, $window.start to $window.end) keeps the instants the old windowOn gave', ({ id, timezone, window, pins }) => {
-		const hours = { id, timezone, schedule: scheduleOfWindow(window) };
+	it.each(LEGACY)('$id ($timezone, $daily.start to $daily.end every day) keeps the instants the old windowOn gave', ({ id, timezone, daily, pins }) => {
+		const hours = { id, timezone, schedule: ScheduleSchema.parse(everyDay(daily.start, daily.end, daily.skipDayChance)) };
 		for (const [index, date] of LEGACY_DATES.entries()) {
 			const pin = pins[index];
 			const agenda = agendaOn(hours, date);
@@ -80,7 +82,7 @@ describe('legacy hours', () => {
 	});
 
 	it('passes the bounds check for every one of them', () => {
-		for (const { window } of LEGACY) expect(boundsIssues(window)).toEqual([]);
+		for (const { daily } of LEGACY) expect(boundsIssues(daily)).toEqual([]);
 	});
 });
 
@@ -485,7 +487,7 @@ describe('scheduleIssues', () => {
 
 describe('onlineMinutesByWeekday', () => {
 	it('adds the middle of every online range and break of each weekday', () => {
-		expect(onlineMinutesByWeekday(scheduleOfWindow({ start: ['19:00', '20:00'], end: ['01:00', '02:00'], skipDayChance: 0 }))).toEqual(Array(7).fill(360));
+		expect(onlineMinutesByWeekday(ScheduleSchema.parse(everyDay(['19:00', '20:00'], ['01:00', '02:00'])))).toEqual(Array(7).fill(360));
 		// 20:00 to 00:15 and the 15-minute break on weekdays
 		expect(onlineMinutesByWeekday(LENA.schedule)).toEqual([270, 270, 270, 270, 270, 0, 0]);
 	});

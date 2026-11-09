@@ -19,7 +19,8 @@ pace of its replies. You write an adapter for each channel, and the package stay
 
 ## Features
 
-- **Personas as config:** one YAML file and one Markdown prompt per persona, validated with exact error locations.
+- **Personas as config and prompt:** the data the code needs, checked with exact error locations, and free Markdown for
+  the rest; optionally one Markdown file per persona, its config as frontmatter.
 - **Realistic schedules:** online hours, breaks and busy blocks, drawn per day from a seed.
 - **Human pacing:** one conversation at a time, with reading, typing and interruptions timed like a person's.
 - **Long-term memory:** people, history, notes and relationships in a single SQLite file.
@@ -51,7 +52,8 @@ import {
 	createRuntime,
 	createStore,
 	openDatabase,
-	parsePersonas,
+	parsePersona,
+	parseSettings,
 	type Conversation,
 } from 'soulframe';
 
@@ -59,36 +61,35 @@ import {
 const now = () => Date.UTC(2026, 0, 15, 20, 0);
 const rng = () => 0.5;
 
-const { personas, issues } = parsePersonas({
-	personas: [{
+// A persona: its config (what the code computes with) and its prompt (everything else)
+const { persona, issues } = parsePersona({
+	config: {
 		id: 'robin',
-		file: 'robin.yaml',
-		raw: {
-			name: 'Robin',
-			timezone: 'UTC',
-			window: { start: ['19:00', '19:00'], end: ['23:00', '23:00'] },
-			// Instant replies for the demo: the defaults wait as a person would
-			settings: {
-				pacing: {
-					glance: { delaySeconds: [0, 0] },
-					interruptions: { meanMinutes: 0 },
-					readingDurationSeconds: [0, 0],
-					typingDurationSeconds: [0, 0],
-					burst: { settleSeconds: [0, 0] },
-				},
-			},
-		},
-	}],
-	channels: { robin: ['console'] },
-	readPrompt: () => 'You are Robin, warm and curious, writing in lowercase.',
+		name: 'Robin',
+		timezone: 'UTC',
+		schedule: { days: { 'mon-sun': { online: [{ start: ['19:00', '19:00'], end: ['23:00', '23:00'] }] } } },
+	},
+	prompt: 'You are Robin, warm and curious, writing in lowercase.',
+	channels: ['console'],
 });
-if (issues.length) throw new Error(issues.join('\n'));
-const persona = personas[0]!;
+if (!persona) throw new Error(issues.join('\n'));
+
+// What its brain runs with. Instant replies for the demo: the defaults wait as a person would
+const { settings, issues: problems } = parseSettings({
+	pacing: {
+		glance: { delaySeconds: [0, 0] },
+		interruptions: { meanMinutes: 0 },
+		readingDurationSeconds: [0, 0],
+		typingDurationSeconds: [0, 0],
+		burst: { settleSeconds: [0, 0] },
+	},
+});
+if (!settings) throw new Error(problems.join('\n'));
 
 const store = createStore(openDatabase(':memory:'), now);
 const runtime = createRuntime({ store, dryRun: false, haltFile: './HALT', rng, now });
-const brain = createBrain({ persona, identity: 'a character in a demo', runtime, llm: createCannedLlm(rng) });
-const queue = createReplyQueue({ persona, brain, runtime, act: async () => {} });
+const brain = createBrain({ persona, settings, identity: 'a character in a demo', runtime, llm: createCannedLlm(rng) });
+const queue = createReplyQueue({ brain, runtime, act: async () => {} });
 
 // A channel: where the conversation happens, and how a message goes out
 const conversation: Conversation = {
@@ -103,8 +104,9 @@ const text = 'hey robin, how is your evening going?';
 await queue.handle(brain.incoming(conversation.channel, 'sam', 'Sam', text), conversation, text);
 ```
 
-Replace `createCannedLlm` with a real client ([configuration](./docs/configuration.md#llm)) to talk through your
-provider. [`examples/console-chat.ts`](./examples/console-chat.ts) is a longer, commented version.
+Replace `createCannedLlm` with a real client ([configuration](./docs/configuration.md#models)) to talk through your
+provider. [`examples/console-chat.ts`](./examples/console-chat.ts) is a longer, commented version, and
+[`examples/personas/robin.md`](./examples/personas/robin.md) a persona as a file (`loadPersonas`).
 
 ## Documentation
 

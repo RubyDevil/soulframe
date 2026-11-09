@@ -2,20 +2,20 @@ import { describe, expect, it, vi } from 'vitest';
 import { createBrain, levelIndex, parseTurn, type Policy } from '../src/brain.js';
 import type { Channel, ChannelId } from '../src/channel.js';
 import { createScriptedDecisions, type Decisions } from '../src/decisions.js';
-import { DEFAULT_SETTINGS, HOUR, MINUTE, SettingsSchema } from '../src/settings.js';
+import { DEFAULT_SETTINGS, HOUR, MINUTE, type Settings } from '../src/settings.js';
 import { ScheduleSchema } from '../src/config/hours.js';
 import type { Llm, LlmMessage } from '../src/llm.js';
 import type { IncomingMessage, PreviewLink } from '../src/perception.js';
-import { ADULTS_ONLY_RULE, AWARE_PROMPT, BREAK_INVITE_PROMPT, dateTimeText, directMessageTimePrompt, dmCheckInput, identityPrompt, MINOR_CAUTION_PROMPT, moodText, rulesPrompt, SFW_RULE } from '../src/prompts.js';
+import { ADULTS_ONLY_RULE, AWARE_PROMPT, BREAK_INVITE_PROMPT, dateTimeText, directMessageTimePrompt, dmCheckInput, identityPrompt, MINOR_CAUTION_PROMPT, rulesPrompt, SFW_RULE } from '../src/prompts.js';
 import { seededRng } from '../src/rng.js';
 import { MINOR_EXIT, STOP_ACK } from '../src/safety.js';
 import { addDays, parseClock, zonedToUtc } from '../src/schedule.js';
 import type { Person, Store } from '../src/store.js';
-import { GROUP_NOTE, groupChannel, memoryStore, NOTED_DM, OPEN_DM, PLAIN_DM, personasOf, postChannel, SNOOZE, TEST_IDENTITY, TEST_POLICY, TEST_STYLE } from './fixtures.js';
+import { everyDay, GROUP_NOTE, groupChannel, memoryStore, NOTED_DM, OPEN_DM, PLAIN_DM, personaOf, postChannel, settingsOf, SNOOZE, TEST_IDENTITY, TEST_POLICY, TEST_STYLE } from './fixtures.js';
 
-/** Robin's file as written, with these fields over its own. */
-const robin = (fields: Record<string, unknown> = {}) => ({ name: 'Robin', prompt: 'robin.md', timezone: 'America/Toronto', window: { start: ['18:00', '20:00'], end: ['00:30', '02:00'] }, ...fields });
-const persona = personasOf({ robin: robin() }, { prompt: 'You are playful and warm.' })[0]!;
+/** Robin's config as written, with these fields over its own. */
+const robin = (fields: Record<string, unknown> = {}) => ({ id: 'robin', name: 'Robin', timezone: 'America/Toronto', schedule: everyDay(['18:00', '20:00'], ['00:30', '02:00']), ...fields });
+const persona = personaOf(robin(), { prompt: 'You are playful and warm.' });
 
 // A fixed clock, so two runs build the same prompts: 9 PM in Toronto, in Robin's full online time
 const NOW = Date.UTC(2026, 9, 15, 1);
@@ -31,7 +31,7 @@ const setUp = (reply: string | ((messages: LlmMessage[]) => string), decisions?:
 			return typeof reply === 'string' ? reply : reply(messages);
 		},
 	};
-	const brain = createBrain({ persona, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => NOW }, llm, ...(decisions && { decisions }) });
+	const brain = createBrain({ settings: DEFAULT_SETTINGS, persona, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => NOW }, llm, ...(decisions && { decisions }) });
 	return { store, brain, seen };
 };
 
@@ -102,7 +102,7 @@ describe('brain', () => {
 	it("runs on its runtime's clock, read at each use", () => {
 		const store = memoryStore(() => NOW);
 		const runtime = { store, rng: () => 0.99, now: () => NOW };
-		const brain = createBrain({ persona, identity: TEST_IDENTITY, runtime, llm: { complete: async () => 'hey' } });
+		const brain = createBrain({ settings: DEFAULT_SETTINGS, persona, identity: TEST_IDENTITY, runtime, llm: { complete: async () => 'hey' } });
 		runtime.now = () => NOW + MINUTE;
 		const decision = brain.incoming(DM.forum, 'u-sam', 'Sam', 'hello');
 		if (decision.kind !== 'reply') throw new Error('expected a reply');
@@ -132,7 +132,7 @@ describe('brain', () => {
 		};
 		// Only a break, around NOW (9 PM in Toronto)
 		const schedule = ScheduleSchema.parse({ days: { 'mon-sun': { breaks: [{ start: ['20:55', '20:55'], minutes: [10, 10] }] } } });
-		const brain = createBrain({ persona: { ...persona, schedule }, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => NOW }, llm });
+		const brain = createBrain({ settings: DEFAULT_SETTINGS, persona: { ...persona, schedule }, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => NOW }, llm });
 		const decision = brain.incoming(DM.forum, 'invite-user', 'Sam', '[invited you to a group chat]');
 		if (decision.kind !== 'reply') throw new Error('expected a reply');
 		const turn = await brain.compose(decision.person.id, DM.forum, { invitation: 'Weekend trip' });
@@ -166,7 +166,7 @@ describe('brain', () => {
 	it("ends it for every persona at once: another one's turn already waiting for them sends nothing", async () => {
 		const { brain, store } = setUp('never sent');
 		const asked: LlmMessage[][] = [];
-		const sky = createBrain({ persona: { ...persona, id: 'sky' }, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => NOW }, llm: { complete: async (messages) => (asked.push(messages), 'hey you') } });
+		const sky = createBrain({ settings: DEFAULT_SETTINGS, persona: { ...persona, id: 'sky' }, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => NOW }, llm: { complete: async (messages) => (asked.push(messages), 'hey you') } });
 		const waiting = sky.incoming(DM.chat, '222', 'Kid', 'hey');
 		if (waiting.kind !== 'reply') throw new Error('expected a reply');
 		brain.incoming(DM.chat, '222', 'Kid', "i'm 15");
@@ -245,7 +245,7 @@ describe('turns', () => {
 		expect(seen[0]![0]!.content).not.toContain(TEST_STYLE);
 		const store = memoryStore(() => NOW);
 		const asked: LlmMessage[][] = [];
-		const styled = createBrain({ persona, identity: TEST_IDENTITY, style: TEST_STYLE, runtime: { store, rng: () => 0.99, now: () => NOW }, llm: { complete: async (messages) => (asked.push(messages), 'hey') } });
+		const styled = createBrain({ settings: DEFAULT_SETTINGS, persona, identity: TEST_IDENTITY, style: TEST_STYLE, runtime: { store, rng: () => 0.99, now: () => NOW }, llm: { complete: async (messages) => (asked.push(messages), 'hey') } });
 		const decision = styled.incoming(DM.forum, 'p1', 'Sam', 'hey');
 		if (decision.kind !== 'reply') throw new Error('expected a reply');
 		await styled.compose(decision.person.id, DM.forum);
@@ -262,7 +262,7 @@ describe('turns', () => {
 		const recent = [{ name: 'Sam', text: 'hey everyone', mine: false }];
 		await brain.composeGroupChatLine(groupChannel('Trip planning'), recent, false, true);
 		await brain.composeGroupChatLine(groupChannel('Trip planning'), recent, false, false);
-		expect(seen[0]![0]!.content).toContain("You are easygoing in group chats. This is your own group chat: you're hosting it.");
+		expect(seen[0]![0]!.content).toContain("This is your own group chat: you're hosting it. Decide like a person in a group chat");
 		expect(seen[1]![0]!.content).not.toContain('your own group chat');
 		expect(seen[1]![0]!.content).toContain(`\n- ${GROUP_NOTE}\nAnswer with one JSON object`);
 	});
@@ -289,16 +289,15 @@ describe('turns', () => {
 		expect(seen[1]![0]!.content).toContain('The last line in the chat was 5 minutes ago.');
 	});
 
-	it.each([false, true])('composes a group-chat line with one model call and no Decisions call while decisions is off (quiet=%s)', async (quiet) => {
+	it.each([false, true])('composes a group-chat line with one model call and no Decisions call: the gate is the app\'s to ask (quiet=%s)', async (quiet) => {
 		const store = memoryStore();
 		let completions = 0;
 		// A client that would answer "stay quiet" to anything: it must not be asked
 		const decisions = createScriptedDecisions(() => 0);
 		const brain = createBrain({
-			persona, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.5, now: Date.now }, decisions,
+			persona, settings: DEFAULT_SETTINGS, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.5, now: Date.now }, decisions,
 			llm: { async complete() { completions++; return JSON.stringify({ reply: 'hey all!' }); } },
 		});
-		expect(persona.settings.decisions.enabled).toBe(false);
 		expect(await brain.composeGroupChatLine(groupChannel('Trip planning'), [{ name: 'Sam', text: 'hmm', mine: false }], quiet, false)).toBe('hey all!');
 		expect(completions).toBe(1);
 		expect(decisions.calls).toHaveLength(0);
@@ -393,7 +392,8 @@ describe('parseTurn', () => {
 });
 
 describe('photos and links', () => {
-	const seeing = personasOf({ robin: robin({ settings: { models: { vision: { model: 'eyes' } } } }) }, { prompt: 'You are playful and warm.' })[0]!;
+	/** Settings with a vision model: photos are looked at. */
+	const SEEING = settingsOf({ models: { vision: { model: 'eyes' } } });
 	const TURN = JSON.stringify({ reply: 'cute!', notes: null, self: null, action: 'none' });
 	const PHOTO = 'https://cdn.example/p.jpg';
 	const NOT_OPENED = 'You have not opened it';
@@ -412,7 +412,7 @@ describe('photos and links', () => {
 				return look();
 			},
 		};
-		const brain = createBrain({ persona: vision ? seeing : persona, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => NOW }, llm, ...(previewLink && { previewLink }), ...(decisions && { decisions }) });
+		const brain = createBrain({ persona, settings: vision ? SEEING : DEFAULT_SETTINGS, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => NOW }, llm, ...(previewLink && { previewLink }), ...(decisions && { decisions }) });
 		const person = (message: string | IncomingMessage) => (brain.incoming(DM.chat, 'd1', 'Sam', message) as { person: Person }).person;
 		const compose = (id: number) => brain.compose(id, DM.chat);
 		const lastTheirs = () => turns.at(-1)!.at(-1)!.content;
@@ -470,7 +470,7 @@ describe('photos and links', () => {
 			const { person, compose, lastTheirs } = watching({ look: () => new Promise(() => undefined) });
 			const { id } = person({ text: 'look', images: [{ url: PHOTO }] });
 			const composing = compose(id);
-			await vi.advanceTimersByTimeAsync(seeing.settings.perception.timeoutSeconds * 1000);
+			await vi.advanceTimersByTimeAsync(SEEING.perception.timeoutSeconds * 1000);
 			expect((await composing).messages).toEqual(['cute!']);
 			expect(lastTheirs()).toContain("wouldn't load");
 		} finally {
@@ -618,10 +618,10 @@ describe('typed checks (settings.decisions)', () => {
 
 	it('asks it alone ahead of a turn when no other check is on, never alone in compose, and not at all when it is off', async () => {
 		const asked = async (decisionsSettings: Record<string, unknown>) => {
-			const own = personasOf({ robin: robin() }, { prompt: 'You are playful and warm.', shared: { settings: { decisions: decisionsSettings } } })[0]!;
+			const settings = settingsOf({ decisions: decisionsSettings });
 			const decisions = scripted({ conversation_importance: 2 });
 			const store = memoryStore(() => NOW);
-			const brain = createBrain({ persona: own, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => NOW }, llm: { complete: async () => turn('hey') }, decisions });
+			const brain = createBrain({ persona, settings, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => NOW }, llm: { complete: async () => turn('hey') }, decisions });
 			const { person } = brain.incoming(DM.chat, 'd1', 'Sam', 'hi') as { person: Person };
 			await brain.assess(person.id, DM.chat);
 			brain.incoming(DM.chat, 'd1', 'Sam', 'hello?');
@@ -672,7 +672,7 @@ describe('typed checks (settings.decisions)', () => {
 				return turn('yo');
 			},
 		};
-		const other = createBrain({ persona: { ...persona, id: 'sam' }, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => NOW }, llm });
+		const other = createBrain({ settings: DEFAULT_SETTINGS, persona: { ...persona, id: 'sam' }, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => NOW }, llm });
 		const theirs = other.incoming(DM.chat, 'd1', 'Sam', 'hello');
 		if (theirs.kind !== 'reply') throw new Error('expected a reply');
 		await other.compose(theirs.person.id, DM.chat);
@@ -700,10 +700,10 @@ describe('typed checks (settings.decisions)', () => {
 	});
 
 	/** A brain whose clock moves a second with each message Sam writes (`write`), so a turn marks only earlier ones handled. */
-	const ticking = (decisions: Decisions, llm: Llm = { complete: async () => turn('hey you') }, own = persona) => {
+	const ticking = (decisions: Decisions, llm: Llm = { complete: async () => turn('hey you') }, settings: Settings = DEFAULT_SETTINGS) => {
 		const clock = { now: NOW };
 		const store = memoryStore(() => clock.now);
-		const brain = createBrain({ persona: own, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => clock.now }, llm, decisions });
+		const brain = createBrain({ persona, settings, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => clock.now }, llm, decisions });
 		const write = (text: string) => {
 			clock.now += 1_000;
 			const decision = brain.incoming(DM.chat, 'd1', 'Sam', text);
@@ -715,9 +715,7 @@ describe('typed checks (settings.decisions)', () => {
 
 	it("judges only the person's lines not handled yet, as many as dmMessages, clipped, with its last reply as context", async () => {
 		const decisions = scripted({ writer_is_minor: 0.1, wants_no_contact: 0.1 });
-		// `decisions` is global only (settings.ts GLOBAL_SETTINGS): every persona's settings carry the global value
-		const { decisions: global } = SettingsSchema.parse({ decisions: { dmMessages: 2 } });
-		const { store, brain, write } = ticking(decisions, undefined, { ...persona, settings: { ...persona.settings, decisions: global } });
+		const { store, brain, write } = ticking(decisions, undefined, settingsOf({ decisions: { dmMessages: 2 } }));
 		delivered(store, write('an older line'), 'chat', ['y'.repeat(400)]);
 		write('hello');
 		write('x'.repeat(600));
@@ -751,7 +749,7 @@ describe('typed checks (settings.decisions)', () => {
 		]);
 	});
 
-	it('gates group chats: speaks when addressed or when chiming in fits its chattiness', async () => {
+	it('gates group chats: speaks when addressed or when chiming in fits, by its own threshold', async () => {
 		const lines = [{ name: 'Sam', text: 'anyone up?', mine: false }];
 		const gate = (script: Script) => setUp('unused', scripted(script)).brain.wantsToSpeak('chat-1', lines);
 		expect(await gate({ chat_addressed: 0.8, chat_chime_in: 0 })).toEqual({ speak: true, addressed: 0.8, chimeIn: 0 });
@@ -760,14 +758,16 @@ describe('typed checks (settings.decisions)', () => {
 		expect(await gate({ chat_addressed: 0.1 })).toBeNull();
 		expect(await gate(down as () => never)).toBeNull();
 		expect(await setUp('unused').brain.wantsToSpeak('chat-1', lines)).toBeNull();
+		// A quieter brain waits for a clear opening: its settings
+		const quieter = createBrain({ persona, settings: settingsOf({ decisions: { groupChatGate: { chimeInAt: 2.2 } } }), runtime: { store: memoryStore(() => NOW), rng: () => 0.5, now: () => NOW }, llm: { complete: async () => 'unused' }, decisions: scripted({ chat_addressed: 0.1, chat_chime_in: 2 }) });
+		expect(await quieter.wantsToSpeak('chat-1', lines)).toMatchObject({ speak: false });
 	});
 
 	it('asks the gate at most groupChatGate.perHour times per chat in any hour, then lets the model decide', async () => {
 		const decisions = scripted({ chat_addressed: 0.8, chat_chime_in: 0 });
-		const { decisions: checks } = persona.settings;
-		const capped = { ...persona, settings: { ...persona.settings, decisions: { ...checks, groupChatGate: { ...checks.groupChatGate, perHour: 2 } } } };
+		const capped = settingsOf({ decisions: { groupChatGate: { perHour: 2 } } });
 		let at = NOW;
-		const brain = createBrain({ persona: capped, runtime: { store: memoryStore(() => NOW), rng: () => 0.5, now: () => at }, llm: { complete: async () => 'unused' }, decisions });
+		const brain = createBrain({ persona, settings: capped, runtime: { store: memoryStore(() => NOW), rng: () => 0.5, now: () => at }, llm: { complete: async () => 'unused' }, decisions });
 		const lines = [{ name: 'Sam', text: 'anyone up?', mine: false }];
 		expect(await brain.wantsToSpeak('chat-1', lines)).toMatchObject({ speak: true });
 		at = NOW + 10 * MINUTE;
@@ -827,11 +827,14 @@ describe('typed checks (settings.decisions)', () => {
 	});
 });
 
-describe('persona settings, character and relationship', () => {
+describe('settings and relationship', () => {
 	const turn = (reply: string, fields: Record<string, unknown> = {}) => JSON.stringify({ reply, notes: null, self: null, action: 'none', ...fields });
-	/** A brain for a persona with these extra fields and the app's `policy` (TEST_POLICY unless given), a clock the test moves, and the prompts it sent. */
-	const withPersona = (extra: Record<string, unknown>, reply = turn('hey you'), policy: Policy = TEST_POLICY) => {
-		const own = personasOf({ robin: robin(extra) }, { prompt: 'You are playful and warm.' });
+	/**
+	 * A brain for a persona with these extra fields of its config, its `settings` (as written) given to the brain, and the
+	 * app's `policy` (TEST_POLICY unless given), a clock the test moves, and the prompts it sent.
+	 */
+	const withPersona = ({ settings, ...extra }: Record<string, unknown>, reply = turn('hey you'), policy: Policy = TEST_POLICY) => {
+		const own = personaOf(robin(extra), { prompt: 'You are playful and warm.' });
 		const clock = { now: NOW };
 		const store = memoryStore(() => clock.now);
 		const seen: LlmMessage[][] = [];
@@ -841,7 +844,7 @@ describe('persona settings, character and relationship', () => {
 				return reply;
 			},
 		};
-		const brain = createBrain({ persona: own[0]!, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => clock.now }, llm, policy });
+		const brain = createBrain({ persona: own, settings: settingsOf(settings), identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => clock.now }, llm, policy });
 		const dm = async (text: string, channel: Channel = DM.forum) => {
 			const decision = brain.incoming(channel, 'p1', 'Sam', text);
 			if (decision.kind !== 'reply') throw new Error('expected a reply');
@@ -853,7 +856,7 @@ describe('persona settings, character and relationship', () => {
 		return { brain, store, seen, clock, dm };
 	};
 
-	it("uses the persona's own memory settings", async () => {
+	it('uses the memory settings it is given', async () => {
 		const { dm, store, seen } = withPersona({ settings: { memory: { personNotes: 50, historyMessages: 2 } } }, turn('ok', { notes: 'x'.repeat(200) }));
 		const { person, system } = await dm('hey');
 		expect(system).toContain('at most 50 characters');
@@ -864,20 +867,18 @@ describe('persona settings, character and relationship', () => {
 		expect(seen.at(-1)!.slice(1)).toHaveLength(2);
 	});
 
-	it('puts its fixed character after its prompt and before identity and rules, in DMs, group chats and posts', async () => {
-		const character = { facts: ["you're 24", 'has a cat named Miso'], interests: ['jazz', 'night walks'], boundaries: ['talk about exes'] };
-		const { dm, brain, seen, store } = withPersona({ character });
+	it('puts its prompt first, then identity and rules, in DMs, group chats and posts, and says nothing of how much it talks', async () => {
+		const { dm, brain, seen, store } = withPersona({});
 		const { system } = await dm('hey');
 		await brain.composeGroupChatLine(groupChannel('Trip planning'), [{ name: 'Sam', text: 'hi Robin', mine: false }], false, false);
 		await brain.composePost(postChannel(300), { rules: '', examples: [], recent: [] });
 		for (const prompt of [system, seen[1]![0]!.content, seen[2]![0]!.content]) {
-			const order = ['You are playful and warm.', '- has a cat named Miso', 'jazz, night walks', '- talk about exes', 'a guide made by Forum', 'Rules you never break'].map((part) => prompt.indexOf(part));
-			expect(order.every((at) => at >= 0)).toBe(true);
-			expect([...order].sort((a, b) => a - b)).toEqual(order);
+			expect(prompt.startsWith(`You are playful and warm.\n\n${identityPrompt('Robin', TEST_IDENTITY, DM.forum).slice(0, 40)}`)).toBe(true);
+			expect(prompt).not.toMatch(/in group chats\./);
 		}
 		expect(system).toContain(identityPrompt('Robin', TEST_IDENTITY, DM.forum));
 		expect(system).toContain(rulesPrompt([ADULTS_ONLY_RULE, ...TEST_POLICY.rules]));
-		// A flagged person still gets the caution, character or not
+		// A flagged person gets the caution
 		store.cautionMinor('forum', 'p1', 0.6);
 		expect((await dm('so?')).system).toContain(MINOR_CAUTION_PROMPT);
 	});
@@ -907,25 +908,6 @@ describe('persona settings, character and relationship', () => {
 		expect(seen[0]![0]!.content).not.toContain(rulesPrompt(TEST_POLICY.rules));
 	});
 
-	it('keeps one mood through the night, at the end of the prompt, and none without moods', async () => {
-		const { dm } = withPersona({ character: { moods: ['chill', 'playful', 'curious'] } });
-		const first = (await dm('hey')).system;
-		const second = (await dm('you there?')).system;
-		const mood = /Your mood today: (\w+)\./.exec(first)?.[1];
-		expect(mood).toBeDefined();
-		expect(first.endsWith(moodText(mood, true))).toBe(true);
-		expect(second.endsWith(moodText(mood, true))).toBe(true);
-		expect((await withPersona({}).dm('hey')).system).not.toContain('Your mood today');
-	});
-
-	it('says the mood never changes the rules only when its prompt has rules', async () => {
-		const { dm, brain, seen } = withPersona({ character: { moods: ['chill'] } }, turn('hey you'), {});
-		expect((await dm('hey', OPEN_DM)).system.endsWith(moodText('chill', false))).toBe(true);
-		expect((await dm('hey')).system.endsWith(moodText('chill', true))).toBe(true);
-		await brain.composeGroupChatLine({ ...groupChannel('Trip planning'), adult: false }, [{ name: 'Sam', text: 'hi Robin', mine: false }], false, false);
-		expect(seen.at(-1)![0]!.content.endsWith(moodText('chill', false))).toBe(true);
-	});
-
 	it('counts conversations after a long silence, and tells the model how well they know each other', async () => {
 		const { dm, clock } = withPersona({});
 		let run = await dm('hey');
@@ -941,7 +923,7 @@ describe('persona settings, character and relationship', () => {
 		expect(run.system).toContain("You're still getting to know Sam. You first talked 8 hours ago; this is conversation 2 with them.");
 	});
 
-	it("clips by the channel's limit, and splits by the persona's own pacing, not the global one", async () => {
+	it("clips by the channel's limit, and splits by the pacing it is given", async () => {
 		const long = 'so here is the thing about heels. '.repeat(8).trim();
 		const { dm, brain } = withPersona({}, turn(long));
 		const { messages } = await dm('hey', { ...DM.forum, maxLength: 50 });
@@ -952,7 +934,7 @@ describe('persona settings, character and relationship', () => {
 		// The same model text, under the channels' usual limits
 		expect((await dm('hey')).messages[0]!.length).toBeGreaterThan(50);
 		expect((await brain.composeGroupChatLine(groupChannel('Trip planning'), [{ name: 'Sam', text: 'hi Robin', mine: false }], false, false))!.length).toBeGreaterThan(20);
-		// The global replySplitChance (0.35) never splits with this rng (0.99); the persona's (1) always does
+		// The default replySplitChance (0.35) never splits with this rng (0.99); one of 1 always does
 		expect((await withPersona({}, turn(long)).dm('hey')).messages).toHaveLength(1);
 		expect((await withPersona({ settings: { pacing: { replySplitChance: 1 } } }, turn(long)).dm('hey')).messages).toHaveLength(2);
 	});
@@ -1002,6 +984,27 @@ describe('persona settings, character and relationship', () => {
 		expect(system).toContain('"importance": 1, "action": "none"');
 	});
 
+	it("runs with the persona's own pacing and relationship over the settings it is given, and says so in brain.settings", async () => {
+		const warmer = turn('aw', { affinity: 1 });
+		// The app's settings say a small step; this persona bonds faster, and types slower than the rest
+		const { dm, store, brain } = withPersona({ relationship: { affinity: { step: 0.4 } }, pacing: { typingCharsPerSecond: [2, 3] }, settings: { relationship: { affinity: { step: 0.05, fadeHalfLifeDays: 10 } } } }, warmer);
+		await dm('you are lovely');
+		expect(store.personById(1).affinity).toBeCloseTo(0.4, 9);
+		expect(brain.settings.relationship.affinity).toEqual({ ...DEFAULT_SETTINGS.relationship.affinity, step: 0.4, fadeHalfLifeDays: 10 });
+		expect(brain.settings.pacing.typingCharsPerSecond).toEqual({ ...DEFAULT_SETTINGS.pacing.typingCharsPerSecond, range: [2, 3] });
+		expect(brain.settings.memory).toEqual(DEFAULT_SETTINGS.memory);
+	});
+
+	it("refuses to start with own settings that don't fit the ones it is given, naming the persona", () => {
+		// A typical glance of two minutes: fine over the defaults' p90 of 150 seconds, not over one of 100
+		const own = personaOf(robin({ pacing: { glance: { medianSeconds: 120 } } }));
+		const start = (settings: Settings) => () => createBrain({ persona: own, settings, runtime: { store: memoryStore(), rng: () => 0.5, now: () => NOW }, llm: { complete: async () => '' } });
+		expect(start(DEFAULT_SETTINGS)).not.toThrow();
+		expect(start(settingsOf({ pacing: { glance: { medianSeconds: 30, p90Seconds: 100 } } }))).toThrow(
+			'the settings of persona "robin" has 1 problem:\n  - pacing.glance: p90Seconds must be above medianSeconds (got {"medianSeconds":120,"p90Seconds":100,"…)',
+		);
+	});
+
 	it("grows familiarity by the importance the model gave the turn, and keeps that importance for the queue", async () => {
 		const grown = async (importance: number) => {
 			const { dm } = withPersona({}, turn('ok', { importance }));
@@ -1044,14 +1047,6 @@ describe('persona settings, character and relationship', () => {
 		expect(on.chat).toContain(silence);
 		expect(await prompts({ relationship: false })).toEqual({ dm: on.dm.replace(relationship, ''), chat: on.chat });
 		expect(await prompts({ timeSince: false })).toEqual({ dm: on.dm.replace(gaps, ''), chat: on.chat.replace(silence, '') });
-	});
-
-	it('gives a group chat the same mood as DMs that night', async () => {
-		const { dm, brain, seen } = withPersona({ character: { moods: ['chill', 'playful', 'curious'] } }, turn('hey'));
-		const mood = /Your mood today: (\w+)\./.exec((await dm('hey')).system)?.[1];
-		await brain.composeGroupChatLine(groupChannel('Trip planning'), [{ name: 'Sam', text: 'hi Robin', mine: false }], false, false);
-		expect(mood).toBeDefined();
-		expect(seen.at(-1)![0]!.content.endsWith(moodText(mood, true))).toBe(true);
 	});
 
 	it("tells it each channel's where-text and note in DMs and group chats, and no note where the channel has none", async () => {
@@ -1120,7 +1115,6 @@ describe('the day, from its agenda', () => {
 		},
 	};
 	const zone = 'Europe/London';
-	const MOOD = moodText('quietly cheerful', true);
 	/** Local time on Sunday 1 November 2026 and the days after. */
 	const at = (days: number, clock: string) => zonedToUtc(addDays({ year: 2026, month: 11, day: 1 }, days), parseClock(clock), zone);
 	const [SUN, MON, TUE, WED] = [0, 1, 2, 3];
@@ -1129,7 +1123,7 @@ describe('the day, from its agenda', () => {
 
 	/** Lena with these settings, the clock the test sets, and `dm`: Sam writes at one time and it answers at another. */
 	const lena = (settings: Record<string, unknown> = {}) => {
-		const own = personasOf({ lena: { name: 'Lena', prompt: 'lena.md', timezone: zone, schedule: SCHEDULE, character: { moods: ['quietly cheerful'] }, settings } }, { prompt: 'You are dry and warm.' });
+		const own = personaOf({ id: 'lena', name: 'Lena', timezone: zone, schedule: SCHEDULE }, { prompt: 'You are dry and warm.' });
 		const clock = { now: 0 };
 		const store = memoryStore(() => clock.now);
 		const seen: LlmMessage[][] = [];
@@ -1140,7 +1134,7 @@ describe('the day, from its agenda', () => {
 				return JSON.stringify({ reply });
 			},
 		};
-		const brain = createBrain({ persona: own[0]!, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => clock.now }, llm });
+		const brain = createBrain({ persona: own, settings: settingsOf(settings), identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => clock.now }, llm });
 		/** The system prompt of its answer (`answer`, null to leave it on read) at `answered` to what Sam wrote at `wrote`, delivered by the queue. */
 		const dm = async (wrote: number, answered = wrote, answer: string | null = 'hey you') => {
 			clock.now = wrote;
@@ -1172,11 +1166,11 @@ describe('the day, from its agenda', () => {
 
 	it('tells it about its break from work, and that their messages waited', async () => {
 		expect(timeLine(await onBreak())).toBe(
-			`It is Tuesday, November 3, 12:41 PM for you. Their last message was 25 minutes ago. You last wrote to them 2 days ago. These messages came in while you were at work (from 12:16 PM); you're only seeing them now. Right now you're at work, on a short break until about 12:55 PM, so you only have a few minutes. After that you're back at work until about 5:30 PM. You'll be online again today around 8:00 PM. ${AWARE_PROMPT}${MOOD}`,
+			`It is Tuesday, November 3, 12:41 PM for you. Their last message was 25 minutes ago. You last wrote to them 2 days ago. These messages came in while you were at work (from 12:16 PM); you're only seeing them now. Right now you're at work, on a short break until about 12:55 PM, so you only have a few minutes. After that you're back at work until about 5:30 PM. You'll be online again today around 8:00 PM. ${AWARE_PROMPT}`,
 		);
 	});
 
-	it('leaves out exactly the text each context setting turns off, and with all of them off only the time and the mood', async () => {
+	it('leaves out exactly the text each context setting turns off, and with all of them off only the time', async () => {
 		const on = await onBreak();
 		for (const part of [TIME, GAPS, AWAY, NOW, UPCOMING, RELATIONSHIP]) expect(on).toContain(part);
 		expect(await onBreak({ context: { awayContext: false } })).toBe(on.replace(AWAY, ''));
@@ -1186,7 +1180,7 @@ describe('the day, from its agenda', () => {
 		expect(await onBreak({ context: { awayContext: false, situation: false, upcoming: false } })).toBe(on.replace(`${AWAY}${NOW}${UPCOMING} ${AWARE_PROMPT}`, ''));
 		const none = await onBreak({ context: { awayContext: false, situation: false, upcoming: false, relationship: false, timeSince: false } });
 		expect(none).toBe(on.replace(RELATIONSHIP, '').replace(`${GAPS}${AWAY}${NOW}${UPCOMING} ${AWARE_PROMPT}`, ''));
-		expect(timeLine(none)).toBe(`${TIME}${MOOD}`);
+		expect(timeLine(none)).toBe(TIME);
 	});
 
 	it('says they waited while it was away when no busy block covers their message, with its day when that was another', async () => {
@@ -1210,7 +1204,7 @@ describe('the day, from its agenda', () => {
 
 	it('says nothing of its day outside its online time', async () => {
 		const now = at(TUE, '15:00');
-		expect(timeLine(await lena().dm(now))).toBe(directMessageTimePrompt({ rules: true, localTime: dateTimeText(now, zone), gaps: { theirLast: 0, yourLast: null }, mood: 'quietly cheerful' }));
+		expect(timeLine(await lena().dm(now))).toBe(directMessageTimePrompt({ localTime: dateTimeText(now, zone), gaps: { theirLast: 0, yourLast: null } }));
 	});
 
 	it('asks it to wrap up a DM in the last 10 minutes of a span (the last third of a shorter one), last, and not without what it is doing now', async () => {
@@ -1230,7 +1224,7 @@ describe('the day, from its agenda', () => {
 		expect(time.startsWith('It is Wednesday, November 4, 12:05 AM for you. The last line in the chat was 4 minutes ago.')).toBe(true);
 		expect(time).toContain("Today you're at work from 8:50 AM.");
 		expect(time).not.toContain(LOGGING_OFF);
-		expect(time.endsWith(`${AWARE_PROMPT}${MOOD}`)).toBe(true);
+		expect(time.endsWith(AWARE_PROMPT)).toBe(true);
 	});
 });
 
@@ -1299,8 +1293,8 @@ describe('the 18+ safeguard (Channel.adult) and no policy', () => {
 	});
 });
 
-describe('sfw', () => {
-	/** A brain for Robin with `sfw` and the app's `policy` (none unless given), and the system prompts it sent. */
+describe('sfw (Policy.sfw)', () => {
+	/** A brain for Robin with a policy of `sfw` and the app's `policy` (none unless given), and the system prompts it sent. */
 	const sfwRobin = (sfw: boolean, policy?: Policy) => {
 		const seen: LlmMessage[][] = [];
 		const llm: Llm = {
@@ -1309,8 +1303,7 @@ describe('sfw', () => {
 				return JSON.stringify({ reply: 'hey you' });
 			},
 		};
-		const own = personasOf({ robin: robin({ sfw }) }, { prompt: 'You are playful and warm.' })[0]!;
-		const brain = createBrain({ persona: own, identity: TEST_IDENTITY, runtime: { store: memoryStore(() => NOW), rng: () => 0.99, now: () => NOW }, llm, ...(policy && { policy }) });
+		const brain = createBrain({ settings: DEFAULT_SETTINGS, persona, identity: TEST_IDENTITY, runtime: { store: memoryStore(() => NOW), rng: () => 0.99, now: () => NOW }, llm, policy: { ...policy, ...(sfw && { sfw }) } });
 		/** The system prompts of a DM turn, a group-chat line and a post on these channels. */
 		const prompts = async ({ dm, chat, post }: { dm: Channel; chat: Channel; post: Channel }) => {
 			const decision = brain.incoming(dm, 'p1', 'Sam', 'hey');
@@ -1331,7 +1324,7 @@ describe('sfw', () => {
 		for (const prompt of prompts) expect(prompt).toContain(rulesPrompt([ADULTS_ONLY_RULE, SFW_RULE, ...TEST_POLICY.rules]));
 	});
 
-	it('is the only rule of an sfw persona on channels that are not 18+, without a policy', async () => {
+	it('is the only rule of an sfw policy on channels that are not 18+, without rules of its own', async () => {
 		for (const prompt of await sfwRobin(true).prompts(OPEN)) expect(prompt).toContain(`Rules you never break:\n- ${SFW_RULE}\n\n`);
 	});
 

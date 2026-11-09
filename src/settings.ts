@@ -1,18 +1,20 @@
 /**
- * Every setting of a persona's brain, with its default, in one place. They are set in the `settings:` block of
- * the persona folder's `_shared.yaml` (config/personas.ts); anything left out keeps the default below. Secrets (API
- * keys, passwords, tokens) never go there: only the names of the environment variables that hold them. The app's own
- * settings (message limits, its channels' timings, retention, the request rate) are not here (the app's config).
+ * Every setting, with its default, in one place, in two kinds:
+ * - a brain's `Settings`: what a brain, its reply queue and its model client run with, the same object for every
+ *   persona or one of their own (`createBrain({ settings })`, and the same to `llmsFor`), read with `parseSettings`;
+ * - the `ServiceSettings`: what every persona shares, set once (the text provider's budget, the Decisions client), read
+ *   with `parseServiceSettings`; the app builds the token meters, the model clients and the Decisions client from it.
+ * Neither is part of a persona's config. Anything left out keeps the default below. Secrets (API keys, passwords,
+ * tokens) never go there: only the names of the environment variables that hold them. The app's own settings
+ * (message limits, its channels' timings, retention, the request rate) are not here (the app's config).
  *
- * A persona may override the groups in `PERSONA_SETTINGS` (models, memory, pacing…) in the `settings:` block of its
- * own file, deep-merged over these. The groups in `GLOBAL_SETTINGS` (the text provider and its daily cap, the Decisions
- * checks) are set once for all personas, and no persona can change them.
- *
- * Text generation (`llm`, `models`) and the Decisions API (`decisions`) are configured apart: neither reads
- * the other's block.
+ * Text generation (`models`, `ServiceSettings.text`) and the Decisions API (`decisions`, `ServiceSettings.decisions`)
+ * are configured apart: neither reads the other's block.
  */
 
 import { z } from 'zod';
+import { ConfigError, readConfig, sourced, type Problem } from './config/issues.js';
+import { deepMerge, isPlainObject } from './merge.js';
 
 /** [least, most]: the bounds a value is kept within, or drawn from evenly (soulframe's own drawn ranges are `drawn`, with a shape). */
 export const range = (min: number, max: number, floor = 0) =>
@@ -62,18 +64,45 @@ const levels = (min: number) =>
 		.refine((list) => list[0]?.from === min, `the first level must start at ${min}`)
 		.refine((list) => list.every((level, i) => i === 0 || level.from > list[i - 1]!.from), 'each level must start above the one before');
 
-/** One model, for one kind of text generation task. */
-const ModelSchema = (defaults: { maxTokens: number; temperature: number }) =>
+/** The text tasks, each with its model settings (`models.<task>`), the photo describer (`vision`) among them. */
+export const TASKS = ['directMessage', 'groupChat', 'post', 'vision'] as const;
+export type Task = (typeof TASKS)[number];
+
+/** The provider and model every task uses unless it names its own (`models.default`). */
+const DefaultModelSchema = z
+	.object({
+		/** The provider's OpenAI-compatible base URL, e.g. https://api.provider.example/v1. */
+		baseUrl: z.string().url().optional(),
+		/** The key's environment variable; empty for a local provider without authentication. */
+		apiKeyEnv: z.string().default('LLM_API_KEY'),
+		/** The model of every text task that doesn't name its own (never `vision`'s: it may not take images). */
+		model: z.string().min(1).optional(),
+		/** Ask the provider for strict JSON answers (`response_format: json_object`); only for providers that support it. */
+		jsonMode: z.boolean().default(false),
+		/** Seconds before a request is given up (it is retried once). */
+		timeoutSeconds: z.number().min(5).max(300).default(60),
+	})
+	.default({});
+
+/**
+ * One kind of text generation task: its own answer limits, and the model it uses, `models.default`'s unless it names
+ * its own. With a `baseUrl` of its own it is on another provider: it then takes nothing of that provider from
+ * `default` (no key, no model, no jsonMode), and names its own `model` and `apiKeyEnv` (empty for none), so the
+ * default provider's key never reaches another host.
+ */
+const TaskModelSchema = (defaults: { maxTokens: number; temperature: number }) =>
 	z
 		.object({
-			/** The model's name at the provider. */
+			/** The model's name at its provider; else `default.model` (never for `vision`, nor on a provider of its own). */
 			model: z.string().min(1).optional(),
-			/** Another provider for this task only (its OpenAI-compatible base URL); else `llm.baseUrl`. */
+			/** Another provider for this task only (its OpenAI-compatible base URL); else `default.baseUrl`. */
 			baseUrl: z.string().url().optional(),
-			/** The key's environment variable; else `llm.apiKeyEnv`. Empty disables authentication. */
+			/** The key's environment variable; else `default.apiKeyEnv` on the default provider. Empty disables authentication. */
 			apiKeyEnv: z.string().optional(),
-			/** Ask this task's provider for strict JSON; else `llm.jsonMode` when the task uses `llm.baseUrl`, off with its own `baseUrl`. */
+			/** Ask its provider for strict JSON; else `default.jsonMode` on the default provider, off on its own. */
 			jsonMode: z.boolean().optional(),
+			/** Seconds before its request is given up; else `default.timeoutSeconds`. */
+			timeoutSeconds: z.number().min(5).max(300).optional(),
 			/** The most tokens the answer may hold. */
 			maxTokens: z.number().int().min(16).max(4000).default(defaults.maxTokens),
 			/** 0 to 2: higher is more varied, lower more predictable. */
@@ -84,55 +113,28 @@ const ModelSchema = (defaults: { maxTokens: number; temperature: number }) =>
 export const SettingsSchema = z
 	.object({
 		/**
-		 * The text provider, for text generation only: any OpenAI-compatible chat completions API; the provider and its
-		 * model decide what content they allow. The Decisions API (`decisions`) never reads it.
-		 */
-		llm: z
-			.object({
-				/** e.g. https://api.provider.example/v1 */
-				baseUrl: z.string().url().optional(),
-				/** The key's environment variable; empty for a local provider without authentication. */
-				apiKeyEnv: z.string().default('LLM_API_KEY'),
-				/** The model used by every task that doesn't name its own. */
-				model: z.string().min(1).optional(),
-				/** Seconds before a request is given up (it is retried once). */
-				timeoutSeconds: z.number().min(5).max(300).default(60),
-				/**
-				 * Tokens per day for text generation; 0 for no limit. One pool for every persona (there are no per-persona
-				 * meters), reset at 00:00 UTC, first come first served: personas online right after the reset spend it first.
-				 * At the shipped prompt sizes a DM turn is about 3.5-4K tokens, so the default buys about 55 DM turns a day
-				 * for all personas together: size it to the fleet. Past it, replies wait and group chats stay quiet.
-				 */
-				dailyTokens: z.number().int().min(0).default(200_000),
-				/** The share of dailyTokens kept for DMs, 0 to 0.9: group chats and posts stop once the rest is spent. */
-				directMessageReserve: z.number().min(0).max(0.9).default(0.3),
-				/** The most text model requests in flight at once, for all personas together; the others wait their turn. */
-				concurrency: z.number().int().min(1).max(32).default(4),
-				/**
-				 * Ask for strict JSON answers (`response_format: json_object`); only for providers that support it. A task
-				 * with its own `baseUrl` doesn't inherit it (it sets its own `models.<task>.jsonMode`).
-				 */
-				jsonMode: z.boolean().default(false),
-			})
-			.default({}),
-
-		/**
-		 * A text generation model per kind of task, so the frequent cheap ones (group chats, mostly "stay quiet") can
-		 * use a cheaper model than direct messages, where quality shows.
+		 * The text provider and a model per kind of task, for text generation only: any OpenAI-compatible chat
+		 * completions API (the provider and its model decide what content they allow). `default` is the provider and the
+		 * model of every task that names none; a task may name a cheaper model (group chats, mostly "stay quiet") or
+		 * another provider. The Decisions API (`decisions`) never reads it. The budget every persona shares is the
+		 * service settings' (`ServiceSettings.text`).
 		 */
 		models: z
 			.object({
+				/** The provider and model of every task that names none. Not a task itself. */
+				default: DefaultModelSchema,
 				/** A turn of a direct message conversation (the reply, the notes, the action). */
-				directMessage: ModelSchema({ maxTokens: 400, temperature: 0.9 }),
+				directMessage: TaskModelSchema({ maxTokens: 400, temperature: 0.9 }),
 				/** Whether to say something in a group chat, and what. */
-				groupChat: ModelSchema({ maxTokens: 100, temperature: 0.9 }),
+				groupChat: TaskModelSchema({ maxTokens: 100, temperature: 0.9 }),
 				/** A post in a channel. */
-				post: ModelSchema({ maxTokens: 160, temperature: 1 }),
+				post: TaskModelSchema({ maxTokens: 160, temperature: 1 }),
 				/**
 				 * Describing a photo someone sent in a DM, once, when it is looked at. Called only with `model` set here (never
-				 * `llm.model`, which may not take images): left out, photos show as not loading. A chat model that takes images can be named here too.
+				 * `default.model`, which may not take images): left out, photos show as not loading. A chat model that takes
+				 * images can be named here too.
 				 */
-				vision: ModelSchema({ maxTokens: 200, temperature: 0.2 }),
+				vision: TaskModelSchema({ maxTokens: 200, temperature: 0.2 }),
 			})
 			.default({}),
 
@@ -152,29 +154,16 @@ export const SettingsSchema = z
 			.default({}),
 
 		/**
-		 * Optional typed checks by a Decisions API (OpenAI's by default): a classifier that answers questions with
-		 * probabilities and writes no text (the questions are in prompts.ts). This block is its only configuration:
-		 * nothing falls back to `llm` or `models`, and while `enabled` is false nothing is sent to /decisions (no group-chat
-		 * gate either). Off by default: turning it on sends people's messages, the personas' replies and group chats to
-		 * `baseUrl`. Additive only: the code's own checks (safety.ts) run first and stay authoritative; any failure,
-		 * timeout, refusal or spent budget behaves exactly as if this were off.
-		 * The age check runs only on 18+ channels (`Channel.adult`); elsewhere its settings do not apply.
-		 * The thresholds are not calibrated: tune them from the audit rows, which record each probability.
+		 * Which typed checks a brain asks of the Decisions client, and the thresholds that act on its answers (the
+		 * questions are in prompts.ts). Whether any check runs at all, and the client itself (its endpoint, key, model,
+		 * timeout and daily tokens), are the service settings' (`ServiceSettings.decisions`): one client for every
+		 * persona. Additive only: the code's own checks (safety.ts) run first and stay authoritative; any failure,
+		 * timeout, refusal or spent budget behaves exactly as if the checks were off. The age check runs only on 18+
+		 * channels (`Channel.adult`); elsewhere its settings do not apply. The thresholds are not calibrated: tune them
+		 * from the audit rows, which record each probability.
 		 */
 		decisions: z
 			.object({
-				/** Whether to use it at all (needs the key named by `apiKeyEnv`): the switch for every Decisions call. */
-				enabled: z.boolean().default(false),
-				/** The Decisions API's base URL ({baseUrl}/decisions): OpenAI's, or a gateway or mock that speaks it. */
-				baseUrl: z.string().url().default('https://api.openai.com/v1'),
-				/** The environment variable holding its key; empty for no authentication. */
-				apiKeyEnv: z.string().default('OPENAI_API_KEY'),
-				/** The only model OpenAI's API offers. */
-				model: z.string().min(1).default('gpt-6-luna'),
-				/** Seconds before a request is given up (it is retried once); the path without it then runs. */
-				timeoutSeconds: z.number().min(1).max(30).default(5),
-				/** Input tokens all personas may spend per UTC day on every Decisions call (the checks and the group-chat gate), counted apart from llm.dailyTokens; 0 for no limit. Past it, as if off. */
-				dailyTokens: z.number().int().min(0).default(2_000_000),
 				/** The person's newest messages (since the persona's last reply) sent with each DM check. */
 				dmMessages: z.number().int().min(1).max(20).default(6),
 				/** Signs the writer is under 18, in DMs and in group chats, after the code's own check: on 18+ channels only (`Channel.adult`). */
@@ -212,7 +201,7 @@ export const SettingsSchema = z
 				 */
 				importance: z
 					.object({
-						/** Whether to ask it at all (only ever with `decisions.enabled`). */
+						/** Whether to ask it at all (only ever with the Decisions client on: `ServiceSettings.decisions.enabled`). */
 						enabled: z.boolean().default(true),
 					})
 					.default({}),
@@ -223,17 +212,21 @@ export const SettingsSchema = z
 						enabled: z.boolean().default(true),
 						/** Probability the newest lines are addressed to the persona at or above which it speaks. 0 to 1 (0 always speaks, as without the gate). */
 						addressedAt: at(0.5, 0),
-						/** "Chime in" score (0 intrude, 1 optional, 2 opening, 3 expected) at or above which it speaks, by the persona's chattiness. */
+						/**
+						 * "Chime in" score (0 intrude, 1 optional, 2 opening, 3 expected) at or above which it speaks: higher for a
+						 * persona that rarely speaks unasked (about 2.2 waits for a clear opening), lower for a chatty one (about
+						 * 1.2 takes even an optional remark).
+						 */
 						chimeInAt: z
-							.object({
-								/** For a `quiet` persona: only a clear opening. */
-								quiet: z.number().min(0).max(3).default(2.2),
-								/** For an `easygoing` persona. */
-								easygoing: z.number().min(0).max(3).default(1.7),
-								/** For a `talkative` persona: even an optional remark. */
-								talkative: z.number().min(0).max(3).default(1.2),
+							.number({
+								// The 0.1 betas' one per chattiness says where it went; any other wrong value gets the usual message
+								errorMap: (issue, ctx) => ({
+									message: issue.code === 'invalid_type' && issue.received === 'object' ? 'one number: a threshold per chattiness is gone (give a brain its own)' : ctx.defaultError,
+								}),
 							})
-							.default({}),
+							.min(0)
+							.max(3)
+							.default(1.7),
 						/** The most gate checks per group chat per hour (counted by `wantsToSpeak`, per its `chatId`); past it, the model decides as before. */
 						perHour: z.number().int().min(1).default(120),
 					})
@@ -470,36 +463,172 @@ export const SettingsSchema = z
 
 export type Settings = z.infer<typeof SettingsSchema>;
 
-/**
- * The setting groups a persona may set for itself (its file's `settings:`), deep-merged over `_shared.yaml`'s
- * (config/personas.ts). Everything else is set once for every persona.
- */
-export const PERSONA_SETTINGS = ['models', 'perception', 'memory', 'relationship', 'pacing', 'context', 'retries'] as const;
-/** Set once for every persona: the text provider and its daily cap, the Decisions checks. */
-export const GLOBAL_SETTINGS = ['llm', 'decisions'] as const;
-/** Why a group can't be set per persona, for the error message. */
-export const GLOBAL_ONLY_REASONS: Record<(typeof GLOBAL_SETTINGS)[number], string> = {
-	decisions: 'the safety checks are the same for every persona (set them under the global settings.decisions)',
-	llm: 'the text provider and its daily cap are shared (a persona may name its own models in settings.models)',
-};
-// A new setting must be classified as per persona or global: a compile error otherwise
-type Unclassified = Exclude<keyof Settings, (typeof PERSONA_SETTINGS)[number] | (typeof GLOBAL_SETTINGS)[number]>;
-export const SETTINGS_CLASSIFIED: [Unclassified] extends [never] ? true : never = true;
+/** What a task uses to call its model (`taskModel`): its provider, key, model and request options, as resolved. */
+export interface TaskModel {
+	baseUrl?: string;
+	/** Undefined only on a provider of its own that names no key (a settings problem: `checkSettings`). */
+	apiKeyEnv?: string;
+	model?: string;
+	jsonMode: boolean;
+	timeoutSeconds: number;
+	maxTokens: number;
+	temperature: number;
+	/** It names a `baseUrl` of its own: nothing of the default provider (key, model, jsonMode) is used for it. */
+	ownProvider: boolean;
+	/** Off: `vision` without a model of its own (it never takes the default one), so nothing calls it. */
+	off: boolean;
+}
 
-/** Rules across settings that the schema can't express. */
-export function checkSettings(settings: Settings): { path: (string | number)[]; message: string }[] {
-	const issues: { path: (string | number)[]; message: string }[] = [];
-	const { llm, models } = settings;
-	for (const [task, model] of Object.entries(models)) {
-		// Optional, and never falls back to llm.model
-		if (task === 'vision' || (llm.baseUrl === undefined && model.baseUrl === undefined)) continue;
-		if (!model.model && !llm.model) issues.push({ path: ['models', task], message: 'no model named (set it, or settings.llm.model)' });
+/**
+ * The model a task calls: what it names, else `models.default`'s, but on a provider of its own (its own `baseUrl`)
+ * only what it names (the default key, model and jsonMode belong to the default provider), and for `vision` never the
+ * default model (it may not take images). The timeout comes from `default` either way.
+ */
+export function taskModel(settings: Settings, task: Task): TaskModel {
+	const { default: base } = settings.models;
+	const own = settings.models[task];
+	const ownProvider = own.baseUrl !== undefined;
+	const model = own.model ?? (ownProvider || task === 'vision' ? undefined : base.model);
+	return {
+		baseUrl: own.baseUrl ?? base.baseUrl,
+		apiKeyEnv: own.apiKeyEnv ?? (ownProvider ? undefined : base.apiKeyEnv),
+		model,
+		jsonMode: own.jsonMode ?? (ownProvider ? false : base.jsonMode),
+		timeoutSeconds: own.timeoutSeconds ?? base.timeoutSeconds,
+		maxTokens: own.maxTokens,
+		temperature: own.temperature,
+		ownProvider,
+		off: task === 'vision' && model === undefined,
+	};
+}
+
+/**
+ * Rules across settings that the schema can't express: a task on a provider of its own names its own key and model
+ * (the default provider's never reach another host), and once a provider is set every text task has a model.
+ */
+function checkSettings(settings: Settings): Problem[] {
+	const issues: Problem[] = [];
+	for (const task of TASKS) {
+		const at = ['models', task];
+		const used = taskModel(settings, task);
+		if (used.ownProvider) {
+			if (used.apiKeyEnv === undefined) issues.push({ path: [...at, 'apiKeyEnv'], message: "on a provider of its own (its baseUrl), it names its own key variable ('' for none): the default one is never sent to another host" });
+			if (used.model === undefined) issues.push({ path: [...at, 'model'], message: 'on a provider of its own (its baseUrl), it names its own model' });
+		} else if (!used.off && used.baseUrl !== undefined && used.model === undefined) {
+			issues.push({ path: at, message: 'no model named (set it, or models.default.model)' });
+		}
 	}
 	return issues;
 }
 
-/** Every setting at its default (tests, and anything built without a config file). */
+/** Every setting at its default: a brain's settings when it is given none (tests, demos). */
 export const DEFAULT_SETTINGS: Settings = SettingsSchema.parse(undefined);
+
+/** What a key of the 0.1 betas' settings became: refused with where it went, not only as unknown. */
+const SERVICE_KEY = "moved to the service settings' decisions (parseServiceSettings): one Decisions client serves every persona";
+const MOVED_SETTINGS: Readonly<Record<string, string>> = {
+	llm: "moved: its baseUrl, apiKeyEnv, model, jsonMode and timeoutSeconds to models.default; dailyTokens, directMessageReserve and concurrency to the service settings' text (parseServiceSettings)",
+	...Object.fromEntries(['enabled', 'baseUrl', 'apiKeyEnv', 'model', 'timeoutSeconds', 'dailyTokens'].map((key) => [`decisions.${key}`, SERVICE_KEY])),
+};
+
+/**
+ * `raw` read as a brain's settings: every setting it leaves out at its default (nothing at all, or `null` as an empty
+ * YAML file reads, is every default), or else every problem, each with its path, after `source › ` when given. A key
+ * the schema doesn't know is a problem too, with the nearest known one, or where it went for a key of the 0.1 betas.
+ * Never throws.
+ */
+export function parseSettings(raw: unknown, { source }: { source?: string } = {}): { settings?: Settings; issues: string[] } {
+	const { value, problems } = readConfig(SettingsSchema, raw, { moved: MOVED_SETTINGS, check: checkSettings });
+	return value ? { settings: value, issues: [] } : { issues: problems.map((problem) => sourced(source, problem)) };
+}
+
+/**
+ * What the whole service shares, set once and never per brain: the text provider's budget, which every persona's
+ * model client spends together (one meter, one limit of requests in flight), and the Decisions client, one for every
+ * persona. The app builds from it the token meters (`createTokenMeter`), the model clients (`llmsFor`'s `budget`) and
+ * the Decisions client (`createConfiguredDecisions`).
+ */
+export const ServiceSettingsSchema = z
+	.object({
+		/** The text provider's budget, for every persona together. */
+		text: z
+			.object({
+				/**
+				 * Tokens per day for text generation; 0 for no limit. One pool for every persona, reset at 00:00 UTC, first
+				 * come first served: personas online right after the reset spend it first. At the shipped prompt sizes a DM
+				 * turn is about 3.5-4K tokens, so the default buys about 55 DM turns a day for all personas together: size it
+				 * to the fleet. Past it, replies wait and group chats stay quiet. Spent through the meter the app builds with
+				 * it (`createTokenMeter`).
+				 */
+				dailyTokens: z.number().int().min(0).default(200_000),
+				/** The share of dailyTokens kept for DMs and their photos, 0 to 0.9: group chats and posts stop once the rest is spent. */
+				directMessageReserve: z.number().min(0).max(0.9).default(0.3),
+				/** The most text model requests in flight at once, for every persona together; the others wait their turn. */
+				concurrency: z.number().int().min(1).max(32).default(4),
+			})
+			.default({}),
+		/**
+		 * The Decisions API client (OpenAI's by default): a classifier that answers typed questions with probabilities
+		 * and writes no text. Its only configuration: nothing falls back to `models`. Off by default: turning it on sends
+		 * people's messages, the personas' replies and group chats to `baseUrl`. Which checks each brain asks, and their
+		 * thresholds, are that brain's `Settings.decisions`.
+		 */
+		decisions: z
+			.object({
+				/** Whether to use it at all (needs the key named by `apiKeyEnv`): off, nothing is sent to /decisions, for any persona. */
+				enabled: z.boolean().default(false),
+				/** The Decisions API's base URL ({baseUrl}/decisions): OpenAI's, or a gateway or mock that speaks it. */
+				baseUrl: z.string().url().default('https://api.openai.com/v1'),
+				/** The environment variable holding its key; empty for no authentication. */
+				apiKeyEnv: z.string().default('OPENAI_API_KEY'),
+				/** The only model OpenAI's API offers. */
+				model: z.string().min(1).default('gpt-6-luna'),
+				/** Seconds before a request is given up (it is retried once); the path without it then runs. */
+				timeoutSeconds: z.number().min(1).max(30).default(5),
+				/** Input tokens every persona together may spend per UTC day on every Decisions call (the checks and the group-chat gate), counted apart from text generation; 0 for no limit. Past it, as if off. */
+				dailyTokens: z.number().int().min(0).default(2_000_000),
+			})
+			.default({}),
+	})
+	.default({});
+
+export type ServiceSettings = z.infer<typeof ServiceSettingsSchema>;
+
+/** The service settings at their defaults (tests, demos). */
+export const DEFAULT_SERVICE_SETTINGS: ServiceSettings = ServiceSettingsSchema.parse(undefined);
+
+/** `raw` read as the service settings, as `parseSettings` reads a brain's. Never throws. */
+export function parseServiceSettings(raw: unknown, { source }: { source?: string } = {}): { service?: ServiceSettings; issues: string[] } {
+	const { value, problems } = readConfig(ServiceSettingsSchema, raw);
+	return value ? { service: value, issues: [] } : { issues: problems.map((problem) => sourced(source, problem)) };
+}
+
+type SettingsInput = NonNullable<z.input<typeof SettingsSchema>>;
+/** A persona's own pacing and relationship, as its config writes them: only the keys it changes. */
+export type PersonaSettings = { pacing?: NonNullable<SettingsInput['pacing']>; relationship?: NonNullable<SettingsInput['relationship']> };
+
+/** `own` with each bare `[least, most]` written over a drawn range of `base` given that range's shape. */
+const keepShapes = (own: unknown, base: unknown): unknown => {
+	if (Array.isArray(own) && isPlainObject(base) && 'shape' in base) return { range: own, shape: base.shape };
+	return isPlainObject(own) && isPlainObject(base) ? Object.fromEntries(Object.entries(own).map(([key, value]) => [key, keepShapes(value, base[key])])) : own;
+};
+
+/**
+ * `settings` with a persona's own pacing and relationship merged over them (deepMerge: key by key, a list or a range
+ * replacing, `null` back to the default; a bare `[least, most]` keeps the shape `settings` give it), checked again: a
+ * rule across keys may depend on both.
+ */
+export function mergedSettings({ pacing, relationship }: PersonaSettings, settings: Settings): { value?: Settings; problems: Problem[] } {
+	if (pacing === undefined && relationship === undefined) return { value: settings, problems: [] };
+	return readConfig(SettingsSchema, deepMerge(settings, keepShapes({ pacing, relationship }, settings)), { check: checkSettings });
+}
+
+/** mergedSettings' value, else a ConfigError naming the persona: what createBrain and personaReport run with. */
+export function ownSettings(persona: PersonaSettings & { id: string }, settings: Settings): Settings {
+	const { value, problems } = mergedSettings(persona, settings);
+	if (!value) throw new ConfigError(`the settings of persona "${persona.id}"`, problems.map((problem) => sourced(undefined, problem)));
+	return value;
+}
 
 /** Milliseconds from seconds, minutes, hours or days, for the ranges above. */
 export const SECOND = 1000;

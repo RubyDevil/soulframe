@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createConfiguredDecisions, DISABLED_DECISIONS, parseAnswers, probabilityOf, scoreOf, DecisionsParseError, type Question } from '../src/decisions.js';
 import { createTokenMeter } from '../src/llm.js';
-import { SettingsSchema } from '../src/settings.js';
+import { DEFAULT_SERVICE_SETTINGS, ServiceSettingsSchema } from '../src/settings.js';
 import { memoryStore } from './fixtures.js';
 
 const predicate: Question = { type: 'predicate', name: 'p', instructions: 'P?' };
@@ -29,7 +29,7 @@ const good = {
 
 const setUp = ({ dailyTokens = 0, baseUrl = 'https://api.openai.com/v1/', apiKeyEnv = 'OPENAI_API_KEY', apiKeyOf = (name: string) => `key-of-${name}` } = {}) => {
 	const store = memoryStore();
-	const settings = SettingsSchema.parse({ decisions: { enabled: true, baseUrl, apiKeyEnv, dailyTokens } }).decisions;
+	const settings = ServiceSettingsSchema.parse({ decisions: { enabled: true, baseUrl, apiKeyEnv, dailyTokens } }).decisions;
 	const meter = createTokenMeter(store, dailyTokens, () => DAY, 'decisionTokens');
 	const logs: { persona: string; event: string; detail?: Record<string, unknown> }[] = [];
 	const decisions = createConfiguredDecisions({ settings, apiKeyOf, meter, log: (persona, event, detail) => logs.push({ persona, event, detail }), rng: () => 0 });
@@ -98,9 +98,17 @@ describe('createConfiguredDecisions', () => {
 		expect(logs.filter((l) => l.event === 'decisions_budget_spent')).toHaveLength(1);
 	});
 
+	it('is the disabled client while the service settings turn it off: nothing is ever sent', async () => {
+		const fetch = vi.spyOn(globalThis, 'fetch');
+		const off = createConfiguredDecisions({ settings: DEFAULT_SERVICE_SETTINGS.decisions, apiKeyOf: () => 'key' });
+		expect(off).toBe(DISABLED_DECISIONS);
+		expect(await off.ask('a', QUESTIONS, context)).toBeNull();
+		expect(fetch).not.toHaveBeenCalled();
+	});
+
 	it('logs a spent cap once per day of its own clock', async () => {
 		let at = DAY;
-		const settings = SettingsSchema.parse({ decisions: { enabled: true, dailyTokens: 100 } }).decisions;
+		const settings = ServiceSettingsSchema.parse({ decisions: { enabled: true, dailyTokens: 100 } }).decisions;
 		const meter = createTokenMeter(memoryStore(), 100, () => at, 'decisionTokens');
 		const logged: string[] = [];
 		const decisions = createConfiguredDecisions({ settings, apiKeyOf: () => 'key', meter, log: (_persona, event) => logged.push(event), now: () => at });
