@@ -197,15 +197,27 @@ once delivery was attempted.
 Off by default (`settings.initiative.enabled`). With it on, a persona may start a DM conversation itself: an
 **opener**. The code decides who and when; the model decides whether to text and what, and may decline.
 
-- **Where openers come from.** A follow-up: when someone tells it about something still ahead of them (an interview,
-  a trip) or it promises to get back to them, the DM turn may plan to text them again `days` ahead
-  (`initiative.followUps`), with a short note of its own. The plan is kept only with the turn (`Turn.keep`); one per
-  person. Every later turn with them sees it, so once they talk about it the model drops it, and once its day has
-  come their own turn is asked to bring it up. It may go from 6 AM that day, in the persona's time zone, until the
-  end of the day after it.
+- **Where openers come from.** Three kinds, one plan at most per person:
+  - **A follow-up**: when someone tells it about something still ahead of them (an interview, a trip) or it promises
+    to get back to them, the DM turn may plan to text them again `days` ahead (`initiative.followUps`), with a short
+    note of its own.
+  - **A check-in** (`initiative.checkIns`): someone close (familiarity, faded for the time apart, and affinity above
+    thresholds) it hasn't heard from in `quietDays`. As each span of its online time opens, each such person is drawn,
+    about once in `meanDays` of their silence, up to twice as often for the closest, so people apart for months drift
+    off the list; it goes at a random moment of the span, and is dropped if they talk before it does (`planCheckIns`,
+    initiative.ts:121).
+  - **Sharing its day** (`initiative.sharing`, off by default): when a span opens within 30 minutes of a busy block's
+    end, now and then (`chance`), it texts one of the people closest to it about it ("at the gym"), within the next
+    30 minutes (`planShare`, initiative.ts:161). The model makes up what happened, keeping to its notes on itself.
+
+  A follow-up is kept only with the turn that planned it (`Turn.keep`). Every later turn with them sees it, so once
+  they talk about it the model drops it, and once its day has come their own turn is asked to bring it up. It may go
+  from 6 AM that day, in the persona's time zone, until the end of the day after it. Check-ins and shares are the
+  code's: no turn sees them. They are planned once per span (a restart doesn't plan it again), for people an allowed
+  channel reaches, at most what `perDay` leaves.
 - **Which channels.** Only those the app allows: `queue.allowInitiative(channel, conversationOf)` (see
   [channels](./channels.md#texting-first-allowinitiative)), on the channel of the last message between them.
-- **The guardrails**, which no setting relaxes (`openerBlock`, initiative.ts:26): never to anyone who never wrote to
+- **The guardrails**, which no setting relaxes (`openerBlock`, initiative.ts:30): never to anyone who never wrote to
   it, who is not `active`, deny-listed on any account or flagged as possibly under 18; never while a reply to them is
   owed or within two hours of the last message either way; at most one opener left unanswered (nothing more goes
   until they write), and `personGapHours` between two, doubled for each one in a row they ignored; `perDay` in any 24

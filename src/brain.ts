@@ -20,8 +20,11 @@ import {
 	dmCheckInput,
 	dmMinorQuestion,
 	FAMILIARITY_LEVELS,
+	checkInReasonPrompt,
+	followUpReasonPrompt,
 	OPENER_REQUEST,
 	openerTask,
+	shareReasonPrompt,
 	planDayText,
 	groupChatGateQuestions,
 	groupChatLineInput,
@@ -224,10 +227,11 @@ export interface Brain {
 	 */
 	assess(personId: number, channel: Channel): Promise<void>;
 	/**
-	 * A first message to the person on `channel`, about `opener` (settings.initiative): what to text them, or no message
-	 * when the model chose not to, given the history, notes, relationship and time as a DM turn has them. Stores nothing
-	 * until the turn's `keep` (its notes only: familiarity and affinity move with their answer, not with an opener).
-	 * Throws when the answer can't be read. The reply queue calls it, once the code's guardrails allowed the opener.
+	 * A first message to the person on `channel`, for `opener` (settings.initiative): a follow-up (its note), a check-in
+	 * or a share (the busy block it is back from). What to text them, or no message when the model chose not to, given
+	 * the history, notes, relationship and time as a DM turn has them. Stores nothing until the turn's `keep` (its notes
+	 * only: familiarity and affinity move with their answer, not with an opener). Throws when the answer can't be read.
+	 * The reply queue calls it, once the code's guardrails allowed the opener.
 	 */
 	composeOpener(personId: number, channel: Channel, opener: Pick<Opener, 'kind' | 'about'>, options?: { extraLines?: (person: Person) => readonly string[] }): Promise<Turn>;
 	/** A post in its own voice for `channel` (with its `notes`), following its rules and not repeating its recent posts, or null. The app picked where and when. */
@@ -522,16 +526,16 @@ export function createBrain({
 		};
 	};
 
-	/** The follow-up pending with them, as a DM turn shows it, if any. */
+	/** The follow-up pending with them, as a DM turn shows it, if any (a check-in or a share is the code's, never shown). */
 	const pendingPlan = (personId: number) => {
 		const pending = store.pendingOpener(personId);
-		return pending ? { when: planDayText(pending.dueAt, now(), persona.timezone), about: pending.about, due: pending.dueAt <= now() } : undefined;
+		return pending?.kind === 'followUp' ? { when: planDayText(pending.dueAt, now(), persona.timezone), about: pending.about, due: pending.dueAt <= now() } : undefined;
 	};
 	/** A follow-up a kept turn planned (`days` ahead, at most followUps.maxDays), replacing the one pending; false drops it. */
 	const planFollowUp = (personId: number, plan: { days: number; about: string } | false) => {
 		if (plan === false) {
 			const pending = store.pendingOpener(personId);
-			if (!pending) return;
+			if (pending?.kind !== 'followUp') return;
 			store.closeOpener(pending.id, 'dropped');
 			store.audit(persona.id, 'follow_up_dropped', { personId });
 			return;
@@ -732,13 +736,21 @@ export function createBrain({
 			const yourLast = history.findLast((m) => m.direction === 'out');
 			const photos = history.some((m) => m.media?.images.length);
 			const links = history.some((m) => m.media?.links.length);
+			// Why it may text them: a follow-up's note, how long they have been quiet, or what it is just back from
+			const quietFor = now() - (history.at(-1)?.at ?? person.lastInAt);
+			const reason =
+				opener.kind === 'followUp'
+					? followUpReasonPrompt(person.name, opener.about)
+					: opener.kind === 'checkIn'
+						? checkInReasonPrompt(person.name, quietFor)
+						: shareReasonPrompt(person.name, opener.about);
 			const task = openerTask({
 				selfNotes: selfNotes(),
 				personName: person.name,
 				personNotes: person.summary,
 				memory: settings.memory,
 				extraLines: options.extraLines?.(person) ?? [],
-				about: opener.about,
+				reason,
 				time: directMessageTimePrompt({
 					localTime: localTime(),
 					gaps: settings.context.timeSince ? { theirLast: theirLast ? now() - theirLast.at : null, yourLast: yourLast ? now() - yourLast.at : null } : undefined,

@@ -27,12 +27,9 @@ Where the beta stands and what is planned before 1.0.
 
 ## Planned: texting first
 
-Follow-ups are the first kind of opener (`settings.initiative`, [concepts](./concepts.md#texting-first)). Planned, on
-the same table, guardrails and turn:
+Follow-ups, check-ins and sharing its day are the kinds of opener so far (`settings.initiative`,
+[concepts](./concepts.md#texting-first)). Planned, on the same table, guardrails and turn:
 
-- **Check-ins.** Someone close it hasn't heard from in a while (familiarity and affinity above thresholds, quiet for
-  some days), about once every few days of silence, more often the closer they are, the fade of familiarity taking
-  those gone for months off the list.
 - **The app's own openers**: a reason only the application knows, quoted as data.
 - **A cheap check first**: with the Decisions client on, whether a text would be welcome now, before paying for the
   model.

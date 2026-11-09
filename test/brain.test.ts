@@ -1387,6 +1387,17 @@ describe('texting first (settings.initiative)', () => {
 		expect(on.store.pendingOpener(sam.person.id)).toBeUndefined();
 	});
 
+	it("never shows a turn the code's own plans (a check-in, a share), nor lets it drop them", async () => {
+		const on = brainWith(ON, '{"reply": "haha", "followUp": false}');
+		const sam = on.brain.incoming(DM.chat, 'u-sam', 'Sam', 'hey');
+		if (sam.kind !== 'reply') throw new Error('expected a reply');
+		on.store.planOpener('robin', sam.person.id, { kind: 'checkIn', about: '', dueAt: NOW + HOUR, expiresAt: NOW + 2 * HOUR });
+		const turn = await on.brain.compose(sam.person.id, DM.chat);
+		expect(on.seen[0]!.messages[0]!.content).not.toContain('You plan to text them');
+		turn.keep?.();
+		expect(on.store.pendingOpener(sam.person.id)?.kind).toBe('checkIn');
+	});
+
 	it('keeps a plan no further ahead than followUps.maxDays', async () => {
 		const on = brainWith(settingsOf({ initiative: { enabled: true, followUps: { maxDays: 0 } } }), '{"reply": "ok", "followUp": {"days": 9, "about": "the trip"}}');
 		const { turn, person } = await turnOf(on);
@@ -1410,6 +1421,16 @@ describe('texting first (settings.initiative)', () => {
 		expect(on.store.personById(person.id).summary).toBe(before.summary);
 		opener.keep?.();
 		expect(on.store.personById(person.id)).toMatchObject({ summary: 'Sam had an interview', familiarity: before.familiarity, affinity: before.affinity });
+	});
+
+	it('tells a check-in how long they have been quiet, and a share what it is back from', async () => {
+		const on = brainWith(ON, '{"reply": "hey stranger"}');
+		const decision = on.brain.incoming(DM.chat, 'u-sam', 'Sam', 'talk soon!', NOW - 9 * DAY);
+		if (decision.kind !== 'reply') throw new Error('expected a reply');
+		await on.brain.composeOpener(decision.person.id, DM.chat, { kind: 'checkIn', about: '' });
+		expect(on.seen.at(-1)!.messages[0]!.content).toContain("You haven't talked with Sam in 9 days, and they came to mind.");
+		await on.brain.composeOpener(decision.person.id, DM.chat, { kind: 'share', about: 'at the gym' });
+		expect(on.seen.at(-1)!.messages[0]!.content).toContain("You're just back: until a moment ago you were at the gym.");
 	});
 
 	it('sends nothing when the model chooses not to text, or once they ended it', async () => {

@@ -38,8 +38,11 @@ export interface Person {
 	importanceAt: number;
 }
 
-/** What made the persona plan to text someone first: `followUp`, a DM turn's own plan (settings.initiative.followUps). */
-export type OpenerKind = 'followUp';
+/**
+ * What made the persona plan to text someone first (settings.initiative): `followUp`, a DM turn's own plan; `checkIn`,
+ * someone close gone quiet; `share`, its day, as it comes back from a busy block.
+ */
+export type OpenerKind = 'followUp' | 'checkIn' | 'share';
 
 /**
  * How an opener ended: `sent`; `rehearsed` (a dry run logged it); `declined` (the model chose not to text); `replaced`
@@ -54,7 +57,7 @@ export interface Opener {
 	persona: string;
 	personId: number;
 	kind: OpenerKind;
-	/** Why, in the model's own words: the private note it is texted about, data in the prompt. */
+	/** Why: a follow-up's note in the model's own words, the busy block a share is about; empty for a check-in. Data in the prompt. */
 	about: string;
 	/** The earliest moment it may go, and the moment it is given up (ms). */
 	dueAt: number;
@@ -451,6 +454,20 @@ export function createStore(db: Database, now: () => number = Date.now) {
 					)
 					.get(personId, since) !== undefined
 			);
+		},
+		/**
+		 * The persona's people it may check in with or share with: active, who wrote to it before and are owed no turn, and
+		 * whose last message either way (`lastAt`) is at `quietSince` or before, closest first.
+		 */
+		quietPeople(persona: string, quietSince: number): { person: Person; lastAt: number }[] {
+			const rows = db
+				.prepare(
+					`SELECT * FROM (SELECT ${PERSON_COLUMNS}, COALESCE((SELECT MAX(at) FROM messages m WHERE m.person_id = p.id), p.last_in_at) AS last_at FROM people p
+					 WHERE p.persona = ? AND p.state = 'active' AND p.incoming > 0 AND p.last_in_at <= p.handled_at)
+					 WHERE last_at <= ? ORDER BY familiarity DESC, id`,
+				)
+				.all(persona, quietSince) as unknown as (PersonRow & { last_at: number })[];
+			return rows.map((row) => ({ person: toPerson(row), lastAt: row.last_at }));
 		},
 		/** When the person first wrote after `after` (ms), or null when they haven't since. */
 		firstInAfter(personId: number, after: number): number | null {

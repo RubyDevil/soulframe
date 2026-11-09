@@ -356,6 +356,6 @@ gets a turn of its own once this one ends), `reply_picked` (who went first among
 `dm_sent`, `reply_sent`, `reply_skipped` (left on read), `reply_failed`, `reply_waiting_budget`,
 `reply_waiting_provider`, `reply_cancelled`, `reply_paused`, `unreachable`, `delivery_failed`, `invite_accepted`,
 `invite_not_joined`, `action_skipped` (an action not carried out while halted or stopped), `hours_open` and `hours_closed`,
-`opener_processing`, `opener_<outcome>` (`sent`, `declined`, `dropped`, `failed`, `rehearsed`) and `opener_superseded`
+`openers_planned` (the check-ins and share of a span), `opener_processing`, `opener_<outcome>` (`sent`, `declined`, `dropped`, `failed`, `rehearsed`) and `opener_superseded`
 (they wrote first: the plan stays) for texting first, `opener_superseded_by_message`, and in a dry run `dry_send`, `dry_block` and `dry_<action>` for a channel's own action. Your
 adapter can log its own events through the same function.

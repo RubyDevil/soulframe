@@ -19,7 +19,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   (`personGapHours`) that doubles for each one ignored; `perDay` a day and one a day per account across personas; in a
   full online span with `spanEndMinutes` left, and only when no reply waits. Every DM turn sees the plan, so talking
   about it drops it; if they write first, the opener stops and their reply is asked to bring it up. Openers spend the budget DMs don't keep for themselves, and each outcome is
-  audited (`opener_sent`, `opener_declined`, …). A persona may set its own `initiative` in its config. The store keeps
+  audited (`opener_sent`, `opener_declined`, …). A persona may set its own `initiative` in its config.
+- **Check-ins and sharing its day**, two more kinds of opener, planned by the reply queue once per span of online
+  time (`initiative.checkIns`, `initiative.sharing`). A check-in goes to someone close (familiarity faded for the time
+  apart and affinity above thresholds) quiet for `quietDays`, about once in `meanDays` of their silence, twice as often
+  for the closest, and is dropped if they talk first. Sharing, off by default, texts one of the closest people about
+  the busy block it just came back from (`chance` each time). The store's `quietPeople` lists who may get one. The store keeps
   them in a new `openers` table (made when it opens), with methods for them (`planOpener`, `dueOpeners`, …).
 - **A persona is its config and its prompt.** `parsePersona({ config, prompt, channels })` checks a persona from
   wherever the application keeps it (its own loader, a database, values in code) and answers `{ persona?, issues }`,

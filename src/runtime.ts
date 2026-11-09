@@ -8,7 +8,7 @@ import { readableChars } from './perception.js';
 import { between, sleep, weightedPick, type Rng } from './rng.js';
 import { nextSpan, spanAt, type Hours, type Span } from './schedule.js';
 import { MINUTE, SECOND } from './settings.js';
-import { openerBlock } from './initiative.js';
+import { openerBlock, planCheckIns, planShare } from './initiative.js';
 import type { Opener, OpenerOutcome, Person, PersonState, Store } from './store.js';
 
 /** What every persona module shares: the clock, randomness, the store, the halt switch and logging (settings are each brain's, `brain.settings`). */
@@ -941,19 +941,36 @@ export function createReplyQueue({
 	};
 
 	/**
-	 * At each tick, while texting first is on (settings.initiative) and the persona is idle: the first due opener the
+	 * As a full online span opens on a channel allowed for openers (or at the first tick in one), once per span, kept in
+	 * the store (kv `initiativeSpan`) so a restart doesn't plan it again: the check-ins and the share of that span
+	 * (initiative.ts planCheckIns, planShare).
+	 */
+	const plan = (now: number) => {
+		const span = [...initiating.keys()].map((channel) => spanAt(persona, now, channel)).find((open) => open?.kind === 'online');
+		if (!span || runtime.store.get(persona.id, 'initiativeSpan') === String(span.start)) return;
+		runtime.store.set(persona.id, 'initiativeSpan', String(span.start));
+		const context = { store: runtime.store, persona, settings, span, now, rng: runtime.rng, reachable: (person: Person) => channelFor(person) !== undefined };
+		const planned = [...planCheckIns(context), planShare(context)].filter((opener) => opener !== null);
+		if (planned.length) runtime.log(persona.id, 'openers_planned', { openers: planned.map(({ personId, kind, dueAt }) => ({ personId, kind, dueAt: new Date(dueAt).toISOString() })) });
+	};
+
+	/**
+	 * At each tick, while texting first is on (settings.initiative), it plans the span's openers if it has not yet
+	 * (`plan`), then, while the persona is idle: the first due opener the
 	 * guardrails allow now (initiative.ts openerBlock; one they never will is dropped), on a channel allowed for it, in a
-	 * full online span with `spanEndMinutes` left, goes at a random moment (on average OPENER_MEAN_WAIT on), one at a time.
+	 * full online span with `spanEndMinutes` left, goes (a follow-up at a random moment, on average OPENER_MEAN_WAIT on), one
+	 * at a time.
 	 */
 	const initiate = async () => {
 		const { initiative } = settings;
-		if (!initiative.enabled || !initiating.size) return;
+		if (!initiative.enabled || !initiating.size || stopped || runtime.halted()) return;
 		const now = runtime.now();
+		plan(now);
 		if (!idle(now)) return;
 		for (const opener of runtime.store.dueOpeners(persona.id, now)) {
 			if (queued(opener.personId) || active.has(opener.personId)) continue;
 			const person = runtime.store.personById(opener.personId);
-			const blocked = openerBlock(runtime.store, person, now, initiative);
+			const blocked = openerBlock(runtime.store, person, now, initiative, opener);
 			if (blocked?.final) {
 				runtime.store.closeOpener(opener.id, 'dropped');
 				runtime.store.audit(persona.id, 'opener_dropped', { personId: person.id, kind: opener.kind, reason: blocked.reason });
@@ -964,8 +981,8 @@ export function createReplyQueue({
 			if (channel === undefined) continue;
 			const span = spanAt(persona, now, channel);
 			if (span?.kind !== 'online' || span.end - now < initiative.spanEndMinutes * MINUTE) continue;
-			// It thinks of them at a random moment of the time it may
-			if (runtime.rng() >= 1 - Math.exp(-TICK / OPENER_MEAN_WAIT)) return;
+			// A follow-up's day is only roughly planned: it thinks of them at a random moment of the time it may (a check-in or a share has its moment already)
+			if (opener.kind === 'followUp' && runtime.rng() >= 1 - Math.exp(-TICK / OPENER_MEAN_WAIT)) return;
 			opening = true;
 			let conversation: Conversation | null;
 			try {

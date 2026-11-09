@@ -465,8 +465,9 @@ export const SettingsSchema = z
 		 * Texting first, off by default: a persona may start a DM conversation on its own, through its reply queue, with
 		 * people who have written to it before, on the channels the app allows (`queue.allowInitiative`). The code decides
 		 * who and when (the guardrails in initiative.ts, which no setting relaxes); the model decides whether to text and
-		 * what, and may decline. Each first message (an opener) is about one DM turn of tokens, sent or declined, from the
-		 * share of the budget DMs don't keep for themselves (`ServiceSettings.text.directMessageReserve`).
+		 * what, and may decline. Three kinds: follow-ups, check-ins and sharing its day. Each first message (an opener) is
+		 * about one DM turn of tokens, sent or declined, from the share of the budget DMs don't keep for themselves
+		 * (`ServiceSettings.text.directMessageReserve`).
 		 */
 		initiative: z
 			.object({
@@ -488,6 +489,42 @@ export const SettingsSchema = z
 						enabled: z.boolean().default(true),
 						/** The furthest ahead one may be planned, in days (0: later the same day). */
 						maxDays: z.number().int().min(0).max(30).default(14),
+					})
+					.strict()
+					.default({}),
+				/**
+				 * Check-ins: it texts someone close it hasn't heard from in a while, planned as each span of its online time opens
+				 * (initiative.ts planCheckIns), about once in `meanDays` of their silence, up to twice as often for the closest.
+				 */
+				checkIns: z
+					.object({
+						/** Whether it checks in at all (with `enabled`). */
+						enabled: z.boolean().default(true),
+						/** The familiarity, faded for their time apart, from which it may check in: 0.32, "one of your regulars". */
+						minFamiliarity: z.number().min(0).max(0.99).default(0.32),
+						/** The affinity from which it may (while affinity is kept): 0, never someone it dislikes. */
+						minAffinity: z.number().min(-1).max(1).default(0),
+						/** Days without a message either way before it may check in. */
+						quietDays: z.number().min(0.5).max(90).default(3),
+						/** Days of silence for one check-in on average, at `minFamiliarity`; half as many for the closest. */
+						meanDays: z.number().min(1).max(365).default(7),
+					})
+					.strict()
+					.default({}),
+				/**
+				 * Sharing its day, off by default: as it comes online within 30 minutes of a busy block's end, it may text one
+				 * of the people closest to it about it (initiative.ts planShare). The model makes up what happened, keeping to its notes.
+				 */
+				sharing: z
+					.object({
+						/** Whether it shares at all (with `enabled`). */
+						enabled: z.boolean().default(false),
+						/** The chance it shares, each time it comes back from a busy block. */
+						chance: z.number().min(0).max(1).default(0.15),
+						/** The familiarity, faded for their time apart, from which someone may hear about it: 0.48, "getting close". */
+						minFamiliarity: z.number().min(0).max(1).default(0.48),
+						/** The affinity from which they may (while affinity is kept): 0.2, "you like them". */
+						minAffinity: z.number().min(-1).max(1).default(0.2),
 					})
 					.strict()
 					.default({}),

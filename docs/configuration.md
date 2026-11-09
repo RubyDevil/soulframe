@@ -502,7 +502,8 @@ within `typingDurationSeconds`; a message of `thinkingPauses.minChars` or more t
 ### `initiative`
 
 Texting first, off by default: the persona may start a DM conversation itself, through its reply queue, with someone
-who wrote to it before, on a channel the app allows (`queue.allowInitiative`). The code decides who and when, with
+who wrote to it before, on a channel the app allows (`queue.allowInitiative`): to follow up on something, to check in
+with someone close gone quiet, or to share its day. The code decides who and when, with
 guardrails no setting relaxes; the model decides whether to text and what, and may decline. See
 [concepts](./concepts.md#texting-first).
 
@@ -514,6 +515,15 @@ guardrails no setting relaxes; the model decides whether to text and what, and m
 | `spanEndMinutes` | number, 1 to 120 | `20` | Minutes of its online time that must be left when an opener goes: it stays around for the answer. |
 | `followUps.enabled` | boolean | `true` | A DM turn may plan a follow-up: texting them again about something still ahead of them (an interview, a trip) or something it promised. One plan per person. |
 | `followUps.maxDays` | integer, 0 to 30 | `14` | The furthest ahead one may be planned, in days (0: later the same day). |
+| `checkIns.enabled` | boolean | `true` | It may check in with someone close it hasn't heard from in a while. Planned as each span of its online time opens. |
+| `checkIns.minFamiliarity` | number, 0 to 0.99 | `0.32` | Their familiarity, faded for the time apart, from which it may: "one of your regulars". Someone apart for months drifts below it. |
+| `checkIns.minAffinity` | number, -1 to 1 | `0` | Their affinity from which it may (while affinity is kept): never someone it dislikes. |
+| `checkIns.quietDays` | number, 0.5 to 90 | `3` | Days without a message either way before it may. A check-in is dropped if they talk before it goes. |
+| `checkIns.meanDays` | number, 1 to 365 | `7` | How often, once someone is quiet: about once in this many days at `minFamiliarity`, twice as often for the closest. |
+| `sharing.enabled` | boolean | `false` | It may share its day: as it comes online within 30 minutes of a busy block's end, it texts one of the people closest to it about it ("at the gym"). The model makes up what happened, keeping to its notes on itself. |
+| `sharing.chance` | number, 0 to 1 | `0.15` | The chance it does, each time it comes back from a busy block. |
+| `sharing.minFamiliarity` | number, 0 to 1 | `0.48` | Their familiarity, faded, from which someone may hear about it: "getting close". |
+| `sharing.minAffinity` | number, -1 to 1 | `0.2` | Their affinity from which they may (while affinity is kept): "you like them". |
 
 Each opener costs about one DM turn of tokens, sent or declined, from the share of the daily budget DMs don't keep for
 themselves (the service settings' [`text.directMessageReserve`](#text)): openers stop before replies run short. A

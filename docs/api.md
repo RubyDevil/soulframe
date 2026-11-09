@@ -19,7 +19,7 @@ signatures are not exported themselves; each is named with the way to reach it:
 | `ScheduleConfig` | `PersonaConfig['schedule']` |
 | `Turn` | `Awaited<ReturnType<Brain['compose']>>` |
 | `TokenMeter` | `ReturnType<typeof createTokenMeter>` |
-| `Opener`, `OpenerOutcome` | `ReturnType<Store['planOpener']>`, `Parameters<Store['closeOpener']>[1]` |
+| `Opener`, `OpenerKind`, `OpenerOutcome` | `ReturnType<Store['planOpener']>`, `Opener['kind']`, `Parameters<Store['closeOpener']>[1]` |
 | `Question`, `Answers` | `Parameters<Decisions['ask']>[1]`, `Awaited<ReturnType<Decisions['ask']>>` |
 
 - [Persona config](#persona-config)
@@ -500,7 +500,7 @@ interface Brain {
 		extraLines?: (person: Person) => readonly string[];
 	}): Promise<Turn>;
 	assess(personId: number, channel: Channel): Promise<void>;
-	composeOpener(personId: number, channel: Channel, opener: { kind: 'followUp'; about: string }, options?: {
+	composeOpener(personId: number, channel: Channel, opener: { kind: 'followUp' | 'checkIn' | 'share'; about: string }, options?: {
 		extraLines?: (person: Person) => readonly string[];
 	}): Promise<Turn>;
 	composePost(channel: Channel, post: { rules: string; examples: readonly string[]; recent: readonly string[] }): Promise<string | null>;
@@ -546,13 +546,14 @@ interface Brain {
   (`importance`). The reply queue calls it when someone's turn comes due while others wait, to weigh who goes first;
   `compose` then uses those answers while no newer message came, asking nothing again. Never throws: a failure leaves
   the model's own rating of their last turn.
-- **`composeOpener`**: a first message to the person on `channel` (`settings.initiative`, off by default), about
-  `opener` (a follow-up's note): what to text, or no message when the model chose not to. Builds the prompt from the
+- **`composeOpener`**: a first message to the person on `channel` (`settings.initiative`, off by default), for
+  `opener`: a follow-up (its note), a check-in (how long they have been quiet) or a share (the busy block in `about`).
+  What to text, or no message when the model chose not to. Builds the prompt from the
   history, notes, relationship and time as `compose` does (`openerTask`) and calls the model with
   `task: 'initiative'`. Its `keep()` stores only the notes: familiarity and affinity move with their answer. Throws when
   the answer can't be read. The reply queue calls it once the code's guardrails let the opener go
-  ([concepts](./concepts.md#texting-first)); with `initiative.followUps` on, `compose`'s answer may plan one (stored by
-  its `keep()`).
+  ([concepts](./concepts.md#texting-first)); with `initiative.followUps` on, `compose`'s answer may plan a follow-up
+  (stored by its `keep()`), and the queue plans check-ins and shares itself.
 - **`composePost`**: a post for `channel` in the persona's voice, with the channel's `notes`, following `rules`, like
   `examples`, not repeating `recent`; every link removed when `policy.allowedLinks` is set; `null` when under 10
   characters. Uses `task: 'post'`.
@@ -863,7 +864,7 @@ interface Store {
 	clearMinorCaution(channel: ChannelId, externalId: string): boolean;
 	forgetPerson(personId: number, options?: { includeEnded?: boolean }): boolean;
 	resetPersona(persona: string, options?: { includeEnded?: boolean }): { people: number; messages: number };
-	planOpener(persona: string, personId: number, plan: { kind: 'followUp'; about: string; dueAt: number; expiresAt: number }): Opener;
+	planOpener(persona: string, personId: number, plan: { kind: OpenerKind; about: string; dueAt: number; expiresAt: number }): Opener;
 	pendingOpener(personId: number): Opener | undefined;
 	dueOpeners(persona: string, at: number): Opener[];
 	closeOpener(id: number, outcome: OpenerOutcome): void;
@@ -871,6 +872,7 @@ interface Store {
 	openersSentSince(persona: string, since: number): number;
 	accountOpenedSince(personId: number, since: number): boolean;
 	firstInAfter(personId: number, after: number): number | null;
+	quietPeople(persona: string, quietSince: number): { person: Person; lastAt: number }[];
 }
 ```
 
@@ -914,8 +916,9 @@ failed?: true }[]; links: (LinkPreview & { looked?: true })[] }`. A photo keeps 
   development, or a persona retired and brought back; nothing asks for confirmation, so guard it in your tooling.
 
 `Opener` is a first message the persona plans to send (`settings.initiative`, [concepts](./concepts.md#texting-first)):
-`{ id, persona, personId, kind: 'followUp', about, dueAt, expiresAt, createdAt, closedAt: number | null, outcome:
-OpenerOutcome | null }`, pending while `closedAt` is `null`. `OpenerOutcome` is `'sent' | 'rehearsed' | 'declined' |
+`{ id, persona, personId, kind: OpenerKind, about, dueAt, expiresAt, createdAt, closedAt: number | null, outcome:
+OpenerOutcome | null }`, pending while `closedAt` is `null`. `OpenerKind` is `'followUp' | 'checkIn' | 'share'`;
+`about` is a follow-up's note or the busy block a share is about (empty for a check-in). `OpenerOutcome` is `'sent' | 'rehearsed' | 'declined' |
 'replaced' | 'dropped' | 'expired' | 'failed'`.
 
 - **`planOpener`**: plans one, closing the person's pending one as `replaced` (one pending per person).
@@ -924,7 +927,9 @@ OpenerOutcome | null }`, pending while `closedAt` is `null`. `OpenerOutcome` is 
 - **`sentOpeners`**, **`openersSentSince`**, **`accountOpenedSince`**: those sent to the person (newest first), the
   persona's count since a time, and whether any persona sent one to one of the person's accounts since then: what the
   guardrails count.
-- **`firstInAfter`**: when the person first wrote after a time, or `null`.
+- **`firstInAfter`**: when the person first wrote after a time, or `null`. **`quietPeople`**: the persona's active people
+  who wrote to it before, are owed no turn and whose last message either way (`lastAt`) is at `quietSince` or before,
+  closest first: those it may check in with or share with.
 
 ### `Person`
 
