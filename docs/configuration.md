@@ -212,7 +212,7 @@ problem. `createBrain` needs them: `parseSettings({})` gives every default.
 What every persona shares is not here: the text provider's daily budget and the Decisions client are the
 [service settings](#service-settings), set once.
 
-`settings.yaml`, say:
+[`examples/settings.yaml`](../examples/settings.yaml):
 
 ```yaml
 models:
@@ -500,10 +500,9 @@ within `typingDurationSeconds`; a message of `thinkingPauses.minChars` or more t
 What the whole service shares, set once and never per brain: the text provider's daily budget, which every persona's
 model client spends together (one meter, one limit of requests in flight), and the Decisions client, one for every
 persona. Read them with `parseServiceSettings(raw, { source })`, as `parseSettings` reads a brain's, and build the
-shared pieces from them:
+shared pieces from them. [`examples/service.yaml`](../examples/service.yaml):
 
 ```yaml
-# service.yaml
 text:
   dailyTokens: 400000
 decisions:

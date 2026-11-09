@@ -90,9 +90,9 @@ versions with the same rules.
 - **npm dist-tags.** A version with a hyphen is published with `npm publish --tag beta` (the tag matches the label), so
   it never becomes `latest`; only a version without a prerelease part does. Install a beta with
   `npm install soulframe@beta`.
-- **What counts as the public API:** the exports of `src/index.ts`, the shape of a persona's config and of the settings
-  (and the persona file format: a Markdown file, its config as frontmatter), and the database layout. See
-  [docs/api.md](./docs/api.md).
+- **What counts as the public API:** the exports of `src/index.ts`, the shape of a persona's config, of a brain's
+  settings and of the service settings (and the persona file format: a Markdown file, its config as frontmatter), and
+  the database layout. See [docs/api.md](./docs/api.md).
 - A published version is never changed or reused: fix forward with a new version.
 
 ## Commit messages
