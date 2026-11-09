@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- `brain.outgoing`: records a message the persona's account sent from outside the reply queue (typed by hand, say), so
+  later turns read it in the history as its own.
 - **Personas see photos and link previews in DMs.** `brain.incoming` also takes an `IncomingMessage` (`text`, `images`,
   `links`), and a photo sent alone now gets a turn. A photo is described once by `models.vision` (off until it names a
   model, never `llm.model`), the description stored in place of its URL, and the chat model reads only that. It takes

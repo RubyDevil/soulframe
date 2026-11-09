@@ -79,6 +79,26 @@ describe('brain', () => {
 		expect(store.personById(sam.person.id).name).toBe('Samantha');
 	});
 
+	it('reads a message its account sent by hand as its own, in order, without counting it as theirs', async () => {
+		const { store, brain, seen } = setUp('{"reply": "sure"}');
+		const person = brain.outgoing(DM.forum, 'u-sam', 'Sam', 'can we talk about something', NOW - MINUTE)!;
+		expect(person).toMatchObject({ name: 'Sam', incoming: 0, lastInAt: 0 });
+		const decision = brain.incoming(DM.forum, 'u-sam', 'Sam', 'yeah what about');
+		if (decision.kind !== 'reply') throw new Error('expected a reply');
+		expect(decision.person).toMatchObject({ id: person.id, incoming: 1, conversations: 1 });
+		await brain.compose(person.id, DM.forum);
+		expect(seen[0]!.slice(1).map(({ role, content }) => [role, content])).toEqual([['assistant', 'can we talk about something'], ['user', 'yeah what about']]);
+	});
+
+	it('records nothing sent by hand to someone denied', () => {
+		const { store, brain } = setUp('{"reply": "hey"}');
+		brain.incoming(DM.chat, '222', 'Kid', "i'm 15");
+		expect(store.isDenied(DM.chat.id, '222')).toBe(true);
+		const before = store.history(store.person(persona.id, DM.chat.id, '222')!.id).length;
+		expect(brain.outgoing(DM.chat, '222', 'Kid', 'hello?')).toBeUndefined();
+		expect(store.history(store.person(persona.id, DM.chat.id, '222')!.id)).toHaveLength(before);
+	});
+
 	it("runs on its runtime's clock, read at each use", () => {
 		const store = memoryStore(() => NOW);
 		const runtime = { store, rng: () => 0.99, now: () => NOW };
