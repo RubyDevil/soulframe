@@ -1,0 +1,87 @@
+name: Persona test
+
+# Two personas talk to each other on a live model, their waits skipped (scripts/persona-test/run.ts), then a model
+# reviews the conversation. Run by hand from the Actions tab. Needs the repository secret LLM_API_KEY and the
+# variables LLM_BASE_URL and LLM_MODEL (an OpenAI-compatible provider), unless the inputs or a settings file give
+# them. See docs/testing.md.
+on:
+  workflow_dispatch:
+    inputs:
+      persona_a:
+        description: The persona who opens (a persona file)
+        default: examples/personas/robin.md
+      persona_b:
+        description: The other persona
+        default: examples/personas/noa.md
+      opener:
+        description: The first message, from persona A
+        default: "hey! how's your day going?"
+      messages:
+        description: Stop after this many messages
+        default: '30'
+      hours:
+        description: Stop after this many hours of persona time
+        default: '24'
+      start:
+        description: '"online" (now, or the next time both are online), "now" or an ISO time'
+        default: online
+      model:
+        description: The personas' model (default the LLM_MODEL variable)
+        default: ''
+      judge_model:
+        description: The reviewer's model (default the personas')
+        default: ''
+      settings:
+        description: A settings file for the brains (models, pacing...), optional
+        default: ''
+      min_score:
+        description: Fail when the review's overall score is under this (1 to 5), optional
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: persona-test
+  cancel-in-progress: false
+
+jobs:
+  converse:
+    name: Converse and review
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Run the conversation and the review
+        # Every input reaches the script through the environment, never pasted into the command line
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
+          LLM_MODEL: ${{ inputs.model || vars.LLM_MODEL }}
+          LLM_JUDGE_MODEL: ${{ inputs.judge_model || vars.LLM_JUDGE_MODEL }}
+          PERSONA_A: ${{ inputs.persona_a }}
+          PERSONA_B: ${{ inputs.persona_b }}
+          OPENER: ${{ inputs.opener }}
+          MESSAGES: ${{ inputs.messages }}
+          HOURS: ${{ inputs.hours }}
+          START: ${{ inputs.start }}
+          SETTINGS: ${{ inputs.settings }}
+          MIN_SCORE: ${{ inputs.min_score }}
+        run: |
+          options=(--a "$PERSONA_A" --b "$PERSONA_B" --opener "$OPENER" --messages "$MESSAGES" --hours "$HOURS" --start "$START" --out "$RUNNER_TEMP/persona-test")
+          if [ -n "$SETTINGS" ]; then options+=(--settings "$SETTINGS"); fi
+          if [ -n "$MIN_SCORE" ]; then options+=(--min-score "$MIN_SCORE"); fi
+          npx tsx scripts/persona-test/run.ts "${options[@]}"
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: persona-test
+          path: ${{ runner.temp }}/persona-test
+          if-no-files-found: ignore
+          retention-days: 30

@@ -808,7 +808,7 @@ reads the real clock plus every wait skipped so far, so the real time a model ca
 reading time does live. Nothing is skipped while tracked work is under way, so a reply is never typed before its model
 answered. Timers due together run in the order they were set. `start` moves the clock first (to an evening when the
 personas are online, say). For runs against a live model (two personas talking to each other) and for tests that want
-the real order of a queue's timers without fake ones.
+the real order of a queue's timers without fake ones; [testing](./testing.md#two-personas-live) has both.
 
 ```ts
 const clock = createStepClock({ start: Date.UTC(2026, 0, 15, 20, 0) });

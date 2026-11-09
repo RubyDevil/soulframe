@@ -165,6 +165,41 @@ Call `queue.stop()` at the end of a test that started anything. A `Runtime` you 
 (`{ now, rng, store, dryRun, halted: () => false, log }`) avoids the halt file and keeps the console quiet; with
 `createRuntime`, give a `haltFile` that doesn't exist, or create it to test the halt switch.
 
+## Two personas, live
+
+`npm run persona-test` ([`scripts/persona-test/run.ts`](../scripts/persona-test/run.ts)) is the whole stack against
+a live model: two personas talk to each other through their own brains and reply queues, at the pace their settings
+give (glances, reading, typing, interruptions, their hours), on a step clock that skips every wait. Timestamps start
+at the real time (or the next time both are online) and move on as they would live, so an evening's conversation runs
+in the time its model calls take, and the model calls' own time counts as the personas' reading time, as it does
+live. Then a model reviews the conversation against a rubric
+([`scripts/persona-test/analysis.md`](../scripts/persona-test/analysis.md)): character, naturalness, coherence,
+memory, pacing, engagement and variety, each scored 1 to 5, with the problems it found quoted and a suggestion for
+each.
+
+```sh
+LLM_BASE_URL=https://api.provider.example/v1 LLM_MODEL=provider-chat-large LLM_API_KEY=... npm run persona-test
+npm run persona-test -- --a examples/personas/robin.md --b examples/personas/noa.md --messages 40 --settings settings.yaml
+npm run persona-test -- --canned   # offline: canned lines, no review
+```
+
+It stops after `--messages` messages (30, the opener included), after `--hours` of persona time (24), or once neither
+owes the other a reply (one left the other on read). `--opener` is the first message, from `--a`; `--start` is `now`,
+`online` (the default: now, or the next time both are online with 45 minutes left) or an ISO time. `--settings` and
+`--service` take the same files as an application (models, pacing, budget, the Decisions client); without a service
+file there is no daily token limit. `--judge-model` gives the reviewer a model of its own, and `--min-score` makes the
+run fail when the review's overall score is under it. `--help` lists the rest.
+
+The results go to `--out` (default `persona-test-results/<time>/`): `report.md` (the review, the metrics side by side,
+and what each persona noted about the other by the end), `transcript.md`, `events.jsonl` (every runtime event, timed),
+`run.json` (all of it, with every model call) and `conversation.db` (the store). The run fails (exit code 1) when a
+persona gave up on a reply, when the other never answered, or under `--min-score`.
+
+The **Persona test** workflow ([`.github/workflows/persona-test.yml`](../.github/workflows/persona-test.yml)) runs it
+from the repository's Actions tab, its inputs the options above, with the repository secret `LLM_API_KEY` and the
+variables `LLM_BASE_URL` and `LLM_MODEL` (optionally `LLM_JUDGE_MODEL`). The report is the job's summary, and the
+results are kept as the `persona-test` artifact. CI runs it with `--canned` on every change, so it keeps working.
+
 ## The example
 
 `examples/console-chat.ts` puts all of this together: an inline persona, a `:memory:` store, the canned model, a fixed

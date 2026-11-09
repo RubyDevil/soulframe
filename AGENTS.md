@@ -21,7 +21,8 @@ Node >= 22.13 (it uses `node:sqlite`). Runtime dependencies: `zod` and `yaml` on
    tools only to forbid crediting them.
 3. **No content policy in `src/`.** What a persona may say belongs to the application. The shipped safeguards (stop
    handling, the opt-in minors safeguard `Channel.adult`) may only get stricter, never weaker.
-4. **Prompt text only in `src/prompts.ts`** (fixed messages in `src/safety.ts`). No other file writes text for the model.
+4. **Prompt text only in `src/prompts.ts`** (fixed messages in `src/safety.ts`). No other file writes text for the model,
+   but for the persona test's review rubric (`scripts/persona-test/analysis.md`), a dev tool's that is never shipped.
 5. **Injected time, chance, files, model.** Anything depending on them takes `now`, `rng`, a file reader or an `Llm`
    parameter. No bare `Date.now()` / `Math.random()` inside logic; tests never touch the network.
 6. **No new runtime dependency** without a strong reason: use `node:*` first.
@@ -61,6 +62,7 @@ npm run build            # tsdown -> dist/
 npm run lint:pkg         # publint + are-the-types-wrong against the packed tarball
 npm run check            # all of it, in order: run this before you say you are done
 npx tsx examples/console-chat.ts   # the example must still run, offline
+npm run persona-test -- --canned   # the persona test harness must still run, offline (CI runs it)
 ```
 
 1. Read the code you will change and its test file first.
@@ -78,6 +80,9 @@ npx tsx examples/console-chat.ts   # the example must still run, offline
   `0.1.0-beta.0`, tag `v0.1.0-beta.0`), published on the `beta` dist-tag. `1.0.0` is the first stable version.
 - `.github/workflows/ci.yml` builds and runs `npm run check` once on Node 24 (tsdown needs Node >= 22.18), then runs
   the tests and a CJS/ESM smoke test of that build on Node 22.13, 22, 24 (Linux) and 22 on Windows and macOS.
+- `.github/workflows/persona-test.yml` is run by hand: two personas talk on a live model (secret `LLM_API_KEY`,
+  variables `LLM_BASE_URL`, `LLM_MODEL`), then a model reviews it ([docs/testing.md](./docs/testing.md#two-personas-live)).
+  It spends tokens: agents never start it.
 - Releasing is maintainer-only: move the CHANGELOG notes under the new version, `npm version <x.y.z>
   --no-git-tag-version`, commit (`chore(release): x.y.z`), then push a `vX.Y.Z` tag. `.github/workflows/release.yml` verifies the tag against
   `package.json`, runs `npm run check`, publishes (`beta` dist-tag for versions with a suffix) and creates the GitHub

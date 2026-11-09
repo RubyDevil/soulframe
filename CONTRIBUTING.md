@@ -25,7 +25,13 @@ npm test                          # vitest run: every test/**/*.test.ts
 npm run type-check                # tsc --noEmit over src, test and examples
 npx tsx examples/console-chat.ts  # the example still runs, offline
 npm run check                     # all of the above's gates plus the build, publint and are-the-types-wrong
+npm run persona-test              # two personas on a live model, then reviewed (--canned: offline, no review)
 ```
+
+The persona test ([docs/testing.md](./docs/testing.md#two-personas-live)) is how to see a change to the prompts, the
+pacing or the memory in a real conversation: it needs an OpenAI-compatible provider (`LLM_BASE_URL`, `LLM_MODEL`,
+`LLM_API_KEY`) and writes a report with the transcript, the metrics and the review. The **Persona test** workflow
+runs it from the Actions tab.
 
 A pull request keeps these green (CI runs `npm run check` once, then the tests and a smoke test of the build on Node
 22.13 and newer, on Linux, Windows and macOS). Run one test file with `npx vitest run test/brain.test.ts`.
@@ -73,7 +79,7 @@ own database layouts, and their migrations, are the application's.
   product wording of that kind goes into `src/`. What the package does ship only ever gets stricter:
   a change that weakens the stop handling or the opt-in minors safeguard (`Channel.adult`) will not be merged.
 - Prompt text lives in `src/prompts.ts` (and the fixed messages in `src/safety.ts`): no other file writes text for the
-  model.
+  model, but for the persona test's review rubric (`scripts/persona-test/analysis.md`), which is never shipped.
 
 ## Versioning
 

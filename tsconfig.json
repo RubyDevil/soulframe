@@ -13,5 +13,5 @@
 		"paths": { "soulframe": ["./src/index.ts"] },
 		"types": ["node"]
 	},
-	"include": ["src", "test", "examples"]
+	"include": ["src", "test", "examples", "scripts"]
 }
