@@ -200,26 +200,27 @@ Off by default (`settings.initiative.enabled`). With it on, a persona may start 
 - **Where openers come from.** A follow-up: when someone tells it about something still ahead of them (an interview,
   a trip) or it promises to get back to them, the DM turn may plan to text them again `days` ahead
   (`initiative.followUps`), with a short note of its own. The plan is kept only with the turn (`Turn.keep`); one per
-  person, shown to their later turns, which may replace or drop it. It may go from 6 AM that day, in the persona's
-  time zone, until the end of the day after it.
+  person. Every later turn with them sees it, so once they talk about it the model drops it, and once its day has
+  come their own turn is asked to bring it up. It may go from 6 AM that day, in the persona's time zone, until the
+  end of the day after it.
 - **Which channels.** Only those the app allows: `queue.allowInitiative(channel, conversationOf)` (see
   [channels](./channels.md#texting-first-allowinitiative)), on the channel of the last message between them.
 - **The guardrails**, which no setting relaxes (`openerBlock`, initiative.ts:26): never to anyone who never wrote to
   it, who is not `active`, deny-listed on any account or flagged as possibly under 18; never while a reply to them is
   owed or within two hours of the last message either way; at most one opener left unanswered (nothing more goes
   until they write), and `personGapHours` between two, doubled for each one in a row they ignored; `perDay` in any 24
-  hours, and one a day per account across every persona; only at an hour of the day (UTC) they have written at
-  before, within an hour, since their time zone is unknown.
+  hours, and one a day per account across every persona.
 - **When.** Checked at each tick of the queue, in a full `online` span on that channel with `spanEndMinutes` left,
   and only when nothing else wants the persona: no turn under way, coming due or in the backlog, not away. Replies
   always come first. A due opener then goes at a random moment, on average 20 minutes on, one at a time.
 - **The turn.** An opener is a turn like the others (one person at a time): `brain.composeOpener` writes it from the
   history, the notes, the relationship and the time line, with its own model task (`models.initiative`), and the
   queue types and sends it as a reply, without a read receipt. If they write while it is being written or typed,
-  before its first message goes out, it is dropped and their message gets an ordinary turn. Only the notes are kept
+  before its first message goes out, it stops (`opener_superseded`) and their message gets an ordinary turn; the
+  plan stays, so that turn may bring it up. Only the notes are kept
   from an opener: familiarity and affinity move with their answer.
 - **How it ended** is kept with the opener and audited (`opener_sent`, `opener_declined` when the model chose not to
-  text, `opener_superseded`, `opener_dropped` with the reason, `opener_failed`; `opener_rehearsed` in a dry run, which
+  text, `opener_dropped` with the reason, `opener_failed`; `opener_rehearsed` in a dry run, which
   sends nothing). A plan never sent is closed as `expired`. Nothing is tried again: an opener is never owed. The halt
   switch keeps it waiting.
 

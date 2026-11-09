@@ -871,7 +871,6 @@ interface Store {
 	openersSentSince(persona: string, since: number): number;
 	accountOpenedSince(personId: number, since: number): boolean;
 	firstInAfter(personId: number, after: number): number | null;
-	hoursWritten(personId: number): number[];
 }
 ```
 
@@ -917,7 +916,7 @@ failed?: true }[]; links: (LinkPreview & { looked?: true })[] }`. A photo keeps 
 `Opener` is a first message the persona plans to send (`settings.initiative`, [concepts](./concepts.md#texting-first)):
 `{ id, persona, personId, kind: 'followUp', about, dueAt, expiresAt, createdAt, closedAt: number | null, outcome:
 OpenerOutcome | null }`, pending while `closedAt` is `null`. `OpenerOutcome` is `'sent' | 'rehearsed' | 'declined' |
-'superseded' | 'replaced' | 'dropped' | 'expired' | 'failed'`.
+'replaced' | 'dropped' | 'expired' | 'failed'`.
 
 - **`planOpener`**: plans one, closing the person's pending one as `replaced` (one pending per person).
   **`pendingOpener`**: the person's pending one. **`dueOpeners`**: the persona's pending ones due at `at`, earliest
@@ -925,8 +924,7 @@ OpenerOutcome | null }`, pending while `closedAt` is `null`. `OpenerOutcome` is 
 - **`sentOpeners`**, **`openersSentSince`**, **`accountOpenedSince`**: those sent to the person (newest first), the
   persona's count since a time, and whether any persona sent one to one of the person's accounts since then: what the
   guardrails count.
-- **`firstInAfter`**: when the person first wrote after a time, or `null`. **`hoursWritten`**: the hours of the day (UTC)
-  their kept messages were written at.
+- **`firstInAfter`**: when the person first wrote after a time, or `null`.
 
 ### `Person`
 

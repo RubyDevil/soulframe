@@ -525,7 +525,7 @@ export function createBrain({
 	/** The follow-up pending with them, as a DM turn shows it, if any. */
 	const pendingPlan = (personId: number) => {
 		const pending = store.pendingOpener(personId);
-		return pending ? { when: planDayText(pending.dueAt, now(), persona.timezone), about: pending.about } : undefined;
+		return pending ? { when: planDayText(pending.dueAt, now(), persona.timezone), about: pending.about, due: pending.dueAt <= now() } : undefined;
 	};
 	/** A follow-up a kept turn planned (`days` ahead, at most followUps.maxDays), replacing the one pending; false drops it. */
 	const planFollowUp = (personId: number, plan: { days: number; about: string } | false) => {

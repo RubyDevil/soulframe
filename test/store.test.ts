@@ -381,13 +381,12 @@ describe('openers', () => {
 		expect(store.dueOpeners('robin', 10_000)).toEqual([]);
 	});
 
-	it('reads when someone first wrote after a moment, and the hours of the day they write at', () => {
+	it('reads when someone first wrote after a moment', () => {
 		const store = memoryStore(() => 0);
 		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
 		store.addMessage(sam.id, 'chat', 'in', 'hi', Date.UTC(2026, 9, 15, 20, 30));
 		store.addMessage(sam.id, 'chat', 'in', 'still up', Date.UTC(2026, 9, 16, 23, 5));
 		store.addMessage(sam.id, 'chat', 'out', 'me too', Date.UTC(2026, 9, 17, 4));
-		expect(store.hoursWritten(sam.id)).toEqual([20, 23]);
 		expect(store.firstInAfter(sam.id, Date.UTC(2026, 9, 16))).toBe(Date.UTC(2026, 9, 16, 23, 5));
 		expect(store.firstInAfter(sam.id, Date.UTC(2026, 9, 17))).toBeNull();
 	});

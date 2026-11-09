@@ -117,7 +117,7 @@ interface TurnState {
 	restarts: number;
 	/** Saves what the draft being sent wrote and decided (`Turn.keep`): once its first message is sent, or once it is committed. */
 	keep?: () => void;
-	/** It is an opener (settings.initiative): a message of theirs meanwhile drops it (`superseded`) and gets a turn of its own. */
+	/** It is an opener (settings.initiative): a message of theirs meanwhile stops it (`superseded`) and gets a turn of its own. */
 	opener?: true;
 }
 
@@ -604,9 +604,10 @@ export function createReplyQueue({
 
 	/**
 	 * Its opener to the person, a turn like any other (one person at a time): composed (the model may choose not to text),
-	 * then delivered as a reply is, without a read receipt. A message of theirs before its first message is sent drops it
-	 * (`superseded`): theirs gets an ordinary turn once this one ends. Paused before anything went out, it stays pending;
-	 * otherwise it is closed with how it ended, and audited (`opener_<outcome>`). A dry run closes it as `rehearsed`.
+	 * then delivered as a reply is, without a read receipt. A message of theirs before its first message is sent stops
+	 * it (`superseded`) but keeps the plan: theirs gets an ordinary turn once this one ends, whose prompt shows the plan
+	 * due, to bring up there or drop. Paused before anything went out, it stays pending too; otherwise it is closed with
+	 * how it ended, and audited (`opener_<outcome>`). A dry run closes it as `rehearsed`.
 	 */
 	const reachOut = async (personId: number, conversation: Conversation, opener: Opener) => {
 		const state: TurnState = { since: runtime.now(), through: runtime.store.personById(personId).lastInAt, sent: 0, writing: true, superseded: false, restarts: 0, opener: true };
@@ -615,6 +616,11 @@ export function createReplyQueue({
 			runtime.store.closeOpener(opener.id, outcome);
 			runtime.store.audit(persona.id, `opener_${outcome}`, { personId, platform: channel, kind: opener.kind, ...detail });
 			runtime.log(persona.id, `opener_${outcome}`, { personId, platform: channel, kind: opener.kind, ...detail });
+		};
+		/** They wrote first: nothing of it goes, and the plan stays for their turn to bring up (`opener_superseded`, audited). */
+		const yieldToThem = () => {
+			runtime.store.audit(persona.id, 'opener_superseded', { personId, platform: channel, kind: opener.kind });
+			runtime.log(persona.id, 'opener_superseded', { personId, platform: channel, kind: opener.kind });
 		};
 		occupy(personId, state);
 		try {
@@ -626,7 +632,7 @@ export function createReplyQueue({
 				// Not tried again: an opener is never owed (a spent budget too: what DMs keep for themselves is theirs)
 				return close('failed', { error: String(error) });
 			}
-			if (state.superseded) return close('superseded');
+			if (state.superseded) return yieldToThem();
 			if (paused()) return;
 			if (!composed.messages.length) {
 				composed.keep?.();
@@ -638,7 +644,8 @@ export function createReplyQueue({
 			const { sent, stop } = await deliver(conversation, composed.messages, personId, { stillWanted, state });
 			if (sent) return close(runtime.dryRun ? 'rehearsed' : 'sent', { messages: sent });
 			if (stop === 'halt_switch' || stop === 'stopped') return;
-			close(stop === 'superseded' ? 'superseded' : stop === 'ended' ? 'dropped' : 'failed', { reason: stop });
+			if (stop === 'superseded') return yieldToThem();
+			close(stop === 'ended' ? 'dropped' : 'failed', { reason: stop });
 		} catch (error) {
 			runtime.log(persona.id, 'delivery_failed', { personId, error: String(error) });
 		} finally {
@@ -867,7 +874,7 @@ export function createReplyQueue({
 		// A retry keeps its own delay; if no span is open by then, `due` parks it
 		if (delay !== undefined) return timeReply(personId, conversation, delay, 'retry');
 		const during = active.get(personId);
-		// They wrote first: the opener under way is dropped (once nothing of it went out), and theirs gets its own turn
+		// They wrote first: the opener under way stops (once nothing of it went out), and theirs gets its own turn
 		if (during?.opener) {
 			if (!during.superseded) runtime.log(persona.id, 'opener_superseded_by_message', { personId, platform: conversation.channel.id });
 			during.superseded = true;

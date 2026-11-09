@@ -16,9 +16,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   comes the persona decides whether to send it (`brain.composeOpener`, the new `models.initiative` task). The code
   decides who and when, with guardrails no setting relaxes: never to anyone who never wrote, is not active, is
   deny-listed or flagged; never with a reply owed or mid-conversation; one unanswered opener at most, with a gap
-  (`personGapHours`) that doubles for each one ignored; `perDay` a day and one a day per account across personas; only
-  at an hour they have written at; in a full online span with `spanEndMinutes` left, and only when no reply waits. If
-  they write first, the opener is dropped. Openers spend the budget DMs don't keep for themselves, and each outcome is
+  (`personGapHours`) that doubles for each one ignored; `perDay` a day and one a day per account across personas; in a
+  full online span with `spanEndMinutes` left, and only when no reply waits. Every DM turn sees the plan, so talking
+  about it drops it; if they write first, the opener stops and their reply is asked to bring it up. Openers spend the budget DMs don't keep for themselves, and each outcome is
   audited (`opener_sent`, `opener_declined`, …). A persona may set its own `initiative` in its config. The store keeps
   them in a new `openers` table (made when it opens), with methods for them (`planOpener`, `dueOpeners`, …).
 - **A persona is its config and its prompt.** `parsePersona({ config, prompt, channels })` checks a persona from

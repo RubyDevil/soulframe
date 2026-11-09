@@ -27,9 +27,10 @@ const sentAt = (store: ReturnType<typeof memoryStore>, personId: number, persona
 };
 
 describe('openerBlock', () => {
-	it('lets an opener go to someone at rest who wrote before, at an hour they write at', () => {
+	it('lets an opener go to someone at rest who wrote before, at any hour', () => {
 		const { store, person } = setUp();
 		expect(openerBlock(store, person, NOW, initiative)).toBeNull();
+		expect(openerBlock(store, person, NOW - 8 * HOUR, initiative)).toBeNull();
 	});
 
 	it('never texts first anyone who ended it, is denied or flagged, or never wrote', () => {
@@ -74,12 +75,6 @@ describe('openerBlock', () => {
 		const skysSam = shared.createPerson('sky', 'chat', 'sam', 'Sam');
 		sentAt(shared, skysSam.id, 'sky');
 		expect(openerBlock(shared, sam, NOW + HOUR, initiative)?.reason).toBe('account_cap');
-	});
-
-	it('only texts at an hour of the day they have written at, within an hour', () => {
-		const { store, person } = setUp();
-		expect(openerBlock(store, person, NOW + HOUR + 30 * MINUTE, initiative)).toBeNull();
-		expect(openerBlock(store, person, NOW - 2 * HOUR, initiative)).toEqual({ reason: 'their_hours', final: false });
 	});
 });
 

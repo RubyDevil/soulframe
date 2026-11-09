@@ -2098,7 +2098,7 @@ describe('texting first (settings.initiative)', () => {
 		queue.stop();
 	});
 
-	it('drops the opener when they write first, and answers them as usual', async () => {
+	it('stops the opener when they write first, answers them as usual, and keeps the plan for that turn to bring up', async () => {
 		let release!: () => void;
 		const held = new Promise<void>((resolve) => (release = resolve));
 		const { store, brain, queue, sam, sent, conversation } = setUpOpener({ opener: async () => (await held, OPENER) });
@@ -2111,6 +2111,7 @@ describe('texting first (settings.initiative)', () => {
 			await vi.advanceTimersByTimeAsync(60_000);
 			expect(sent).toEqual(['omg congrats!!']);
 			expect(outcomeOf(store, sam.id)).toBe('opener_superseded');
+			expect(store.pendingOpener(sam.id)).toMatchObject({ about: 'ask how the interview went' });
 		} finally {
 			queue.stop();
 		}

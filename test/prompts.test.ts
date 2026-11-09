@@ -478,9 +478,15 @@ describe('texting first (settings.initiative)', () => {
 	});
 
 	it('shows the plan pending with them after the app lines, before the time', () => {
-		const pending = pendingFollowUpPrompt({ when: 'tomorrow', about: 'the "big" interview' });
-		expect(pending).toBe('You plan to text them tomorrow about this (your own note): "the \\"big\\" interview". Leave followUp null to keep that plan, give a new one to replace it, or false to drop it.');
-		const task = directMessageTask({ ...sam, extraLines: ['An app line.'], followUp: { maxDays: 14, pending: { when: 'tomorrow', about: 'the "big" interview' } } });
+		const pending = pendingFollowUpPrompt({ when: 'tomorrow', about: 'the "big" interview', due: false });
+		expect(pending).toBe(
+			'You plan to text them tomorrow about this (your own note): "the \\"big\\" interview". If they tell you about it or you talk it through before then, set followUp to false; leave it null to keep the plan, or give a new one to replace it.',
+		);
+		// Once its day came, to bring up in the reply
+		expect(pendingFollowUpPrompt({ when: 'later today', about: 'the interview', due: true })).toBe(
+			"You meant to get back to them about this around now (your own note): \"the interview\". If it fits, bring it up yourself in this reply. Once it's been talked about, set followUp to false; leave it null to keep the plan.",
+		);
+		const task = directMessageTask({ ...sam, extraLines: ['An app line.'], followUp: { maxDays: 14, pending: { when: 'tomorrow', about: 'the "big" interview', due: false } } });
 		expect(task.indexOf('An app line.')).toBeLessThan(task.indexOf(pending));
 		expect(task.endsWith(`${pending}\n\n${sam.time}`)).toBe(true);
 		expect(directMessageTask(sam)).not.toContain('followUp');

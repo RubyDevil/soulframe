@@ -435,7 +435,7 @@ export const directMessageTask = ({
 	/** Whether the history holds photos or links (`mediaPrompt`); none when it holds neither, so a plain prompt stays as it was. */
 	media?: { photos: boolean; links: boolean };
 	/** It may plan a follow-up (`followUpField`), and the plan pending with them, if any (`pendingFollowUpPrompt`); none while off. */
-	followUp?: { maxDays: number; pending?: { when: string; about: string } };
+	followUp?: { maxDays: number; pending?: { when: string; about: string; due: boolean } };
 }) =>
 	[
 		directMessageAnswerFormat(channel, memory, affinity, followUp),
@@ -452,9 +452,14 @@ export const directMessageTask = ({
 		.filter(Boolean)
 		.join('\n\n');
 
-/** The plan pending with them (a follow-up), in a DM turn: `when` is its day ("tomorrow", "on Thursday"). */
-export const pendingFollowUpPrompt = ({ when, about }: { when: string; about: string }) =>
-	`You plan to text them ${when} about this (your own note): ${JSON.stringify(about)}. Leave followUp null to keep that plan, give a new one to replace it, or false to drop it.`;
+/**
+ * The plan pending with them (a follow-up), in a DM turn, so that talking about it drops it: before its day (`when`:
+ * "tomorrow", "on Thursday"), to keep, replace or drop; once `due`, to bring up in this reply if it fits.
+ */
+export const pendingFollowUpPrompt = ({ when, about, due }: { when: string; about: string; due: boolean }) =>
+	due
+		? `You meant to get back to them about this around now (your own note): ${JSON.stringify(about)}. If it fits, bring it up yourself in this reply. Once it's been talked about, set followUp to false; leave it null to keep the plan.`
+		: `You plan to text them ${when} about this (your own note): ${JSON.stringify(about)}. If they tell you about it or you talk it through before then, set followUp to false; leave it null to keep the plan, or give a new one to replace it.`;
 
 // ---------------------------------------------------------------------------------------------------
 // Texting first (`brain.composeOpener`, settings.initiative)

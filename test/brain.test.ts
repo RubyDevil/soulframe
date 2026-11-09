@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createBrain, levelIndex, parseTurn, type Policy } from '../src/brain.js';
 import type { Channel, ChannelId } from '../src/channel.js';
 import { createScriptedDecisions, type Decisions } from '../src/decisions.js';
-import { DEFAULT_SETTINGS, HOUR, MINUTE, type Settings } from '../src/settings.js';
+import { DAY, DEFAULT_SETTINGS, HOUR, MINUTE, type Settings } from '../src/settings.js';
 import { ScheduleSchema } from '../src/config/hours.js';
 import type { Llm, LlmMessage } from '../src/llm.js';
 import type { IncomingMessage, PreviewLink } from '../src/perception.js';
@@ -1374,6 +1374,17 @@ describe('texting first (settings.initiative)', () => {
 		(await turnOf(next, 'also my cat says hi')).turn.keep?.();
 		expect(next.seen[0]!.messages[0]!.content).toContain('You plan to text them tomorrow about this (your own note): "ask how the interview went".');
 		expect(on.store.pendingOpener(person.id)).toBeUndefined();
+	});
+
+	it('asks a turn to bring up a plan whose day came, and drops it once talked about', async () => {
+		const on = brainWith(ON, '{"reply": "omg congrats!! that went well then?", "followUp": false}');
+		const sam = on.brain.incoming(DM.chat, 'u-sam', 'Sam', 'hey');
+		if (sam.kind !== 'reply') throw new Error('expected a reply');
+		on.store.planOpener('robin', sam.person.id, { kind: 'followUp', about: 'ask how the interview went', dueAt: NOW - HOUR, expiresAt: NOW + DAY });
+		const turn = await on.brain.compose(sam.person.id, DM.chat);
+		expect(on.seen[0]!.messages[0]!.content).toContain('You meant to get back to them about this around now (your own note): "ask how the interview went". If it fits, bring it up yourself in this reply.');
+		turn.keep?.();
+		expect(on.store.pendingOpener(sam.person.id)).toBeUndefined();
 	});
 
 	it('keeps a plan no further ahead than followUps.maxDays', async () => {

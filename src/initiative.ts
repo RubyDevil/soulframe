@@ -20,8 +20,8 @@ const MAX_BACKOFF = 6;
  * texted first or never wrote): the opener is dropped. Otherwise it may later: it stays pending until its expiry.
  * Checks, in order: active, no account deny-listed or flagged as possibly under 18, they wrote to it before, no reply
  * owed, nothing written either way for REST_MS, no opener of its own left unanswered, the gap since the last one
- * (`personGapHours`, doubled for each ignored in a row), the persona's `perDay`, one a day per account for every
- * persona, and an hour of the day they have written at before (within an hour).
+ * (`personGapHours`, doubled for each ignored in a row), the persona's `perDay`, and one a day per account for every
+ * persona. When in the day is its own hours' to say (the reply queue's spans).
  */
 export function openerBlock(store: Store, person: Person, now: number, initiative: Settings['initiative']): { reason: string; final: boolean } | null {
 	const final = (reason: string) => ({ reason, final: true });
@@ -50,9 +50,6 @@ export function openerBlock(store: Store, person: Person, now: number, initiativ
 	}
 	if (store.openersSentSince(person.persona, now - 24 * HOUR) >= initiative.perDay) return later('day_cap');
 	if (store.accountOpenedSince(person.id, now - 24 * HOUR)) return later('account_cap');
-	const hour = Math.floor(now / HOUR) % 24;
-	const near = (h: number) => Math.min((h - hour + 24) % 24, (hour - h + 24) % 24) <= 1;
-	if (!store.hoursWritten(person.id).some(near)) return later('their_hours');
 	return null;
 }
 

@@ -42,11 +42,11 @@ export interface Person {
 export type OpenerKind = 'followUp';
 
 /**
- * How an opener ended: `sent`; `rehearsed` (a dry run logged it); `declined` (the model chose not to text); `superseded`
- * (they wrote first); `replaced` by a newer plan; `dropped` (they can't be texted any more, or the plan was given up);
+ * How an opener ended: `sent`; `rehearsed` (a dry run logged it); `declined` (the model chose not to text); `replaced`
+ * by a newer plan, or dropped by a DM turn (`dropped` too); `dropped` (they can't be texted any more, or the plan was given up);
  * `expired` before a moment came; `failed` (the model or the send failed).
  */
-export type OpenerOutcome = 'sent' | 'rehearsed' | 'declined' | 'superseded' | 'replaced' | 'dropped' | 'expired' | 'failed';
+export type OpenerOutcome = 'sent' | 'rehearsed' | 'declined' | 'replaced' | 'dropped' | 'expired' | 'failed';
 
 /** A first message the persona plans to send someone (settings.initiative): pending until it is closed with its outcome. */
 export interface Opener {
@@ -456,11 +456,6 @@ export function createStore(db: Database, now: () => number = Date.now) {
 		firstInAfter(personId: number, after: number): number | null {
 			const row = db.prepare("SELECT MIN(at) AS at FROM messages WHERE person_id = ? AND direction = 'in' AND at > ?").get(personId, after) as unknown as { at: number | null };
 			return row.at;
-		},
-		/** The hours of the day (UTC, 0 to 23) at which the person's kept messages were written. */
-		hoursWritten(personId: number): number[] {
-			const rows = db.prepare("SELECT DISTINCT (at / 3600000) % 24 AS hour FROM messages WHERE person_id = ? AND direction = 'in' ORDER BY hour").all(personId) as unknown as { hour: number }[];
-			return rows.map((row) => Number(row.hour));
 		},
 		/**
 		 * By hand, an operator's: the persona stops answering this person and ignores what they write (`blocked`, audited
