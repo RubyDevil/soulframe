@@ -19,6 +19,7 @@ signatures are not exported themselves; each is named with the way to reach it:
 | `ScheduleConfig` | `PersonaConfig['schedule']` |
 | `Turn` | `Awaited<ReturnType<Brain['compose']>>` |
 | `TokenMeter` | `ReturnType<typeof createTokenMeter>` |
+| `Opener`, `OpenerOutcome` | `ReturnType<Store['planOpener']>`, `Parameters<Store['closeOpener']>[1]` |
 | `Question`, `Answers` | `Parameters<Decisions['ask']>[1]`, `Awaited<ReturnType<Decisions['ask']>>` |
 
 - [Persona config](#persona-config)
@@ -271,7 +272,7 @@ token meters (`createTokenMeter`), the model clients (`llmsFor`'s `budget`) and 
 
 ```ts
 type Settings = {
-	models: { default: { /* ... */ }; directMessage: { /* ... */ }; groupChat: { /* ... */ }; post: { /* ... */ }; vision: { /* ... */ } };
+	models: { default: { /* ... */ }; directMessage: { /* ... */ }; groupChat: { /* ... */ }; post: { /* ... */ }; vision: { /* ... */ }; initiative: { /* ... */ } };
 	perception: { /* ... */ };
 	decisions: { /* ... */ };
 	memory: { /* ... */ };
@@ -279,6 +280,7 @@ type Settings = {
 	pacing: { /* ... */ };
 	context: { /* ... */ };
 	retries: { /* ... */ };
+	initiative: { /* ... */ };
 };
 ```
 
@@ -362,7 +364,8 @@ function personaReport(persona: Persona, options: { settings: Settings; now: num
 
 Indented lines describing the persona, run with `settings` (its brain's) and its own pacing and relationship over them,
 a `ConfigError` if they don't fit (as from `createBrain`, which `samplePrompt` runs): its prompt's length, now (or
-`status`), today's and tomorrow's agenda, today's interruptions and its models.
+`status`), today's and tomorrow's agenda, today's interruptions, whether it texts first (a line only when
+`initiative.enabled`) and its models.
 
 ### `samplePrompt`
 
@@ -497,6 +500,9 @@ interface Brain {
 		extraLines?: (person: Person) => readonly string[];
 	}): Promise<Turn>;
 	assess(personId: number, channel: Channel): Promise<void>;
+	composeOpener(personId: number, channel: Channel, opener: { kind: 'followUp'; about: string }, options?: {
+		extraLines?: (person: Person) => readonly string[];
+	}): Promise<Turn>;
 	composePost(channel: Channel, post: { rules: string; examples: readonly string[]; recent: readonly string[] }): Promise<string | null>;
 	composeGroupChatLine(chat: Channel, recent: GroupChatLine[], quiet: boolean, hosted: boolean): Promise<string | null>;
 	wantsToSpeak(chatId: string, recent: GroupChatLine[]): Promise<{ speak: boolean; addressed: number; chimeIn: number } | null>;
@@ -540,6 +546,13 @@ interface Brain {
   (`importance`). The reply queue calls it when someone's turn comes due while others wait, to weigh who goes first;
   `compose` then uses those answers while no newer message came, asking nothing again. Never throws: a failure leaves
   the model's own rating of their last turn.
+- **`composeOpener`**: a first message to the person on `channel` (`settings.initiative`, off by default), about
+  `opener` (a follow-up's note): what to text, or no message when the model chose not to. Builds the prompt from the
+  history, notes, relationship and time as `compose` does (`openerTask`) and calls the model with
+  `task: 'initiative'`. Its `keep()` stores only the notes: familiarity and affinity move with their answer. Throws when
+  the answer can't be read. The reply queue calls it once the code's guardrails let the opener go
+  ([concepts](./concepts.md#texting-first)); with `initiative.followUps` on, `compose`'s answer may plan one (stored by
+  its `keep()`).
 - **`composePost`**: a post for `channel` in the persona's voice, with the channel's `notes`, following `rules`, like
   `examples`, not repeating `recent`; every link removed when `policy.allowedLinks` is set; `null` when under 10
   characters. Uses `task: 'post'`.
@@ -679,6 +692,7 @@ interface ReplyQueue {
 	handle(decision: Decision, conversation: Conversation, text: string): Promise<void>;
 	schedule(personId: number, conversation: Conversation, delay?: number): void;
 	requeue(channel: ChannelId, conversationOf: (person: Person) => Promise<Conversation | null>): Promise<void>;
+	allowInitiative(channel: ChannelId, conversationOf: (person: Person) => Promise<Conversation | null>): () => void;
 	start(): void;
 	stop(): void;
 }
@@ -694,10 +708,14 @@ interface ReplyQueue {
 - **`requeue`**: after a start, puts everyone who last wrote on `channel` and is still owed a turn since the persona
   was last online into the backlog, oldest first. `conversationOf` answers their conversation, or `null` when they
   can't be reached there any more.
+- **`allowInitiative`**: lets the persona text people first on `channel` (with `settings.initiative.enabled`):
+  `conversationOf` answers a person's conversation there, or `null` to drop that opener. Answers a function that
+  withdraws it. See [channels](./channels.md#texting-first-allowinitiative).
 - **`start`**: once every channel is up: every 30 seconds, records when the persona was last online (not halted, not a
-  dry run) and moves the backlog and the turns that came due on. Keeps the process alive until `stop`. A second call, or one after `stop`, does
+  dry run), moves the backlog and the turns that came due on, and sends an opener when one may go. Keeps the process alive until `stop`. A second call, or one after `stop`, does
   nothing.
-- **`stop`**: stops for good: timers cleared, the backlog and invitations dropped; a turn under way sends nothing more.
+- **`stop`**: stops for good: timers cleared, the backlog, invitations and allowed channels dropped; a turn under way
+  sends nothing more.
 
 ### `Conversation`
 
@@ -845,6 +863,15 @@ interface Store {
 	clearMinorCaution(channel: ChannelId, externalId: string): boolean;
 	forgetPerson(personId: number, options?: { includeEnded?: boolean }): boolean;
 	resetPersona(persona: string, options?: { includeEnded?: boolean }): { people: number; messages: number };
+	planOpener(persona: string, personId: number, plan: { kind: 'followUp'; about: string; dueAt: number; expiresAt: number }): Opener;
+	pendingOpener(personId: number): Opener | undefined;
+	dueOpeners(persona: string, at: number): Opener[];
+	closeOpener(id: number, outcome: OpenerOutcome): void;
+	sentOpeners(personId: number, limit?: number): Opener[];
+	openersSentSince(persona: string, since: number): number;
+	accountOpenedSince(personId: number, since: number): boolean;
+	firstInAfter(personId: number, after: number): number | null;
+	hoursWritten(personId: number): number[];
 }
 ```
 
@@ -868,7 +895,7 @@ failed?: true }[]; links: (LinkPreview & { looked?: true })[] }`. A photo keeps 
 - **`get`**, **`set`**: small values by persona and key (`set` with `null` deletes). The package uses `selfNotes` and
   `lastOnlineAt` per persona, and the persona `'*'` for token counts and minor flags.
 - **`audit`**, **`auditLog`**: the audit log (newest first, default 50, for one persona or all).
-- **`sweep`**: deletes messages and audit lines older than `before`. The application sweeps its own tables.
+- **`sweep`**: deletes messages, audit lines and closed openers older than `before`. The application sweeps its own tables.
 - **`block`**, **`unblock`**: by hand, for an operator. `block` makes an active person `blocked`: the persona ignores
   what they write and cuts a reply under way. `unblock` makes someone `stopped` (they asked to stop) or `blocked`
   `active` again. Both are audited with `source: 'manual'`, answer whether anything changed, and only touch the store:
@@ -886,6 +913,20 @@ failed?: true }[]; links: (LinkPreview & { looked?: true })[] }`. A photo keeps 
   above), its kv (self notes, when it was last online) and its audit lines (kept for ended people kept). Other personas,
   the deny list and the minor flags are untouched. Answers how many people and messages went. For a fresh start in
   development, or a persona retired and brought back; nothing asks for confirmation, so guard it in your tooling.
+
+`Opener` is a first message the persona plans to send (`settings.initiative`, [concepts](./concepts.md#texting-first)):
+`{ id, persona, personId, kind: 'followUp', about, dueAt, expiresAt, createdAt, closedAt: number | null, outcome:
+OpenerOutcome | null }`, pending while `closedAt` is `null`. `OpenerOutcome` is `'sent' | 'rehearsed' | 'declined' |
+'superseded' | 'replaced' | 'dropped' | 'expired' | 'failed'`.
+
+- **`planOpener`**: plans one, closing the person's pending one as `replaced` (one pending per person).
+  **`pendingOpener`**: the person's pending one. **`dueOpeners`**: the persona's pending ones due at `at`, earliest
+  first, after closing those past `expiresAt` as `expired`. **`closeOpener`**: closes a pending one with its outcome.
+- **`sentOpeners`**, **`openersSentSince`**, **`accountOpenedSince`**: those sent to the person (newest first), the
+  persona's count since a time, and whether any persona sent one to one of the person's accounts since then: what the
+  guardrails count.
+- **`firstInAfter`**: when the person first wrote after a time, or `null`. **`hoursWritten`**: the hours of the day (UTC)
+  their kept messages were written at.
 
 ### `Person`
 

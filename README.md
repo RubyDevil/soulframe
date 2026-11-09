@@ -24,6 +24,7 @@ pace of its replies. You write an adapter for each channel, and the package stay
 - **Realistic schedules:** online hours, breaks and busy blocks, drawn per day from a seed.
 - **Human pacing:** one conversation at a time, with reading, typing and interruptions timed like a person's.
 - **Long-term memory:** people, history, notes and relationships in a single SQLite file.
+- **Texting first, opt-in:** it follows up on what people told it, with guardrails in code against pestering anyone.
 - **Photos and links:** photos are described once by a vision model; links expose only their preview card.
 - **Any OpenAI-compatible provider:** one model per task, with a shared daily token budget.
 - **Safeguards in code:** stop requests are always honored, with an opt-in 18+ safeguard and optional typed checks.

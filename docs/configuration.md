@@ -95,6 +95,7 @@ says is its prompt's; how its brain runs is its [settings](#settings).
 | `schedule` | [schedule](#schedule) | required | Its hours by weekday. |
 | `pacing` | any keys of [`pacing`](#pacing) | none | [Its own](#its-own-pacing-and-relationship), over its brain's. |
 | `relationship` | any keys of [`relationship`](#relationship) | none | [Its own](#its-own-pacing-and-relationship), over its brain's. |
+| `initiative` | any keys of [`initiative`](#initiative) | none | [Its own](#its-own-pacing-and-relationship), over its brain's: whether and how it texts first. |
 
 A key the schema doesn't know is an error, with the nearest known one; a key the 0.1 betas read says where it went
 (see [Coming from 0.1.0-beta.1](#coming-from-010-beta1)).
@@ -168,7 +169,7 @@ schedule:
 
 ## Its own pacing and relationship
 
-A persona's config may set its own `pacing` and `relationship`, only the keys it changes, written as in
+A persona's config may set its own `pacing`, `relationship` and `initiative`, only the keys it changes, written as in
 [the settings](#settings):
 
 ```yaml
@@ -176,6 +177,7 @@ pacing:
   typingCharsPerSecond: [2.5, 5]
 relationship:
   familiarity: { growth: 0.008 }
+initiative: { enabled: false }   # a shy one never texts first, whatever its brain's settings say
 ```
 
 They are merged over its brain's settings key by key (a list or a range replaces whole, keeping the shape the brain's
@@ -279,6 +281,7 @@ mostly a decision to stay quiet) or move to a provider of its own.
 | `groupChat`: whether to say something in a group chat, and what | `100` | `0.9` |
 | `post`: a post | `160` | `1` |
 | `vision`: describing a photo someone sent in a DM, once | `200` | `0.2` |
+| `initiative`: a first message it sends on its own ([`initiative`](#initiative)), called only while that is on | `300` | `0.9` |
 
 Each task takes:
 
@@ -307,7 +310,8 @@ models:
     model: llama3.2
 ```
 
-Once a provider is set, every text task must have a model: its own, or `default.model` on the default provider.
+Once a provider is set, every text task must have a model: its own, or `default.model` on the default provider
+(`initiative` only once `initiative.enabled` is on).
 
 `vision` is the exception: it is optional and off until it names a model of its own. It never takes `default.model`,
 which may not take images. Left out, a photo is only its `alt`, else it shows as not loading. If your chat model takes
@@ -494,6 +498,26 @@ within `typingDurationSeconds`; a message of `thinkingPauses.minChars` or more t
 | `attempts` | integer, 1 to 10 | `3` | Failed tries at one answer before giving up (the person can write again). A spent budget or a provider outage counts none. |
 | `delayMinutes` | drawn range, uniform | `[1, 4]` | Before the next try, times the attempt number; through an outage, doubled after each try, up to 16 times. |
 | `budgetCheckMinutes` | number, 1 or more | `60` | While the day's tokens are spent, minutes between checks. |
+
+### `initiative`
+
+Texting first, off by default: the persona may start a DM conversation itself, through its reply queue, with someone
+who wrote to it before, on a channel the app allows (`queue.allowInitiative`). The code decides who and when, with
+guardrails no setting relaxes; the model decides whether to text and what, and may decline. See
+[concepts](./concepts.md#texting-first).
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `enabled` | boolean | `false` | Whether it ever texts first. Off, nothing below runs and no prompt says anything of it. |
+| `perDay` | integer, 1 to 20 | `2` | The most first messages (openers) it sends in any 24 hours, every kind together. |
+| `personGapHours` | number, 1 to 720 | `48` | At least this long between two openers to the same person, doubled for each one in a row they ignored (they wrote only after this long, or not at all). |
+| `spanEndMinutes` | number, 1 to 120 | `20` | Minutes of its online time that must be left when an opener goes: it stays around for the answer. |
+| `followUps.enabled` | boolean | `true` | A DM turn may plan a follow-up: texting them again about something still ahead of them (an interview, a trip) or something it promised. One plan per person. |
+| `followUps.maxDays` | integer, 0 to 30 | `14` | The furthest ahead one may be planned, in days (0: later the same day). |
+
+Each opener costs about one DM turn of tokens, sent or declined, from the share of the daily budget DMs don't keep for
+themselves (the service settings' [`text.directMessageReserve`](#text)): openers stop before replies run short. A
+failed or budget-refused opener is not tried again.
 
 ## Service settings
 

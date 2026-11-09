@@ -5,6 +5,7 @@ import type { Llm, LlmMessage } from './llm.js';
 import { splitReply } from './pacing.js';
 import { clip, lookedCard, mediaOf, seenIn, timeLimited, unseen, type IncomingMessage, type MessageMedia, type PreviewLink, type SeenImage, type SeenLink } from './perception.js';
 import { hostOf, isStopRequest, MINOR_EXIT, minorSignal, STOP_ACK, stripForeignLinks } from './safety.js';
+import { followUpWindow } from './initiative.js';
 import { busyAt, fullyOnline, situationAt } from './schedule.js';
 import { DAY, HOUR, MINUTE, ownSettings, SECOND, taskModel, type Settings } from './settings.js';
 import {
@@ -19,6 +20,9 @@ import {
 	dmCheckInput,
 	dmMinorQuestion,
 	FAMILIARITY_LEVELS,
+	OPENER_REQUEST,
+	openerTask,
+	planDayText,
 	groupChatGateQuestions,
 	groupChatLineInput,
 	groupChatMinorQuestion,
@@ -41,7 +45,7 @@ import {
 	type Trend,
 } from './prompts.js';
 import type { Runtime } from './runtime.js';
-import type { Person, StoredMessage } from './store.js';
+import type { Opener, Person, StoredMessage } from './store.js';
 
 export type Decision =
 	| { kind: 'ignore'; reason: string }
@@ -85,6 +89,8 @@ export interface ParsedTurn {
 	affinity?: -1 | 0 | 1;
 	action: PersonAction;
 	acceptInvite?: true;
+	/** A plan to text them first later (settings.initiative.followUps): `days` ahead and why, or false to drop the plan pending; `undefined` keeps it. */
+	followUp?: { days: number; about: string } | false;
 }
 
 const textOrNull = (value: unknown) => (typeof value === 'string' && value.trim() && value.trim().toLowerCase() !== 'null' ? value.trim() : null);
@@ -122,12 +128,22 @@ const replyOnly = (text: string): ParsedTurn | null => {
 };
 
 /** A line that starts like one of the answer's fields ("notes: …", `"reply": …`): JSON that lost its braces. */
-const FIELD_LINE = /^\s*"?(?:reply|notes|self|importance|affinity|action|acceptInvite)"?\s*:/im;
+const FIELD_LINE = /^\s*"?(?:reply|notes|self|importance|affinity|action|followUp|acceptInvite)"?\s*:/im;
 
 /** A number the model gave, written as one or as a numeric string; else null. */
 const numberOf = (value: unknown) => {
 	const number = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : Number.NaN;
 	return Number.isFinite(number) ? number : null;
+};
+
+/** A follow-up the model planned: `{ days, about }` with a whole number of days from 0 and a note, false (or "false") to drop it; else none. */
+const followUpOf = (value: unknown): ParsedTurn['followUp'] => {
+	if (value === false || value === 'false') return false;
+	if (typeof value !== 'object' || value === null) return undefined;
+	const { days, about } = value as Record<string, unknown>;
+	const number = numberOf(days);
+	const note = textOrNull(about);
+	return number === null || number < 0 || note === null ? undefined : { days: Math.round(number), about: note };
 };
 
 /**
@@ -150,6 +166,7 @@ export function parseTurn(raw: string, actions: readonly string[] = []): ParsedT
 	const self = textOrNull(json.self);
 	const importance = numberOf(json.importance);
 	const affinity = numberOf(json.affinity);
+	const followUp = followUpOf(json.followUp);
 	return {
 		reply: textOrNull(json.reply),
 		action,
@@ -159,6 +176,7 @@ export function parseTurn(raw: string, actions: readonly string[] = []): ParsedT
 		...(importance !== null && { importance: Math.min(3, Math.max(0, Math.round(importance))) }),
 		...(affinity !== null && { affinity: Math.sign(affinity) as -1 | 0 | 1 }),
 		...(json.acceptInvite === true && { acceptInvite: true as const }),
+		...(followUp !== undefined && { followUp }),
 	};
 }
 
@@ -205,6 +223,13 @@ export interface Brain {
 	 * throws, and a failure leaves the model's own rating.
 	 */
 	assess(personId: number, channel: Channel): Promise<void>;
+	/**
+	 * A first message to the person on `channel`, about `opener` (settings.initiative): what to text them, or no message
+	 * when the model chose not to, given the history, notes, relationship and time as a DM turn has them. Stores nothing
+	 * until the turn's `keep` (its notes only: familiarity and affinity move with their answer, not with an opener).
+	 * Throws when the answer can't be read. The reply queue calls it, once the code's guardrails allowed the opener.
+	 */
+	composeOpener(personId: number, channel: Channel, opener: Pick<Opener, 'kind' | 'about'>, options?: { extraLines?: (person: Person) => readonly string[] }): Promise<Turn>;
 	/** A post in its own voice for `channel` (with its `notes`), following its rules and not repeating its recent posts, or null. The app picked where and when. */
 	composePost(channel: Channel, post: { rules: string; examples: readonly string[]; recent: readonly string[] }): Promise<string | null>;
 	/** What to say in a group chat (`chat`, with its `notes`), or `null` to stay quiet; `quiet` when the chat went silent a while, `hosted` in its own. */
@@ -218,6 +243,9 @@ export interface Brain {
 	/** Age check of one group-chat line (settings.decisions.minor.groupChats): level 'none', nothing asked, unless `chat.adult`; 'none' too when off or on any failure or refusal. */
 	checkGroupChatLine(chat: Channel, text: string): Promise<{ level: 'deny' | 'caution' | 'none'; probability: number | null }>;
 }
+
+/** Characters of a follow-up's note (prompts.ts followUpField's "about"). */
+const FOLLOW_UP_CHARS = 200;
 
 /** How near the end of its span a DM turn is asked to wrap up (prompts.ts dayPrompt `endingSoon`); in a span under three times as long, its last third. */
 const WRAP_UP_MS = 10 * MINUTE;
@@ -333,6 +361,9 @@ export function createBrain({
 	const system = (channel: Channel, task: string) =>
 		systemPrompt({ personaPrompt: persona.prompt, name: persona.name, identity, style, channel, rules: rulesOn(channel), task });
 
+	const { initiative } = settings;
+	/** Whether a DM turn may plan a follow-up (settings.initiative.followUps): off, its prompt says nothing of it. */
+	const followingUp = initiative.enabled && initiative.followUps.enabled;
 	const lookLimit = settings.perception.timeoutSeconds * SECOND;
 	const seesImages = !taskModel(settings, 'vision').off;
 
@@ -491,6 +522,25 @@ export function createBrain({
 		};
 	};
 
+	/** The follow-up pending with them, as a DM turn shows it, if any. */
+	const pendingPlan = (personId: number) => {
+		const pending = store.pendingOpener(personId);
+		return pending ? { when: planDayText(pending.dueAt, now(), persona.timezone), about: pending.about } : undefined;
+	};
+	/** A follow-up a kept turn planned (`days` ahead, at most followUps.maxDays), replacing the one pending; false drops it. */
+	const planFollowUp = (personId: number, plan: { days: number; about: string } | false) => {
+		if (plan === false) {
+			const pending = store.pendingOpener(personId);
+			if (!pending) return;
+			store.closeOpener(pending.id, 'dropped');
+			store.audit(persona.id, 'follow_up_dropped', { personId });
+			return;
+		}
+		const days = Math.min(plan.days, initiative.followUps.maxDays);
+		const opener = store.planOpener(persona.id, personId, { kind: 'followUp', about: clip(plan.about, FOLLOW_UP_CHARS), ...followUpWindow(now(), days, persona.timezone) });
+		store.audit(persona.id, 'follow_up_planned', { personId, days, dueAt: opener.dueAt });
+	};
+
 	/**
 	 * Its day on `channel` (prompts.ts dayPrompt), each part as settings.context shows it; none outside its online time.
 	 * `dm` only for a DM turn: it adds the line saying their messages waited (`firstNew`, when their first message not
@@ -615,6 +665,7 @@ export function createBrain({
 				relationship: settings.context.relationship ? relationshipNow(person) : undefined,
 				affinity: relationship.affinity.enabled,
 				...(photos || links ? { media: { photos, links } } : {}),
+				...(followingUp && { followUp: { maxDays: initiative.followUps.maxDays, pending: pendingPlan(person.id) } }),
 			});
 			const messages: LlmMessage[] = [
 				{ role: 'system', content: system(channel, task) },
@@ -646,6 +697,7 @@ export function createBrain({
 					...(relationship.affinity.enabled && turn.affinity && { affinity: Math.min(1, Math.max(-1, affinity + relationship.affinity.step * turn.affinity)) }),
 					...(turn.importance !== undefined && { importance: turn.importance, importanceAt: now() }),
 				});
+				if (followingUp && turn.followUp !== undefined) planFollowUp(id, turn.followUp);
 				if (action === 'block') {
 					store.updatePerson(id, { state: 'blocked' });
 					store.audit(persona.id, 'blocked', { personId: id, platform: channel.id });
@@ -670,6 +722,49 @@ export function createBrain({
 			const asking = found.some((m) => unseen(m.media)) ? perceive(person.id, found).then(check) : check(found);
 			assessed.set(person.id, asking);
 			await asking;
+		},
+
+		async composeOpener(personId, channel, opener, options = {}) {
+			const person = store.personById(personId);
+			if (person.state !== 'active') return { messages: [], action: 'none' };
+			const history = await perceive(person.id, store.history(person.id, settings.memory.historyMessages));
+			const theirLast = history.findLast((m) => m.direction === 'in');
+			const yourLast = history.findLast((m) => m.direction === 'out');
+			const photos = history.some((m) => m.media?.images.length);
+			const links = history.some((m) => m.media?.links.length);
+			const task = openerTask({
+				selfNotes: selfNotes(),
+				personName: person.name,
+				personNotes: person.summary,
+				memory: settings.memory,
+				extraLines: options.extraLines?.(person) ?? [],
+				about: opener.about,
+				time: directMessageTimePrompt({
+					localTime: localTime(),
+					gaps: settings.context.timeSince ? { theirLast: theirLast ? now() - theirLast.at : null, yourLast: yourLast ? now() - yourLast.at : null } : undefined,
+					day: dayLines(channel.id),
+				}),
+				relationship: settings.context.relationship ? relationshipNow(person) : undefined,
+				...(photos || links ? { media: { photos, links } } : {}),
+			});
+			const messages: LlmMessage[] = [
+				{ role: 'system', content: system(channel, task) },
+				...history.map((m): LlmMessage => ({ role: m.direction === 'in' ? 'user' : 'assistant', content: messageWithMedia(m) })),
+				{ role: 'user', content: OPENER_REQUEST },
+			];
+			const parsed = parseTurn(await llm.complete(messages, { task: 'initiative', json: true }));
+			// Ended while the model wrote: nothing is stored or sent
+			if (store.personById(person.id).state !== 'active') return { messages: [], action: 'none' };
+			if (!parsed) throw new Error('LLM answered unreadable JSON');
+			const reply = parsed.reply ? clip(allowedLinksOnly(parsed.reply), channel.maxLength) : '';
+			let kept = false;
+			const keep = () => {
+				if (kept) return;
+				kept = true;
+				if (parsed.notes !== undefined) store.updatePerson(person.id, { summary: clip(parsed.notes, settings.memory.personNotes) });
+				if (parsed.self !== undefined) store.set(persona.id, 'selfNotes', clip(parsed.self, settings.memory.selfNotes));
+			};
+			return { messages: reply ? splitReply(reply, runtime.rng, settings.pacing) : [], action: 'none', keep };
 		},
 
 		async composePost(channel, { rules, examples, recent }) {

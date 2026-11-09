@@ -6,7 +6,7 @@
  * of them).
  *
  * The config holds only what the code computes with: who it is to the code (its id and name), its hours and their
- * time zone, and optionally its own pacing and relationship over its brain's settings (settings.ts), which hold
+ * time zone, and optionally its own pacing, relationship and initiative over its brain's settings (settings.ts), which hold
  * everything else about how its brain runs. Everything it says is its prompt's. The app says which channels each
  * persona is on: the names its hours' `on:` may use.
  *
@@ -38,7 +38,7 @@ const isTimeZone = (timeZone: string) => {
 	}
 };
 
-/** Its own pacing or relationship: only the keys it changes, merged over its brain's settings and checked with them (mergedSettings). */
+/** Its own pacing, relationship or initiative: only the keys it changes, merged over its brain's settings and checked with them (mergedSettings). */
 const ownOf = <Key extends keyof PersonaSettings>() => z.record(z.string(), z.unknown()).transform((value) => value as NonNullable<PersonaSettings[Key]>).optional();
 
 /** A persona's config: only what the code computes with. */
@@ -55,6 +55,8 @@ const PersonaConfigSchema = z.object({
 	pacing: ownOf<'pacing'>(),
 	/** How it bonds, over its brain's `relationship`: only the keys it changes (how fast familiarity grows and fades…). */
 	relationship: ownOf<'relationship'>(),
+	/** Whether and how it texts first, over its brain's `initiative`: only the keys it changes (off for a shy one…). */
+	initiative: ownOf<'initiative'>(),
 });
 
 /** With `adult`, refusing busy reasons about school too (config/hours.ts refuseSchool). */
@@ -110,7 +112,7 @@ export function parsePersona({
 	channels: readonly ChannelId[];
 	/** For 18+ conversations: busy reasons about school are refused. */
 	adult?: boolean;
-	/** The settings its brain will run with: its own pacing and relationship are checked over them. */
+	/** The settings its brain will run with: its own pacing, relationship and initiative are checked over them. */
 	settings?: Settings;
 	/** Where it came from, before each problem ("robin.md › schedule: Required"). */
 	source?: string;

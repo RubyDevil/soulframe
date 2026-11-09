@@ -65,7 +65,7 @@ const levels = (min: number) =>
 		.refine((list) => list.every((level, i) => i === 0 || level.from > list[i - 1]!.from), 'each level must start above the one before');
 
 /** The text tasks, each with its model settings (`models.<task>`), the photo describer (`vision`) among them. */
-export const TASKS = ['directMessage', 'groupChat', 'post', 'vision'] as const;
+export const TASKS = ['directMessage', 'groupChat', 'post', 'vision', 'initiative'] as const;
 export type Task = (typeof TASKS)[number];
 
 /** The provider and model every task uses unless it names its own (`models.default`). */
@@ -135,6 +135,8 @@ export const SettingsSchema = z
 				 * images can be named here too.
 				 */
 				vision: TaskModelSchema({ maxTokens: 200, temperature: 0.2 }),
+				/** A first message the persona sends on its own (`initiative`): whether to text them now, and what. */
+				initiative: TaskModelSchema({ maxTokens: 300, temperature: 0.9 }),
 			})
 			.default({}),
 
@@ -458,6 +460,40 @@ export const SettingsSchema = z
 				budgetCheckMinutes: z.number().min(1).default(60),
 			})
 			.default({}),
+
+		/**
+		 * Texting first, off by default: a persona may start a DM conversation on its own, through its reply queue, with
+		 * people who have written to it before, on the channels the app allows (`queue.allowInitiative`). The code decides
+		 * who and when (the guardrails in initiative.ts, which no setting relaxes); the model decides whether to text and
+		 * what, and may decline. Each first message (an opener) is about one DM turn of tokens, sent or declined, from the
+		 * share of the budget DMs don't keep for themselves (`ServiceSettings.text.directMessageReserve`).
+		 */
+		initiative: z
+			.object({
+				/** Whether it ever texts first. Off: nothing below runs, and no prompt says anything of it. */
+				enabled: z.boolean().default(false),
+				/** The most openers it sends a day (any 24 hours), every kind together. */
+				perDay: z.number().int().min(1).max(20).default(2),
+				/** Hours at least between two openers to the same person, doubled for each opener in a row they ignored. */
+				personGapHours: z.number().min(1).max(720).default(48),
+				/** Minutes of its online time that must be left: it stays around for the answer. */
+				spanEndMinutes: z.number().min(1).max(120).default(20),
+				/**
+				 * Follow-ups: in a DM turn, the model may plan to text them again about something still ahead of them (an
+				 * interview, a trip) or something it promised (prompts.ts directMessageAnswerFormat's followUp), one plan per person.
+				 */
+				followUps: z
+					.object({
+						/** Whether a DM turn may plan one (with `enabled`). */
+						enabled: z.boolean().default(true),
+						/** The furthest ahead one may be planned, in days (0: later the same day). */
+						maxDays: z.number().int().min(0).max(30).default(14),
+					})
+					.strict()
+					.default({}),
+			})
+			.strict()
+			.default({}),
 	})
 	.default({});
 
@@ -504,11 +540,14 @@ export function taskModel(settings: Settings, task: Task): TaskModel {
 
 /**
  * Rules across settings that the schema can't express: a task on a provider of its own names its own key and model
- * (the default provider's never reach another host), and once a provider is set every text task has a model.
+ * (the default provider's never reach another host), and once a provider is set every text task has a model (the
+ * opener's, `initiative`, only while texting first is on).
  */
 function checkSettings(settings: Settings): Problem[] {
 	const issues: Problem[] = [];
 	for (const task of TASKS) {
+		// The opener's model is only ever called while texting first is on: a config from before it stays valid
+		if (task === 'initiative' && !settings.initiative.enabled) continue;
 		const at = ['models', task];
 		const used = taskModel(settings, task);
 		if (used.ownProvider) {
@@ -604,8 +643,12 @@ export function parseServiceSettings(raw: unknown, { source }: { source?: string
 }
 
 type SettingsInput = NonNullable<z.input<typeof SettingsSchema>>;
-/** A persona's own pacing and relationship, as its config writes them: only the keys it changes. */
-export type PersonaSettings = { pacing?: NonNullable<SettingsInput['pacing']>; relationship?: NonNullable<SettingsInput['relationship']> };
+/** A persona's own pacing, relationship and initiative, as its config writes them: only the keys it changes. */
+export type PersonaSettings = {
+	pacing?: NonNullable<SettingsInput['pacing']>;
+	relationship?: NonNullable<SettingsInput['relationship']>;
+	initiative?: NonNullable<SettingsInput['initiative']>;
+};
 
 /** `own` with each bare `[least, most]` written over a drawn range of `base` given that range's shape. */
 const keepShapes = (own: unknown, base: unknown): unknown => {
@@ -614,13 +657,13 @@ const keepShapes = (own: unknown, base: unknown): unknown => {
 };
 
 /**
- * `settings` with a persona's own pacing and relationship merged over them (deepMerge: key by key, a list or a range
+ * `settings` with a persona's own pacing, relationship and initiative merged over them (deepMerge: key by key, a list or a range
  * replacing, `null` back to the default; a bare `[least, most]` keeps the shape `settings` give it), checked again: a
  * rule across keys may depend on both.
  */
-export function mergedSettings({ pacing, relationship }: PersonaSettings, settings: Settings): { value?: Settings; problems: Problem[] } {
-	if (pacing === undefined && relationship === undefined) return { value: settings, problems: [] };
-	return readConfig(SettingsSchema, deepMerge(settings, keepShapes({ pacing, relationship }, settings)), { check: checkSettings });
+export function mergedSettings({ pacing, relationship, initiative }: PersonaSettings, settings: Settings): { value?: Settings; problems: Problem[] } {
+	if (pacing === undefined && relationship === undefined && initiative === undefined) return { value: settings, problems: [] };
+	return readConfig(SettingsSchema, deepMerge(settings, keepShapes({ pacing, relationship, initiative }, settings)), { check: checkSettings });
 }
 
 /** mergedSettings' value, else a ConfigError naming the persona: what createBrain and personaReport run with. */

@@ -62,6 +62,12 @@ describe('the report on a persona', () => {
 		const split = settingsOf({ models: { ...TEXT.models, post: { baseUrl: 'https://other.example/v1', apiKeyEnv: 'OTHER_KEY', model: 'post-model' }, vision: { model: 'eyes' } } });
 		expect(reportOf({ schedule: EVENINGS }, undefined, split)).toContain('  models: directMessage chat-model, groupChat chat-model, post post-model (other.example), vision eyes');
 	});
+
+	it('says how it texts first, and its model for it, only while that is on', () => {
+		const lines = reportOf({ schedule: EVENINGS }, undefined, settingsOf({ models: TEXT.models, initiative: { enabled: true } }));
+		expect(lines.slice(-2)).toEqual(['  initiative: up to 2 openers a day, follow-ups up to 14 days ahead', '  models: directMessage chat-model, groupChat chat-model, post chat-model, initiative chat-model']);
+		expect(reportOf({ schedule: EVENINGS }).some((line) => line.startsWith('  initiative'))).toBe(false);
+	});
 });
 
 describe('the warnings on a persona', () => {

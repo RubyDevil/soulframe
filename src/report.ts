@@ -91,7 +91,7 @@ const nowText = (persona: PersonaConfig, now: number) => {
  * A config check's lines on one persona, after the app's header line, with the settings its brain runs with (its own
  * pacing and relationship over `settings`; a ConfigError if they don't fit, as from createBrain): its prompt's length,
  * now (`status` in place of what its hours say, when the app gives one), today, tomorrow, today's interruptions
- * (`pacing.interruptions`) and its models.
+ * (`pacing.interruptions`), whether it texts first (only when it does: `initiative`) and its models.
  */
 export function personaReport(persona: Persona, { settings: given, now, status }: { settings: Settings; now: number; status?: string }): string[] {
 	const settings = ownSettings(persona, given);
@@ -104,8 +104,12 @@ export function personaReport(persona: Persona, { settings: given, now, status }
 		`  today (${dayKey(today)}, ${persona.timezone}, ${offsetText(now, persona.timezone)}): ${agendaText(agendaOn(persona, today), persona.timezone)}`,
 		`  tomorrow (${dayKey(tomorrow)}): ${agendaText(agendaOn(persona, tomorrow), persona.timezone)}`,
 		`  interruptions today: ${interruptionsOn(persona, today, settings.pacing).map((away) => `${clockText(away.start, persona.timezone)} to ${clockText(away.end, persona.timezone)}`).join(', ') || 'none'}`,
+		...(settings.initiative.enabled
+			? [`  initiative: up to ${settings.initiative.perDay} openers a day${settings.initiative.followUps.enabled ? `, follow-ups up to ${settings.initiative.followUps.maxDays} days ahead` : ''}`]
+			: []),
 		`  models: ${TASKS.map((task) => ({ task, used: taskModel(settings, task) }))
-			.filter(({ used }) => !used.off)
+			// The opener's model only once it texts first
+			.filter(({ task, used }) => !used.off && (task !== 'initiative' || settings.initiative.enabled))
 			.map(({ task, used }) => `${task} ${(provider && used.model) || '(canned)'}${provider && used.ownProvider && used.baseUrl ? ` (${new URL(used.baseUrl).host})` : ''}`)
 			.join(', ')}`,
 	];

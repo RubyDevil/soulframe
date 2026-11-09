@@ -1,4 +1,4 @@
-import { POST_REQUEST } from './prompts.js';
+import { OPENER_REQUEST, POST_REQUEST } from './prompts.js';
 import type { Rng } from './rng.js';
 import { between, pick, sleep } from './rng.js';
 import { DEFAULT_SERVICE_SETTINGS, TASKS, taskModel, type ServiceSettings, type Settings, type Task } from './settings.js';
@@ -200,6 +200,7 @@ export function createCannedLlm(rng: Rng): Llm {
 			if (options.task === 'vision') return JSON.stringify({ seen: 'a slightly blurry photo of someone smiling' });
 			const task = messages[messages.length - 1]?.content ?? '';
 			if (task === POST_REQUEST) return 'around for a while today, say hi if you feel like a chat';
+			if (task === OPENER_REQUEST) return JSON.stringify({ reply: 'hey, how did it go?', notes: null, self: null });
 			return JSON.stringify({ reply: pick(rng, lines)!, notes: null, self: null, action: 'none' });
 		},
 	};

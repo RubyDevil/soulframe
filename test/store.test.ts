@@ -325,3 +325,70 @@ describe('blocking and unblocking by hand', () => {
 		expect(store.clearMinorCaution('forum', 'ana')).toBe(false);
 	});
 });
+
+describe('openers', () => {
+	const plan = { kind: 'followUp' as const, about: 'ask how the interview went', dueAt: 1_000, expiresAt: 5_000 };
+
+	it('keeps one pending per person, a newer plan replacing it, and closes each once', () => {
+		let at = 500;
+		const store = memoryStore(() => at);
+		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const first = store.planOpener('robin', sam.id, plan);
+		expect(first).toMatchObject({ personId: sam.id, persona: 'robin', about: plan.about, dueAt: 1_000, closedAt: null, outcome: null });
+		const second = store.planOpener('robin', sam.id, { ...plan, about: 'the trip' });
+		expect(store.pendingOpener(sam.id)?.id).toBe(second.id);
+		at = 900;
+		store.closeOpener(second.id, 'declined');
+		store.closeOpener(second.id, 'sent');
+		expect(store.pendingOpener(sam.id)).toBeUndefined();
+		expect(store.sentOpeners(sam.id)).toEqual([]);
+	});
+
+	it('answers those due, earliest first, after closing those past their expiry', () => {
+		const store = memoryStore(() => 0);
+		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const kim = store.createPerson('robin', 'chat', 'kim', 'Kim');
+		const ana = store.createPerson('robin', 'chat', 'ana', 'Ana');
+		store.planOpener('robin', sam.id, { ...plan, dueAt: 2_000 });
+		store.planOpener('robin', kim.id, { ...plan, dueAt: 1_000 });
+		const old = store.planOpener('robin', ana.id, { ...plan, dueAt: 100, expiresAt: 200 });
+		store.planOpener('robin', store.createPerson('robin', 'chat', 'lee', 'Lee').id, { ...plan, dueAt: 9_000, expiresAt: 10_000 });
+		expect(store.dueOpeners('robin', 3_000).map((opener) => opener.personId)).toEqual([kim.id, sam.id]);
+		expect(store.dueOpeners('sky', 3_000)).toEqual([]);
+		expect(store.pendingOpener(ana.id)).toBeUndefined();
+		expect(old.id).toBeGreaterThan(0);
+	});
+
+	it('counts those sent, per persona and per account across personas, and goes with the person', () => {
+		let at = 1_000;
+		const store = memoryStore(() => at);
+		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const skysSam = store.createPerson('sky', 'chat', 'sam', 'Sam');
+		const kim = store.createPerson('sky', 'chat', 'kim', 'Kim');
+		store.closeOpener(store.planOpener('sky', skysSam.id, plan).id, 'sent');
+		store.closeOpener(store.planOpener('sky', kim.id, plan).id, 'rehearsed');
+		expect(store.openersSentSince('sky', 0)).toBe(1);
+		expect(store.openersSentSince('robin', 0)).toBe(0);
+		expect(store.accountOpenedSince(sam.id, 0)).toBe(true);
+		expect(store.accountOpenedSince(sam.id, 2_000)).toBe(false);
+		expect(store.accountOpenedSince(kim.id, 0)).toBe(false);
+		expect(store.sentOpeners(skysSam.id).map((opener) => opener.outcome)).toEqual(['sent']);
+		at = 10_000;
+		store.sweep(5_000);
+		expect(store.sentOpeners(skysSam.id)).toEqual([]);
+		store.planOpener('robin', sam.id, plan);
+		store.forgetPerson(sam.id);
+		expect(store.dueOpeners('robin', 10_000)).toEqual([]);
+	});
+
+	it('reads when someone first wrote after a moment, and the hours of the day they write at', () => {
+		const store = memoryStore(() => 0);
+		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		store.addMessage(sam.id, 'chat', 'in', 'hi', Date.UTC(2026, 9, 15, 20, 30));
+		store.addMessage(sam.id, 'chat', 'in', 'still up', Date.UTC(2026, 9, 16, 23, 5));
+		store.addMessage(sam.id, 'chat', 'out', 'me too', Date.UTC(2026, 9, 17, 4));
+		expect(store.hoursWritten(sam.id)).toEqual([20, 23]);
+		expect(store.firstInAfter(sam.id, Date.UTC(2026, 9, 16))).toBe(Date.UTC(2026, 9, 16, 23, 5));
+		expect(store.firstInAfter(sam.id, Date.UTC(2026, 9, 17))).toBeNull();
+	});
+});
