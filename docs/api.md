@@ -45,17 +45,20 @@ package offers, a Markdown file per persona with its config as YAML frontmatter.
 
 ```ts
 function parsePersona(options: {
-	config: unknown;                    // id, name, timezone, schedule
+	config: unknown;                    // id, name, timezone, schedule, and its own pacing and relationship if any
 	prompt: string;                     // the persona's voice and background, in Markdown
 	channels: readonly ChannelId[];     // the channels it is on: the names its hours' `on:` may use
 	adult?: boolean;                    // for 18+ conversations: busy reasons about school are refused
+	settings?: Settings;                // the settings its brain will run with; default DEFAULT_SETTINGS
 	source?: string;                    // named before each problem ("robin.md › schedule: Required")
 }): { persona?: Persona; issues: string[] };
 ```
 
 A persona from its config and its prompt, checked: the schema (defaults filled in), unknown keys (each with the nearest
-known one, and a key the 0.1 betas read with where it went), the hours, and the `on:` channels. Never throws: with any
-problem there is no `persona`, and `issues` says what is wrong. The prompt is kept trimmed.
+known one, and a key the 0.1 betas read with where it went), the hours, the `on:` channels, and its own `pacing` and
+`relationship`, as settings merged over `settings` (`settingsFor`; give the settings its brain will run with, since a
+rule across keys may hold over one and not the other). Never throws: with any problem there is no `persona`, and
+`issues` says what is wrong. The prompt is kept trimmed; its own settings are kept as written, only the keys it sets.
 
 ### `parsePersonaMarkdown`
 
@@ -64,6 +67,7 @@ function parsePersonaMarkdown(text: string, options: {
 	id: string;                         // its id: the file's name without .md
 	channels: readonly ChannelId[];
 	adult?: boolean;
+	settings?: Settings;
 	source?: string;
 }): { persona?: Persona; issues: string[] };
 ```
@@ -81,6 +85,7 @@ function loadPersonas(options: {
 	channels: Readonly<Record<string, readonly ChannelId[]>>;
 	files?: ConfigFiles;
 	adult?: boolean;
+	settings?: Settings;    // as parsePersona's: what their own pacing and relationship are checked over
 }): LoadedPersonas;
 ```
 
@@ -133,11 +138,13 @@ interface PersonaConfig {
 	name: string;
 	timezone: string;
 	schedule: ScheduleConfig;                     // its hours by weekday
+	pacing?: PersonaSettings['pacing'];             // its own, over its brain's: only the keys it changes
+	relationship?: PersonaSettings['relationship'];
 }
 ```
 
 A persona's config, checked: only what the code computes with. It satisfies the `Hours` parameter of `spanAt`,
-`fullyOnline` and `watchSpans` (`{ id, timezone, schedule }`).
+`fullyOnline` and `watchSpans` (`{ id, timezone, schedule }`), and `settingsFor`'s persona.
 
 ### `Persona`
 
@@ -247,6 +254,31 @@ function parseServiceSettings(raw: unknown, options?: { source?: string }): { se
 `raw` read as the service settings, as `parseSettings` reads a brain's. See
 [configuration](./configuration.md#service-settings).
 
+### `settingsFor`
+
+```ts
+function settingsFor(persona: PersonaSettings, settings: Settings, options?: { source?: string }): { settings?: Settings; issues: string[] };
+```
+
+The settings a persona's brain runs with: `settings` with the persona's own `pacing` and `relationship` merged over
+them, key by key (a list or a range replaces whole; a bare `[least, most]` takes the setting's own shape), then checked
+again, since a rule across keys depends on both. `settings` itself, the very object, for a persona that sets none.
+Never throws: with any problem there are no `settings`, and each issue gives its path after `source › ` when given.
+`createBrain` runs it and throws a `ConfigError` naming the persona on a problem; `parsePersona` checks the same. See
+[configuration](./configuration.md#its-own-pacing-and-relationship).
+
+### `PersonaSettings`
+
+```ts
+type PersonaSettings = {
+	pacing?: { /* any keys of Settings['pacing'], as written */ };
+	relationship?: { /* any keys of Settings['relationship'], as written */ };
+};
+```
+
+What a persona's config may set of its brain's settings: only the keys it changes, as a settings file writes them
+(every key optional, a drawn range as `[least, most]` or `{ range, shape }`).
+
 ### `ServiceSettings`
 
 ```ts
@@ -276,8 +308,8 @@ type Settings = {
 };
 ```
 
-Every setting of a brain, defaults filled in: what `createBrain` and its reply queue run with, never part of a persona.
-Each key is in [configuration](./configuration.md#settings). A drawn
+Every setting of a brain, defaults filled in: what `createBrain` and its reply queue run with (a persona's own `pacing`
+and `relationship` merged over them, `settingsFor`). Each key is in [configuration](./configuration.md#settings). A drawn
 range (a value drawn from it each time: `pacing.typingCharsPerSecond`, `pacing.backlogGapSeconds`,
 `retries.delayMinutes`, …) is read as `{ range: [least, most], shape }`, whichever way the config wrote it; a range
 that is only a limit stays `[least, most]`.
@@ -353,8 +385,10 @@ What is valid but probably wrong in settings: a reply that may be written again 
 function personaReport(persona: Persona, options: { settings: Settings; now: number; status?: string }): string[];
 ```
 
-Indented lines describing the persona, run with `settings` (its brain's): its prompt's length, now (or `status`),
-today's and tomorrow's agenda, today's interruptions and its models.
+Indented lines describing the persona, run with `settings` (those its brain is given) with its own pacing and
+relationship over them, as `createBrain` runs it (a `ConfigError` if they don't fit): its prompt's length, now (or
+`status`), today's and tomorrow's agenda, today's interruptions, its models, and, when it changes any, the settings it
+changes for itself (`own settings: pacing.typingCharsPerSecond.range, …`).
 
 ### `samplePrompt`
 
@@ -431,7 +465,7 @@ over and you would rather not pick it up again' }` renders `"archive" when the c
 ```ts
 function createBrain(options: {
 	persona: Persona;
-	settings: Settings;    // what it runs with (parseSettings; parseSettings({}) for every default)
+	settings: Settings;    // what it runs with (parseSettings; parseSettings({}) for every default), its own over them
 	identity?: string;     // the phrase after its name in the identity line; none for the name alone
 	style?: string;        // a block on how it writes, after the identity line; none by default
 	runtime: Pick<Runtime, 'now' | 'rng' | 'store'>;  // its reply queue's runtime
@@ -442,9 +476,10 @@ function createBrain(options: {
 }): Brain;
 ```
 
-The brain runs with `settings`: models, limits, memory, pacing and the typed checks, never part of the persona. Its
-reply queue reads them, and the persona, from the brain (`brain.settings`, `brain.persona`), so the two never differ;
-make its model client with the same settings (`llmsFor`). The brain takes its clock, randomness and store from
+The brain runs with `settings`: models, limits, memory, pacing and the typed checks, with the persona's own `pacing`
+and `relationship` merged over them (`settingsFor`; a `ConfigError` naming the persona if they don't fit). Its reply
+queue reads them, and the persona, from the brain (`brain.settings`, `brain.persona`), so the two never differ; make
+its model client with the same settings (`llmsFor`: models are never a persona's own). The brain takes its clock, randomness and store from
 `runtime`, the one its reply queue is given, so the two always run on one clock (it reads `runtime.now` at each use). Pass the `Runtime` itself; a brain used without a queue (a test,
 a prompt preview) needs only `{ store, now, rng }`.
 
@@ -480,7 +515,7 @@ The application's content policy: soulframe applies none of its own beyond `Chan
 ```ts
 interface Brain {
 	readonly persona: Persona;     // as createBrain was given it
-	readonly settings: Settings;   // as createBrain was given them, or every default
+	readonly settings: Settings;   // createBrain's, with the persona's own pacing and relationship over them
 	incoming(channel: Channel, externalId: string, name: string, message: string | IncomingMessage, at?: number): Decision;
 	outgoing(channel: Channel, externalId: string, name: string, text: string, at?: number): Person | undefined;
 	compose(personId: number, channel: Channel, options?: {

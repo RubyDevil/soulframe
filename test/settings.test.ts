@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SERVICE_SETTINGS, DEFAULT_SETTINGS, parseServiceSettings, parseSettings, SettingsSchema, taskModel } from '../src/settings.js';
+import { DEFAULT_SERVICE_SETTINGS, DEFAULT_SETTINGS, parseServiceSettings, parseSettings, settingsFor, SettingsSchema, taskModel } from '../src/settings.js';
+import { settingsOf } from './fixtures.js';
 
 describe('parseSettings', () => {
 	it('fills in every default: nothing at all, null (an empty YAML file) and {} are the defaults', () => {
@@ -81,6 +82,37 @@ describe('parseSettings', () => {
 	it('refuses settings that are not a mapping, "<source>:" before it as before any problem of the whole', () => {
 		expect(parseSettings(['a list']).issues).toEqual(['Expected object, received array (got ["a list"])']);
 		expect(parseSettings('oops', { source: 'settings.yaml' }).issues).toEqual(['settings.yaml: Expected object, received string (got "oops")']);
+	});
+});
+
+describe('settingsFor', () => {
+	const app = settingsOf({ pacing: { glance: { medianSeconds: 40, p90Seconds: 600 }, typingCharsPerSecond: { range: [4, 8], shape: 'uniform' } }, memory: { personNotes: 120 } });
+
+	it('is the settings it is given, the very object, for a persona that sets none of its own', () => {
+		expect(settingsFor({}, app)).toEqual({ settings: app, issues: [] });
+		expect(settingsFor({}, app).settings).toBe(app);
+	});
+
+	it("merges the persona's own pacing and relationship over them, key by key; a range replaces, and a bare one takes the setting's own shape", () => {
+		const { settings } = settingsFor({ pacing: { glance: { medianSeconds: 90 }, typingCharsPerSecond: [2, 3] }, relationship: { affinity: { enabled: false } } }, app);
+		expect(settings?.pacing.glance).toEqual({ ...app.pacing.glance, medianSeconds: 90, p90Seconds: 600 });
+		expect(settings?.pacing.typingCharsPerSecond).toEqual({ range: [2, 3], shape: DEFAULT_SETTINGS.pacing.typingCharsPerSecond.shape });
+		expect(settings?.relationship.affinity).toEqual({ ...app.relationship.affinity, enabled: false });
+		expect(settings?.memory).toEqual(app.memory);
+		// Its own shape, when it gives one
+		expect(settingsFor({ pacing: { typingCharsPerSecond: { range: [2, 3], shape: 'uniform' } } }, app).settings?.pacing.typingCharsPerSecond.shape).toBe('uniform');
+	});
+
+	it('checks them merged, a rule across keys too, and answers every problem after its source when given, and no settings', () => {
+		// Fine over the app's p90 of 600, not over the default's 150
+		expect(settingsFor({ pacing: { glance: { medianSeconds: 400 } } }, app).issues).toEqual([]);
+		expect(settingsFor({ pacing: { glance: { medianSeconds: 400 } } }, DEFAULT_SETTINGS, { source: 'robin.md' })).toEqual({
+			issues: ['robin.md › pacing.glance: p90Seconds must be above medianSeconds (got {"medianSeconds":400,"p90Seconds":150,"…)'],
+		});
+		expect(settingsFor({ pacing: { glanse: { medianSeconds: 1 }, replySplitChance: 2 } as never }, app).issues).toEqual([
+			'pacing.replySplitChance: Number must be less than or equal to 1 (got 2)',
+			'pacing.glanse: unknown key (did you mean "glance"?)',
+		]);
 	});
 });
 

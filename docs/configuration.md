@@ -5,10 +5,11 @@ and its **prompt**, free Markdown: who it is, how it talks, what it knows. `pars
 checks the two, from wherever your app keeps them. The one file format soulframe reads, and only if you want it, is
 a Markdown file per persona with its config as YAML frontmatter (`loadPersonas`, `parsePersonaMarkdown`).
 
-What a brain runs with (its models, memory, pacing, which typed checks it asks) is its **settings**, never part of a
-persona: you give them to `createBrain({ persona, settings })` and read them with `parseSettings`. What every persona
-shares (the text provider's daily budget, the Decisions client) is the **service settings**, set once
-(`parseServiceSettings`).
+What a brain runs with (its models, memory, pacing, which typed checks it asks) is its **settings**: you give them to
+`createBrain({ persona, settings })` and read them with `parseSettings`. A persona that texts or bonds unlike the others
+sets [its own pacing and relationship](#its-own-pacing-and-relationship) in its config, over them; every other setting
+is its brain's alone. What every persona shares (the text provider's daily budget, the Decisions client) is the
+**service settings**, set once (`parseServiceSettings`).
 
 Everything below is taken from the package's schemas (`src/config/personas.ts`, `src/config/hours.ts`,
 `src/settings.ts`).
@@ -17,6 +18,7 @@ Everything below is taken from the package's schemas (`src/config/personas.ts`, 
 - [The config](#the-config)
 - [The prompt](#the-prompt)
 - [`schedule`](#schedule)
+- [Its own pacing and relationship](#its-own-pacing-and-relationship)
 - [Your own loader](#your-own-loader)
 - [`settings`](#settings): [`models`](#models), [`perception`](#perception), [`decisions`](#decisions),
   [`memory`](#memory), [`relationship`](#relationship), [`pacing`](#pacing), [`context`](#context), [`retries`](#retries)
@@ -59,6 +61,11 @@ schedule:
           chance: 0.7
         - start: ["20:00", "21:00"]
           end: ["00:30", "01:30"]
+# Its own, over its brain's settings: only what it changes
+pacing:
+  typingCharsPerSecond: [2.5, 5]
+relationship:
+  familiarity: { growth: 0.008 }
 ---
 
 You are Robin, 29, living in a small coastal town with a ginger cat called Biscuit. You work in a bookshop and
@@ -82,8 +89,9 @@ conversations: a busy reason about school is then refused (see [`schedule`](#sch
 
 ## The config
 
-Only what the code computes with: who the persona is to the code, and its hours and their time zone. Everything it
-says is its prompt's; how its brain runs is its [settings](#settings).
+Only what the code computes with: who the persona is to the code, its hours and their time zone, and, if it wants, how
+it texts and bonds unlike the others. Everything it says is its prompt's; how its brain runs is its
+[settings](#settings).
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
@@ -91,6 +99,8 @@ says is its prompt's; how its brain runs is its [settings](#settings).
 | `name` | string, 1 to 32 characters | required | The name it goes by: in its identity line, and how group chats and the typed checks name it. |
 | `timezone` | IANA time zone | required | e.g. `America/Toronto`. Checked with `Intl`; a near miss gets a suggestion. |
 | `schedule` | [schedule](#schedule) | required | Its hours by weekday. |
+| `pacing` | mapping: any keys of [`pacing`](#pacing) | none | Its own, over its brain's: [its own pacing and relationship](#its-own-pacing-and-relationship). |
+| `relationship` | mapping: any keys of [`relationship`](#relationship) | none | The same, for how it comes to know and like people. |
 
 A key the schema doesn't know is an error, with the nearest known one; a key the 0.1 betas read says where it went
 (see [Coming from 0.1.0-beta.1](#coming-from-010-beta1)).
@@ -162,6 +172,31 @@ schedule:
           end: ["23:00", "00:30"]
 ```
 
+## Its own pacing and relationship
+
+How a persona texts and bonds is part of who it is: a slow typist, someone who warms up to people slowly. Its config
+may set its own `pacing` and `relationship`, with only the keys it changes, written as in [the settings](#settings).
+They are merged over its brain's settings key by key, a list or a range replacing whole (a bare `[least, most]` takes
+the setting's own shape, as in a settings file). Robin's file above types slower than the default and gets to know
+people a third slower:
+
+```yaml
+pacing:
+  typingCharsPerSecond: [2.5, 5]
+relationship:
+  familiarity: { growth: 0.008 }
+```
+
+`createBrain` runs with the merged settings (`brain.settings`, which its reply queue reads), and so do `personaReport`
+(its `own settings:` line lists what the persona changes) and `samplePrompt`. Every other setting (its models, memory,
+the typed checks…) is its brain's alone: a persona's config holding one is an error that says so.
+
+They are checked as settings, merged over the `settings` you give `parsePersona` (and the loaders): the ones its brain
+will run with, else the defaults. A rule across keys (a `p90Seconds` above its `medianSeconds`) may hold over one and
+not the other, so give the same settings: `createBrain` checks again with its own and throws a `ConfigError` naming the
+persona if they don't fit. `settingsFor(persona, settings)` answers the merged settings, or the problems, without
+throwing.
+
 ## Your own loader
 
 The file format is a convenience. Keep personas anywhere (a database, JSON, values in code) and hand each one to
@@ -179,13 +214,15 @@ const { persona, issues } = parsePersona({
 if (!persona) throw new Error(issues.join('\n'));
 ```
 
-It runs the same checks as the loaders: the schema, unknown keys, the hours and the `on:` channels.
+It runs the same checks as the loaders: the schema, unknown keys, the hours, the `on:` channels and its own pacing and
+relationship (over `settings`, when given).
 
 ## `settings`
 
-What a brain runs with, never part of a persona: `createBrain({ persona, settings })`, and the same settings to
-`llmsFor` for its model client. One settings object for every persona is the usual; a persona whose brain needs others
-(a slower typist, a cheaper model) gets its own. Keep them wherever your app keeps its config, and read them with
+What a brain runs with: `createBrain({ persona, settings })`, and the same settings to `llmsFor` for its model
+client. One settings object for every persona is the usual: a persona that only texts or bonds differently sets
+[its own pacing and relationship](#its-own-pacing-and-relationship) in its config, and one whose brain needs other
+models or limits gets settings of its own. Keep them wherever your app keeps its config, and read them with
 `parseSettings(raw, { source })`: like the persona parsers it fills in every default, never throws, and answers every
 problem. `createBrain` needs them: `parseSettings({})` gives every default.
 
@@ -207,10 +244,12 @@ models:
 ```ts
 import { readFileSync } from 'node:fs';
 import { parse } from 'yaml';
-import { ConfigError, parseSettings } from 'soulframe';
+import { ConfigError, loadPersonas, parseSettings } from 'soulframe';
 
 const { settings, issues } = parseSettings(parse(readFileSync('settings.yaml', 'utf8')), { source: 'settings.yaml' });
 if (!settings) throw new ConfigError('settings.yaml', issues);
+// Their own pacing and relationship are checked over the same settings
+const loaded = loadPersonas({ dir: 'personas', channels: { robin: ['chat'] }, settings });
 ```
 
 Every setting has a default; leave out what you don't change. Settings never hold secrets, only the names of the
@@ -407,8 +446,8 @@ Unknown keys here are refused.
 | `returnOnlineReplyDelayMinutes` | drawn range, lognormal | `[0, 0]` | Extra wait after a span opens, before its first backlog reply; `[0, 0]` for none. |
 | `backlogGapSeconds` | drawn range, lognormal | `[30, 150]` | Before each backlog conversation. |
 
-How a persona types is its brain's settings, like the rest of `pacing`: a quick typist's brain gets
-`typingCharsPerSecond: [6, 9]`, a slow and careful one's `[2.5, 4]` with a few thinking pauses:
+How a persona types is part of `pacing`, in its brain's settings or [its own](#its-own-pacing-and-relationship): a
+quick typist gets `typingCharsPerSecond: [6, 9]`, a slow and careful one `[2.5, 4]` with a few thinking pauses:
 
 ```yaml
 pacing:
@@ -551,6 +590,7 @@ Each issue names its source and path, and the value it got when that helps: `<so
 personas/robin.md › schedule.days: no plan for sat, sun (add them, or "sat,sun: {}" for days with nothing)
 personas/robin.md › nmae: unknown key (did you mean "name"?)
 personas/robin.md › sfw: is the brain's policy now: createBrain({ policy: { sfw: true } })
+personas/robin.md › memory: is its brain's setting, never a persona's: createBrain({ settings }) (a persona's config sets only its own pacing and relationship)
 personas/kai.md: no frontmatter: a persona file starts with its config between two --- lines
 settings.yaml › pacing.replySplitChance: Number must be less than or equal to 1 (got 1.5)
 settings.yaml › pacng: unknown key (did you mean "pacing"?)
@@ -570,9 +610,9 @@ For a config check command (none of them starts anything or touches the network)
   every other day skipped, and one of `channels` that no span ever includes (its DMs would wait forever).
 - **`settingsWarnings(settings)`**: the same for settings: a reply that may be written again more than once
   (`pacing.burst.maxRestarts`), and no text provider.
-- **`personaReport(persona, { settings, now, status? })`**: lines describing what is in effect: its prompt's length,
-  what it is doing now (or `status`), today's and tomorrow's agenda, today's
-  interruptions and its models.
+- **`personaReport(persona, { settings, now, status? })`**: lines describing what is in effect, with its own pacing and
+  relationship over `settings`: its prompt's length, what it is doing now (or `status`), today's and tomorrow's agenda,
+  today's interruptions, its models, and the settings it changes for itself (`own settings:`), if any.
 - **`samplePrompt({ persona, settings, identity?, style?, channel, extraLines?, now, policy? })`**: the system prompt of
   a sample DM turn on `channel`, built by the brain itself on a throwaway in-memory store. Offline at `now`, it is
   taken a minute into the next span on that channel, so the lines about its day show.
@@ -589,7 +629,7 @@ For a config check command (none of them starts anything or touches the network)
 | `sfw: true` | `createBrain({ policy: { sfw: true } })` |
 | `character.facts`, `interests`, `boundaries` | In the prompt, in your words |
 | `character.moods` | Gone: soulframe picks no mood. A mood that follows what happens is planned ([roadmap](./roadmap.md)) |
-| `settings:` in a persona's file or `_shared.yaml` | `parseSettings`, then `createBrain({ settings })` and `llmsFor` |
+| `settings:` in a persona's file or `_shared.yaml` | `parseSettings`, then `createBrain({ settings })` and `llmsFor`; a persona's own `pacing` and `relationship` are keys of its config, over them |
 | `settings.llm.baseUrl`, `apiKeyEnv`, `model`, `jsonMode`, `timeoutSeconds` | `models.default.*` |
 | `settings.llm.dailyTokens`, `directMessageReserve`, `concurrency` | The service settings' `text` (`parseServiceSettings`); `llmsFor` takes it as `budget` in place of `concurrency` |
 | `settings.decisions.enabled`, `baseUrl`, `apiKeyEnv`, `model`, `timeoutSeconds`, `dailyTokens` | The service settings' `decisions`, given to `createConfiguredDecisions` (the thresholds stay in each brain's `settings.decisions`) |

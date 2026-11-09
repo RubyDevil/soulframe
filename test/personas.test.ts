@@ -4,7 +4,7 @@ import { stringify } from 'yaml';
 import { describe, expect, it } from 'vitest';
 import { ScheduleSchema } from '../src/config/hours.js';
 import { loadPersonas, parsePersonaMarkdown, type ConfigFiles } from '../src/config/personas.js';
-import { everyDay, parsedOf, personaOf, testPersona } from './fixtures.js';
+import { everyDay, parsedOf, personaOf, settingsOf, testPersona } from './fixtures.js';
 
 /** The problems of this config (the test persona's unless given), with parsedOf's options. */
 const issuesOf = (config: unknown, options?: Parameters<typeof parsedOf>[1]) => parsedOf(config, options).issues;
@@ -23,6 +23,32 @@ describe('a persona config', () => {
 
 	it('holds only what the code computes with: no settings, no character, no moods, no file path', () => {
 		expect(Object.keys(test()).sort()).toEqual(['id', 'name', 'prompt', 'schedule', 'timezone']);
+	});
+
+	it('keeps its own pacing and relationship as written: only the keys it changes, merged over its brain\'s settings later', () => {
+		const own = { pacing: { glance: { medianSeconds: 90 }, typingCharsPerSecond: [2, 3] }, relationship: { familiarity: { growth: 0.02 } } };
+		expect(test(own)).toMatchObject(own);
+		expect(issuesOf(testPersona({ pacing: {}, relationship: {} }))).toEqual([]);
+	});
+
+	it('checks its own pacing and relationship as settings, over the settings given (the defaults unless given)', () => {
+		expect(issuesOf(testPersona({ pacing: { glanse: { medianSeconds: 30 }, replySplitChance: 1.5 }, relationship: { affinity: { step: -1 } } }), { source: 'test.md' })).toEqual([
+			'test.md › relationship.affinity.step: Number must be greater than or equal to 0.001 (got -1)',
+			'test.md › pacing.replySplitChance: Number must be less than or equal to 1 (got 1.5)',
+			'test.md › pacing.glanse: unknown key (did you mean "glance"?)',
+		]);
+		expect(issuesOf(testPersona({ pacing: 'slow' }))).toEqual(['pacing: Expected object, received string (got "slow")']);
+		// A rule across keys holds over the settings its brain will run with
+		const slow = testPersona({ pacing: { glance: { medianSeconds: 400 } } });
+		expect(issuesOf(slow)).toEqual(['pacing.glance: p90Seconds must be above medianSeconds (got {"medianSeconds":400,"p90Seconds":150,"…)']);
+		expect(issuesOf(slow, { settings: settingsOf({ pacing: { glance: { p90Seconds: 900 } } }) })).toEqual([]);
+	});
+
+	it("says a setting other than its pacing and relationship is its brain's alone", () => {
+		expect(issuesOf(testPersona({ memory: { personNotes: 50 }, models: {} }))).toEqual([
+			"memory: is its brain's setting, never a persona's: createBrain({ settings }) (a persona's config sets only its own pacing and relationship)",
+			"models: is its brain's setting, never a persona's: createBrain({ settings }) (a persona's config sets only its own pacing and relationship)",
+		]);
 	});
 
 	it('refuses a config that is not a mapping, and a prompt that is not text', () => {
@@ -64,7 +90,7 @@ describe('a persona config', () => {
 			"chattiness: no longer read: say how much it talks in group chats in its prompt (with the group-chat gate on, how readily it speaks is its brain's decisions.groupChatGate.chimeInAt)",
 			"sfw: is the brain's policy now: createBrain({ policy: { sfw: true } })",
 			'character: no longer read: write its facts, interests and boundaries in its prompt (moods are gone)',
-			"settings: are its brain's now, never part of a persona: createBrain({ settings }), read with parseSettings",
+			"settings: no longer read: its own pacing and relationship are keys of its config (`pacing:`, `relationship:`), over its brain's settings; any other setting is its brain's alone: createBrain({ settings })",
 		]);
 		// A window in place of a schedule: the schedule is missing, and the window says how to write it
 		expect(issuesOf(testPersona({ schedule: undefined, window: old.window }))).toEqual(['schedule: Required', expect.stringMatching(/^window: no longer read/)]);
@@ -185,6 +211,8 @@ describe('the example persona file', () => {
 		expect(loaded.issues).toEqual([]);
 		expect(loaded.personas[0]).toMatchObject({ id: 'robin', name: 'Robin', timezone: 'Europe/Lisbon' });
 		expect(loaded.personas[0]!.prompt).toMatch(/^You are Robin, 29,[^]*kindly\.$/);
+		// Its own pacing and relationship, as written
+		expect(loaded.personas[0]).toMatchObject({ pacing: { typingCharsPerSecond: [2.5, 5] }, relationship: { familiarity: { growth: 0.008 } } });
 	});
 });
 

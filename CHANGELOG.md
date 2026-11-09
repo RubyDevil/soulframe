@@ -37,12 +37,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `models.default`: the provider and model of every task that names none (`baseUrl`, `apiKeyEnv`, `model`,
   `jsonMode`, `timeoutSeconds`), and a `timeoutSeconds` of each task's own. `personaReport` names the host of a task on
   a provider of its own.
+- **A persona's own `pacing` and `relationship`.** Its config may set how it texts and bonds unlike the others, with
+  only the keys it changes (`PersonaSettings`), merged over its brain's settings key by key: one settings object can
+  serve a fast typist and a slow one. `parsePersona` and the loaders check them merged over their new `settings`
+  option (the defaults unless given); `createBrain` runs with the merged settings (`brain.settings`, which the reply
+  queue reads) and throws a `ConfigError` naming the persona if they don't fit; `settingsFor(persona, settings)`
+  answers them, or the problems, without throwing. `personaReport` runs with them too, and lists what they change
+  (`own settings:`). Any other setting in a persona's config is refused as its brain's alone.
 
 ### Changed
 
-- **BREAKING: settings are the brain's, never a persona's.** Give them to `createBrain({ persona, settings })`
-  (required: `parseSettings({})` gives every default), the same object for every persona or one of their own, and the
-  same settings to `llmsFor` (whose `{ id, settings }` entries are unchanged). `createReplyQueue({ brain, runtime,
+- **BREAKING: settings are the brain's.** Give them to `createBrain({ persona, settings })` (required:
+  `parseSettings({})` gives every default), the same object for every persona or one of their own, and the same
+  settings to `llmsFor` (whose `{ id, settings }` entries are unchanged); a persona sets only its own `pacing` and
+  `relationship` over them, in its config. `createReplyQueue({ brain, runtime,
   act })` takes no `persona`: it answers with its brain's persona and settings, so the two can't differ.
 - **BREAKING: `decisions.groupChatGate.chimeInAt` is one number** (default `1.7`), no longer one per chattiness: give a
   quieter persona's brain a higher one (`2.2` was `quiet`'s, `1.2` `talkative`'s). The old shape is refused with a
@@ -53,7 +61,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **BREAKING: `loadPersonas` reads `<dir>/<id>.md`** (frontmatter and prompt in one file) and answers
   `{ issues, personas }`, without `shared`.
 - **BREAKING: `personaReport(persona, { settings, now, status? })`** takes the settings its brain runs with in place
-  of `shared`: no `overrides` lines; `prompt:` gives the prompt's length; no `character:` line.
+  of `shared`: no `overrides` lines (an `own settings:` line lists what the persona's own pacing and relationship
+  change); `prompt:` gives the prompt's length; no `character:` line.
 - `personaWarnings` warns only about the persona (its time zone, hours and channels); `samplePrompt` takes `settings`.
 - **BREAKING: the Decisions client's settings are the service settings'.** `decisions.enabled`, `baseUrl`,
   `apiKeyEnv`, `model`, `timeoutSeconds` and `dailyTokens` moved there (each refused in a brain's settings with where
@@ -76,7 +85,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **BREAKING: the mood of the day** (`character.moods`): the seeded daily pick and the "Your mood today: …" sentence
   that ended DM and group-chat time lines are gone, and so is `personaReport`'s mood. A mood that follows what happens,
   shared by everyone the persona talks with, is on the roadmap.
-- **BREAKING: `settings:` in a persona's file**, and the split of settings into per-persona and global groups.
+- **BREAKING: `settings:` in a persona's file**, and the split of settings into per-persona and global groups: a
+  persona's own `pacing` and `relationship` are keys of its config now, and every other setting is its brain's.
 - **BREAKING: `parsePersonas`** (use `parsePersona` per persona), the `Chattiness` type, the
   `prompt:` path key (the prompt is the file's body), and `PersonaConfig`'s `promptText`, `source` and `settings`.
 - **BREAKING: `settings.llm` is gone.** Its `baseUrl`, `apiKeyEnv`, `model`, `jsonMode` and `timeoutSeconds` are

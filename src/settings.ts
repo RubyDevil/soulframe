@@ -13,7 +13,8 @@
  */
 
 import { z } from 'zod';
-import { schemaProblems, sourced, unknownKeyProblems, unknownKeys, type Problem } from './config/issues.js';
+import { ConfigError, schemaProblems, sourced, unknownKeyProblems, unknownKeys, type Problem } from './config/issues.js';
+import { deepMerge } from './merge.js';
 
 /** [least, most]: the bounds a value is kept within, or drawn from evenly (soulframe's own drawn ranges are `drawn`, with a shape). */
 export const range = (min: number, max: number, floor = 0) =>
@@ -461,6 +462,11 @@ export const SettingsSchema = z
 	.default({});
 
 export type Settings = z.infer<typeof SettingsSchema>;
+/** A brain's settings as written, before the defaults are filled in (`parseSettings`' input): every key optional. */
+export type SettingsInput = NonNullable<z.input<typeof SettingsSchema>>;
+
+/** The groups of a brain's settings a persona's config may set for itself, over them (`settingsFor`): how it texts and how it bonds. */
+export const PERSONA_SETTINGS = ['pacing', 'relationship'] as const;
 
 /** What a task uses to call its model (`taskModel`): its provider, key, model and request options, as resolved. */
 export interface TaskModel {
@@ -535,10 +541,16 @@ const MOVED_SETTINGS: Readonly<Record<string, string>> = {
  * nearest known key. Never throws.
  */
 const parseWith = <S extends z.ZodTypeAny>(schema: S, raw: unknown, source: string | undefined, moved: Readonly<Record<string, string>>, check: (value: z.output<S>) => Problem[]) => {
+	const { value, problems } = readWith(schema, raw, moved, check);
+	return { value, issues: problems.map((problem) => sourced(source, problem)) };
+};
+
+/** parseWith's work, its problems not yet worded. */
+const readWith = <S extends z.ZodTypeAny>(schema: S, raw: unknown, moved: Readonly<Record<string, string>>, check: (value: z.output<S>) => Problem[]) => {
 	const value = raw === null ? undefined : raw;
 	const parsed = schema.safeParse(value);
-	const issues = [...schemaProblems(parsed.error, value), ...unknownKeyProblems(unknownKeys(schema, value), moved), ...(parsed.success ? check(parsed.data) : [])].map((problem) => sourced(source, problem));
-	return { value: parsed.success && !issues.length ? (parsed.data as z.output<S>) : undefined, issues };
+	const problems = [...schemaProblems(parsed.error, value), ...unknownKeyProblems(unknownKeys(schema, value), moved), ...(parsed.success ? check(parsed.data) : [])];
+	return { value: parsed.success && !problems.length ? (parsed.data as z.output<S>) : undefined, problems };
 };
 
 /**
@@ -611,6 +623,36 @@ export const DEFAULT_SERVICE_SETTINGS: ServiceSettings = ServiceSettingsSchema.p
 export function parseServiceSettings(raw: unknown, { source }: { source?: string } = {}): { service?: ServiceSettings; issues: string[] } {
 	const { value, issues } = parseWith(ServiceSettingsSchema, raw, source, {}, () => []);
 	return value ? { service: value, issues } : { issues };
+}
+
+/** What a persona's config may set of its brain's settings (`PERSONA_SETTINGS`): only the keys it changes. */
+export type PersonaSettings = { [Key in (typeof PERSONA_SETTINGS)[number]]?: NonNullable<SettingsInput[Key]> };
+
+/** settingsFor's work, its problems not yet worded (parsePersona words them after its source). */
+export function mergedSettings(persona: PersonaSettings, settings: Settings): { value?: Settings; problems: Problem[] } {
+	const own = Object.fromEntries(PERSONA_SETTINGS.filter((key) => persona[key] !== undefined).map((key) => [key, persona[key]]));
+	if (!Object.keys(own).length) return { value: settings, problems: [] };
+	return readWith(SettingsSchema, deepMerge(settings, own), {}, checkSettings);
+}
+
+/**
+ * The settings a persona's brain runs with: `settings` with the persona's own `pacing` and `relationship` (from its
+ * config) merged over them, key by key, a list or a `[least, most]` range replacing (as in a settings file, a bare
+ * range takes the setting's own shape), then checked again, since a rule across keys (a p90 above its median) depends
+ * on both. With any problem there are no settings, and `issues` say why, after `source › ` when given. `createBrain`
+ * runs it (and throws on a problem); a config check may run it first. Never throws.
+ */
+export function settingsFor(persona: PersonaSettings, settings: Settings, { source }: { source?: string } = {}): { settings?: Settings; issues: string[] } {
+	const { value, problems } = mergedSettings(persona, settings);
+	const issues = problems.map((problem) => sourced(source, problem));
+	return value ? { settings: value, issues } : { issues };
+}
+
+/** settingsFor's settings, else a ConfigError naming the persona, with every issue: what createBrain and the config check's report run with. */
+export function ownSettings(persona: PersonaSettings & { id: string }, settings: Settings): Settings {
+	const { settings: own, issues } = settingsFor(persona, settings);
+	if (!own) throw new ConfigError(`the settings of persona "${persona.id}"`, issues);
+	return own;
 }
 
 /** Milliseconds from seconds, minutes, hours or days, for the ranges above. */

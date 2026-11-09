@@ -50,6 +50,14 @@ describe('the report on a persona', () => {
 		expect(reportOf({ schedule: daily({ start: ['11:00', '11:00'], end: ['13:00', '13:00'] }) }, 'paused')).toContain('  now: paused');
 	});
 
+	it('runs with its own pacing, and lists what it changes of the settings given, only when it changes any', () => {
+		const lineOf = (lines: string[]) => lines.find((line) => line.startsWith('  interruptions today: '));
+		expect(lineOf(reportOf({ schedule: daily(evening), pacing: { interruptions: { meanMinutes: 0 } } }))).toBe('  interruptions today: none');
+		expect(reportOf({ schedule: daily(evening), pacing: { interruptions: { meanMinutes: 0 }, glance: { medianSeconds: 60 } } }).at(-1)).toBe('  own settings: pacing.glance.medianSeconds, pacing.interruptions.meanMinutes');
+		// The same value as the settings given changes nothing
+		expect(reportOf({ schedule: daily(evening), pacing: { glance: { medianSeconds: TEXT.pacing.glance.medianSeconds } } }).some((line) => line.startsWith('  own settings'))).toBe(false);
+	});
+
 	it('lists its prompt and its models', () => {
 		const lines = reportOf({ schedule: daily(evening) });
 		expect(lines[0]).toBe('  prompt: 8 characters');

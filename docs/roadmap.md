@@ -16,11 +16,9 @@ Where the beta stands and what is planned before 1.0.
 
 ## Before 1.0
 
-- **Per-persona overrides in the persona file.** How a persona texts and bonds is part of who it is, yet today it is
-  only its brain's settings, set in code. Planned: an optional `pacing` and `relationship` block in a persona's config
-  (its frontmatter), and possibly `decisions.groupChatGate.chimeInAt` (how readily it speaks in group chats), checked
-  when the persona is parsed and merged over its brain's settings at `createBrain`; every other setting stays the
-  brain's, and the service settings stay set once.
+- **How readily it speaks in group chats, per persona.** A persona's config sets its own `pacing` and
+  `relationship`; `decisions.groupChatGate.chimeInAt` may join them, so a quiet persona and a talkative one can share
+  their settings.
 
 - Export the test helpers (a scripted Decisions client, a seeded random source) and the error classes a custom model
   client needs to signal a spent budget or an outage.

@@ -1,8 +1,17 @@
 /**
- * Small helpers on plain config values (parsed YAML or JSON): telling a mapping from the rest, reading the value at a
- * path, and the paths where two values differ.
+ * Small helpers on plain config values (parsed YAML or JSON): telling a mapping from the rest, merging one over
+ * another, reading the value at a path, and the paths where two values differ.
  */
 export const isPlainObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/** `over` on top of `base`, neither changed: plain objects merge key by key; a list, a `[least, most]` range or any other value replaces. */
+export function deepMerge(base: unknown, over: unknown): unknown {
+	if (over === undefined) return base;
+	if (!isPlainObject(over) || !isPlainObject(base)) return over;
+	const out: Record<string, unknown> = { ...base };
+	for (const [key, value] of Object.entries(over)) out[key] = deepMerge(base[key], value);
+	return out;
+}
 
 /** Dotted paths where `b` differs from `a` (leaves and arrays compared whole), e.g. 'pacing.watching.halfLifeSeconds'. */
 export function diffPaths(a: unknown, b: unknown, prefix = ''): string[] {

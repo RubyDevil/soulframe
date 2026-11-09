@@ -13,10 +13,10 @@ source as written, with its `${...}` slots; the `text` blocks are what the model
 
 | Task | Brain method | Model call | System prompt | Other messages |
 | --- | --- | --- | --- | --- |
-| DM turn | `compose` (brain.ts:554) | `llm.complete(messages, { task: 'directMessage', json: true })` (brain.ts:621) | `systemPrompt` with `directMessageTask` | the conversation's history: each message the person wrote as a `user` message, each one the persona sent as an `assistant` message, word for word (`messageWithMedia` adds a line for each photo and link), the newest `memory.historyMessages` (brain.ts:559, :607) |
-| A photo's description | `perceive` (brain.ts:370), from `compose` or `assess` | `{ task: 'vision', json: true }` (brain.ts:344) | none | one `user` message: `imagePrompt`, with the image |
-| Group-chat line | `composeGroupChatLine` (brain.ts:688) | `{ task: 'groupChat', json: true }` (brain.ts:711) | `systemPrompt` with `groupChatTask` | one `user` message: `groupChatTranscript` (brain.ts:696, :696) |
-| Post | `composePost` (brain.ts:673) | `{ task: 'post' }` (brain.ts:680) | `systemPrompt` with `postTask` | one `user` message: `POST_REQUEST` (brain.ts:678) |
+| DM turn | `compose` (brain.ts:557) | `llm.complete(messages, { task: 'directMessage', json: true })` (brain.ts:624) | `systemPrompt` with `directMessageTask` | the conversation's history: each message the person wrote as a `user` message, each one the persona sent as an `assistant` message, word for word (`messageWithMedia` adds a line for each photo and link), the newest `memory.historyMessages` (brain.ts:562, :610) |
+| A photo's description | `perceive` (brain.ts:373), from `compose` or `assess` | `{ task: 'vision', json: true }` (brain.ts:347) | none | one `user` message: `imagePrompt`, with the image |
+| Group-chat line | `composeGroupChatLine` (brain.ts:691) | `{ task: 'groupChat', json: true }` (brain.ts:714) | `systemPrompt` with `groupChatTask` | one `user` message: `groupChatTranscript` (brain.ts:699, :699) |
+| Post | `composePost` (brain.ts:676) | `{ task: 'post' }` (brain.ts:683) | `systemPrompt` with `postTask` | one `user` message: `POST_REQUEST` (brain.ts:681) |
 
 The task names select the model settings (`settings.models.directMessage`, `.groupChat`, `.post`, `.vision`, each over
 `models.default`: model, provider, `maxTokens`, `temperature`, `jsonMode`). They change no text. `json: true` asks the
@@ -28,16 +28,16 @@ comes back.
 
 | Check | Brain method | Input | Questions |
 | --- | --- | --- | --- |
-| DM check (age, stop, importance) | inside `compose`, before the model call, unless `assess` asked it as their turn came due and nothing newer came (`checkIncoming`, brain.ts:419-429, :555, :643) | `dmCheckInput` | `dmMinorQuestion`, `stopQuestion`, `importanceQuestion` |
-| Group-chat gate | `wantsToSpeak` (brain.ts:719) | `groupChatTranscript` | `groupChatGateQuestions(persona.name)` |
-| Group-chat line check (age) | `checkGroupChatLine` (brain.ts:740) | `groupChatLineInput` | `groupChatMinorQuestion` |
+| DM check (age, stop, importance) | inside `compose`, before the model call, unless `assess` asked it as their turn came due and nothing newer came (`checkIncoming`, brain.ts:422-432, :558, :646) | `dmCheckInput` | `dmMinorQuestion`, `stopQuestion`, `importanceQuestion` |
+| Group-chat gate | `wantsToSpeak` (brain.ts:722) | `groupChatTranscript` | `groupChatGateQuestions(persona.name)` |
+| Group-chat line check (age) | `checkGroupChatLine` (brain.ts:743) | `groupChatLineInput` | `groupChatMinorQuestion` |
 
 No model is called at all when:
 
-- `compose`: the person is no longer `active` (brain.ts:556, :559), or a DM check ended the conversation
-  (brain.ts:577-584: the code's goodbye is sent instead);
+- `compose`: the person is no longer `active` (brain.ts:559, :562), or a DM check ended the conversation
+  (brain.ts:580-587: the code's goodbye is sent instead);
 - `composeGroupChatLine`: no line is a message (only notices) or the newest message is the persona's own
-  (brain.ts:689-690).
+  (brain.ts:692-693).
 
 `composePost` always calls the model.
 
@@ -51,14 +51,14 @@ Every task's system prompt is built the same way:
 [personaPrompt.trim(), identityPrompt(name, identity, channel), style?.trim() ?? '', rulesPrompt(rules), task].filter(Boolean).join('\n\n');
 ```
 
-The brain fills it in (`systemPrompt`, brain.ts:331-332):
+The brain fills it in (`systemPrompt`, brain.ts:334-335):
 
 ```ts
 systemPrompt({ personaPrompt: persona.prompt, name: persona.name, identity, style, channel, rules, task });
 ```
 
 Each part that is empty is left out, and the parts are separated by one blank line. The rules come from `rulesOn`
-(brain.ts:328):
+(brain.ts:331):
 
 ```ts
 const rulesOn = (channel: Channel) => [...(channel.adult ? [ADULTS_ONLY_RULE] : []), ...(policy.sfw ? [SFW_RULE] : []), ...(policy.rules ?? [])];
@@ -119,7 +119,7 @@ Then `POST_REQUEST` as one `user` message. A post has no time line: no local tim
 ### The persona prompt
 
 The persona's voice and background, in Markdown: the text after its persona file's frontmatter (`body`,
-config/personas.ts:125), or `parsePersona`'s `prompt` (`prompt.trim`, config/personas.ts:116). It (`Persona.prompt`) is
+config/personas.ts:151), or `parsePersona`'s `prompt` (`prompt.trim`, config/personas.ts:142). It (`Persona.prompt`) is
 first in every system prompt, trimmed. Written by the operator; soulframe adds nothing to it. An empty prompt leaves
 the part out. Facts about the persona, its interests and its own limits are written here, in the operator's words.
 
@@ -131,7 +131,7 @@ export const identityPrompt = (name: string, identity: string | undefined, chann
 ```
 
 - `name`: `persona.name` (config).
-- `identity`: `createBrain({ identity })` (brain.ts:297), the app's phrase; left out, the line has the name alone.
+- `identity`: `createBrain({ identity })` (brain.ts:298), the app's phrase; left out, the line has the name alone.
 - `channel.where`: required on every `Channel` (`where`, channel.ts:16), completes "chatting by text in ...".
 - `channel.identityNote`: optional (channel.ts:25), appended after one space, word for word.
 
@@ -149,7 +149,7 @@ You are Robin, chatting by text in Example Chat direct messages.
 
 ### The style block
 
-`createBrain({ style })` (brain.ts:299): the app's block on how the persona writes, inserted word for word (trimmed)
+`createBrain({ style })` (brain.ts:300): the app's block on how the persona writes, inserted word for word (trimmed)
 after the identity line. All tasks, system prompt, part 3. None by default, and soulframe has no style text of its
 own. A blank `style` is left out.
 
@@ -160,7 +160,7 @@ export const rulesPrompt = (rules: readonly string[]) => (rules.length ? `Rules 
 ```
 
 All tasks, system prompt, part 4, after the persona's prompt so the rules win over it. The lines, in
-order (`rulesOn`, brain.ts:328):
+order (`rulesOn`, brain.ts:331):
 
 1. `ADULTS_ONLY_RULE`, on a `Channel` with `adult: true`;
 2. `SFW_RULE`, with `policy.sfw: true`;
@@ -211,23 +211,23 @@ See [sfw](#sfw).
 	.join('\n\n');
 ```
 
-The brain fills it in at brain.ts:595-616. Each slot:
+The brain fills it in at brain.ts:598-619. Each slot:
 
 | Slot | Value |
 | --- | --- |
-| `selfNotes` | the persona's notes on itself (`store.get(persona.id, 'selfNotes')`, brain.ts:323), written by the model |
+| `selfNotes` | the persona's notes on itself (`store.get(persona.id, 'selfNotes')`, brain.ts:326), written by the model |
 | `personName` | `person.name`: the name the app passed to `incoming` |
 | `personNotes` | `person.summary`, written by the model |
 | `channel` | the `Channel` (its `invitations` and `actions`) |
 | `memory` | `settings.memory` (`personNotes`, `selfNotes`) |
 | `extraLines` | `options.extraLines?.(person) ?? []`: the reply queue passes `Conversation.extraLines` (runtime.ts:638) |
-| `invitation` | `options.invitation` where `channel.invitations`, else nothing (brain.ts:590); the queue passes the name of `Conversation.invitation` (runtime.ts:617, :638) |
-| `joinNow` | `fullyOnline(persona, channel.id, now())`: a full online span is open on the channel (brain.ts:589) |
+| `invitation` | `options.invitation` where `channel.invitations`, else nothing (brain.ts:593); the queue passes the name of `Conversation.invitation` (runtime.ts:617, :638) |
+| `joinNow` | `fullyOnline(persona, channel.id, now())`: a full online span is open on the channel (brain.ts:592) |
 | `time` | `directMessageTimePrompt` |
-| `minorCaution` | `!!channel.adult && minorCautioned(person)` (brain.ts:587) |
-| `relationship` | with `settings.context.relationship` only: the levels and trend set for this conversation (`relationshipNow`, brain.ts:480-489) |
+| `minorCaution` | `!!channel.adult && minorCautioned(person)` (brain.ts:590) |
+| `relationship` | with `settings.context.relationship` only: the levels and trend set for this conversation (`relationshipNow`, brain.ts:483-492) |
 | `affinity` | `settings.relationship.affinity.enabled`: whether the answer format asks about it |
-| `media` | whether the history holds photos and links (brain.ts:615); left out when it holds neither |
+| `media` | whether the history holds photos and links (brain.ts:618); left out when it holds neither |
 
 ### `directMessageAnswerFormat` (prompts.ts:321-334)
 
@@ -256,10 +256,10 @@ DM turn only, first part of the task. Always present. What changes it:
   or else `"none"` (brain.ts:148).
 - `settings.relationship.affinity.enabled` (default on): off, the `affinity` field and its line are left out.
 - `memory.personNotes` (default 280) and `memory.selfNotes` (default 800): the numbers in the notes and self lines.
-  The notes are also cut to these lengths when stored, once the reply queue keeps the turn (`keep`, brain.ts:633-638).
+  The notes are also cut to these lengths when stored, once the reply queue keeps the turn (`keep`, brain.ts:636-641).
 - The answer's `importance` is read back as a whole number from 0 to 3 and `affinity` as -1, 0 or 1 (brain.ts:159-160); once
   the turn is kept, importance is stored on the person and familiarity grows by it, affinity moves one
-  `relationship.affinity.step` (`keep`, brain.ts:633-651).
+  `relationship.affinity.step` (`keep`, brain.ts:636-654).
 
 Rendered with invitations and one action (`{ name: 'snooze', when: 'when you would rather pause the conversation for a
 while' }`):
@@ -352,8 +352,8 @@ export const relationshipPrompt = ({
 ```
 
 DM turn, third line of the notes block. It is set once per conversation, when their first message of it comes in
-(`startConversation`, brain.ts:459-477, called at :441), and the brain passes it as it was set
-(brain.ts:480-489):
+(`startConversation`, brain.ts:462-480, called at :441), and the brain passes it as it was set
+(brain.ts:483-492):
 
 - `familiarity`: the level of the person's familiarity (0 to 1). It grows with each turn the reply queue keeps, by the
   share `relationship.familiarity.growth` (default 0.012) of what is left, times 0.25, 1, 2.5 or 5 by the turn's
@@ -398,7 +398,7 @@ DM turn only. Present when the channel has `invitations` and a name is passed: t
 `Conversation.invitation` (`{ name, join }`, runtime.ts:82) to the conversation, the reply queue keeps it from the
 incoming message (runtime.ts:870) and passes its `name` to `compose` where `channel.invitations` (runtime.ts:617, :638). The
 name is the app's data, quoted as a JSON string. With a full online span open on the channel (`joinNow`) the line asks
-for a decision; on a break `BREAK_INVITE_PROMPT` takes its place, and the turn reports `inviteWaits` (brain.ts:630).
+for a decision; on a break `BREAK_INVITE_PROMPT` takes its place, and the turn reports `inviteWaits` (brain.ts:633).
 Rendered (`joinNow` true, name `Friday "movie" night`):
 
 ```text
@@ -454,7 +454,7 @@ a description, a refusal included, leaves only the photo's `alt`, else it is tak
 ```
 
 DM turn, last part of the task: what changes on every call goes last, so a provider's prompt cache can reuse the
-rest. The brain passes (brain.ts:604-610):
+rest. The brain passes (brain.ts:607-613):
 
 - `localTime`: `dateTimeText(now(), persona.timezone)`;
 - `gaps`: with `settings.context.timeSince` only: since the newest message in the history from them and from the
@@ -509,7 +509,7 @@ if (!parts.length) return '';
 return [...parts, AWARE_PROMPT, show.now && show.endingSoon ? endingText(situation, timeZone) : ''].filter(Boolean).join(' ');
 ```
 
-Called by `dayLines` (brain.ts:496-507), which returns nothing while no span is open on the channel
+Called by `dayLines` (brain.ts:499-510), which returns nothing while no span is open on the channel
 (`situationAt(persona, at, channel)` is `null`, schedule.ts:456). Otherwise:
 
 | `show` field | Value | Set by |
@@ -517,7 +517,7 @@ Called by `dayLines` (brain.ts:496-507), which returns nothing while no span is 
 | `away` | `{ since: firstNew, reason: busyAt(persona, firstNew)?.reason ?? null }` when their first message not handled yet came before the span opened; DM turn only | `context.awayContext` |
 | `now` | `context.situation` | `context.situation` |
 | `upcoming` | `context.upcoming` | `context.upcoming` |
-| `endingSoon` | DM turn only: `end - at <= Math.min(WRAP_UP_MS, (end - start) / 3)`, `WRAP_UP_MS` 10 minutes (brain.ts:223, :498) | the agenda; shown only with `now` |
+| `endingSoon` | DM turn only: `end - at <= Math.min(WRAP_UP_MS, (end - start) / 3)`, `WRAP_UP_MS` 10 minutes (brain.ts:223, :501) | the agenda; shown only with `now` |
 
 A group-chat line calls `dayLines(chat.id)` without the DM part: no `away`, no `endingSoon`. A post calls no
 `dayLines`.
@@ -608,7 +608,7 @@ Tomorrow you're at the gym from 10:00 AM. You'll be online again tomorrow around
 [`It is ${localTime} for you.`, silentFor !== undefined ? `The last line in the chat was ${ago(silentFor)}.` : '', day].filter(Boolean).join(' ')
 ```
 
-Group-chat line only, last line of the task. The brain passes (brain.ts:693-695): `silentFor` with
+Group-chat line only, last line of the task. The brain passes (brain.ts:696-698): `silentFor` with
 `context.timeSince` only, `now() - lastAt` from the newest `at` of the recent lines; when no line has an `at`, none,
 and the time line says nothing of the silence; `day`: `dayLines(chat.id)`. Rendered (`DAY` standing for the day lines):
 
@@ -637,7 +637,7 @@ It is Saturday, November 7, 8:00 PM for you. The last line in the chat was 12 mi
 	.join('\n');
 ```
 
-The brain fills it in at brain.ts:698-705:
+The brain fills it in at brain.ts:701-708:
 
 - `quiet` and `hosted`: `composeGroupChatLine`'s arguments, the app's: the chat has been silent a while; it is the
   persona's own chat;
@@ -648,7 +648,7 @@ The brain fills it in at brain.ts:698-705:
 - `time`: `groupChatTimePrompt`.
 
 The answer is read as a DM answer (`parseTurn`, only its `reply`), its line breaks turned into spaces and cut to the
-channel's `maxLength` (brain.ts:714-716). How much the persona talks in group chats is not in the task: it is the
+channel's `maxLength` (brain.ts:717-719). How much the persona talks in group chats is not in the task: it is the
 persona's own prompt's to say. Rendered hosted,
 quiet, with one channel note, a target length of 150, self notes, and `TIME` standing for the time line:
 
@@ -704,14 +704,14 @@ With no line: `(the chat is empty)`.
 	.join('\n\n');
 ```
 
-The brain fills it in at brain.ts:674:
+The brain fills it in at brain.ts:677:
 
 - `selfNotes`: the persona's self notes;
 - `notes`: `channel.notes ?? []`, the app's, one per line after the instruction;
 - `rules`, `examples`, `recentPosts`: `composePost(channel, { rules, examples, recent })`, the app's: the channel's
   own rules as one text, example posts, the persona's recent posts there;
 - `noLinks`: `!!allowedHosts`, true whenever `policy.allowedLinks` is set (the post's links are then all removed,
-  brain.ts:682).
+  brain.ts:685).
 
 A post has no time line and no day lines. Rendered with every slot:
 
@@ -776,7 +776,7 @@ Sent as each question's `name` and echoed back in the answers.
 	.join('\n');
 ```
 
-The input of the DM check (`checkIncoming`, brain.ts:419-429), in `compose` before the model call, or ahead of the turn in `assess`. `yourLast`: the
+The input of the DM check (`checkIncoming`, brain.ts:422-432), in `compose` before the model call, or ahead of the turn in `assess`. `yourLast`: the
 persona's newest message in the history, cut to 300 characters; `theirNew`: their messages since their last turn, the
 newest `decisions.dmMessages` (default 6), each its words and a line per photo seen (`judgedMessage`, never a link's
 card), cut to 500 characters. No request when no question is on or there is
@@ -816,7 +816,7 @@ export const stopQuestion: Question = {
 ```
 
 DM check, on every channel, with `decisions.stop.enabled` (default on). At `decisions.stop.at` (default 0.9) or above,
-the conversation ends for good with the code's goodbye (`STOP_ACK`), and no model is called (brain.ts:581-584).
+the conversation ends for good with the code's goodbye (`STOP_ACK`), and no model is called (brain.ts:584-587).
 
 ### `importanceQuestion` (prompts.ts:563-573)
 
@@ -845,7 +845,7 @@ turn in the reply queue's pick (`pacing.priority`) and can hold an interruption 
 export const groupChatLineInput = (text: string) => `A message someone wrote in a group chat:\n${text}`;
 ```
 
-The input of `checkGroupChatLine`: one line someone wrote, cut to 500 characters (`clip(text, 500)`, brain.ts:743). Rendered:
+The input of `checkGroupChatLine`: one line someone wrote, cut to 500 characters (`clip(text, 500)`, brain.ts:746). Rendered:
 
 ```text
 A message someone wrote in a group chat:
@@ -875,11 +875,11 @@ export const groupChatGateQuestions = (name: string): Question[] => [
 ];
 ```
 
-`name`: `persona.name`. The input is `groupChatTranscript(recent, persona.name)` (brain.ts:732). Asked by
+`name`: `persona.name`. The input is `groupChatTranscript(recent, persona.name)` (brain.ts:735). Asked by
 `wantsToSpeak` with the Decisions client on and `decisions.groupChatGate.enabled` (default on), on any channel. It
 answers `speak` when `addressed >= groupChatGate.addressedAt` (default 0.5) or `chimeIn >=
 groupChatGate.chimeInAt` (default 1.7: about 2.2 for a persona that rarely speaks unasked, 1.2 for a chatty one), and
-`null` on any failure (brain.ts:719-738). How readily it chimes in is only that threshold, from its brain's settings,
+`null` on any failure (brain.ts:722-741). How readily it chimes in is only that threshold, from its brain's settings,
 never in the question text. `wantsToSpeak(chatId,
 recent)` asks at most `groupChatGate.perHour` (default 120) times per `chatId` in any hour, counted when it asks:
 past that, it answers `null` without asking. The app calls `wantsToSpeak` before `composeGroupChatLine`; the gate
@@ -939,7 +939,7 @@ Everything else is inserted as it is, without quotes or delimiters:
 
 ## What switches parts on and off
 
-### `settings.context` (settings.ts:431-447)
+### `settings.context` (settings.ts:432-448)
 
 "false leaves that text out of the prompt, and nothing else changes". All default to `true`.
 
@@ -953,7 +953,7 @@ Everything else is inserted as it is, without quotes or delimiters:
 
 With `situation`, `upcoming` and (in a DM turn) the away line all absent, `AWARE_PROMPT` goes too.
 
-### `settings.memory` (settings.ts:237-287)
+### `settings.memory` (settings.ts:238-288)
 
 - `personNotes` (280), `selfNotes` (800): the numbers in the answer format's notes and self lines.
 - `historyMessages` (20): how many `user` and `assistant` messages follow a DM turn's system prompt.
@@ -962,11 +962,11 @@ With `situation`, `upcoming` and (in a DM turn) the away line all absent, `AWARE
   steps and fading, and the hysteresis margin; `affinity.enabled: false` takes affinity out of the answer format and
   the relationship line.
 
-### `settings.models` (settings.ts:121-138)
+### `settings.models` (settings.ts:122-139)
 
 The model, provider, `maxTokens`, `temperature` and `jsonMode` per task, over `models.default`. No text changes.
 
-### `settings.decisions` (settings.ts:164-234)
+### `settings.decisions` (settings.ts:165-235)
 
 Only with the Decisions client on (the service settings' `decisions.enabled`, off by default):
 
@@ -1038,7 +1038,7 @@ It is Saturday, November 7, 8:00 PM for you. Their last message was just now. Yo
 hey, how was your day?
 ```
 
-`samplePrompt({ persona, channel, now })` (report.ts:110) returns the same system prompt: it runs the same brain on a
+`samplePrompt({ persona, channel, now })` (report.ts:115) returns the same system prompt: it runs the same brain on a
 throwaway store, with a person "Sam" who wrote "hey".
 
 ### Group-chat line
@@ -1143,17 +1143,17 @@ on any other channel none of these parts appears and no age question is asked.
 
 | Part | Where | Condition |
 | --- | --- | --- |
-| `ADULTS_ONLY_RULE` | first line of the rules block, every task on that channel | `channel.adult` (brain.ts:328) |
-| `dmMinorQuestion` with `dmCheckInput` | DM check before a DM turn | `channel.adult`, the Decisions client on, `decisions.minor.enabled` (brain.ts:422) |
-| `MINOR_CAUTION_PROMPT` | DM turn, after the answer format | `channel.adult` and the person flagged (brain.ts:587) |
-| `groupChatMinorQuestion` with `groupChatLineInput` | `checkGroupChatLine` | `chat.adult`, the Decisions client on, `minor.enabled`, `minor.groupChats` (brain.ts:742) |
+| `ADULTS_ONLY_RULE` | first line of the rules block, every task on that channel | `channel.adult` (brain.ts:331) |
+| `dmMinorQuestion` with `dmCheckInput` | DM check before a DM turn | `channel.adult`, the Decisions client on, `decisions.minor.enabled` (brain.ts:425) |
+| `MINOR_CAUTION_PROMPT` | DM turn, after the answer format | `channel.adult` and the person flagged (brain.ts:590) |
+| `groupChatMinorQuestion` with `groupChatLineInput` | `checkGroupChatLine` | `chat.adult`, the Decisions client on, `minor.enabled`, `minor.groupChats` (brain.ts:745) |
 
 The code's own check comes first and needs no model: on an adult channel, `incoming` ends the conversation at any
 sign of someone under 18 (`minorSignal`, safety.ts) with the fixed goodbye `MINOR_EXIT` and deny-lists each of their
-accounts for every persona (brain.ts:536-539). The Decisions age check only adds to it:
+accounts for every persona (brain.ts:539-542). The Decisions age check only adds to it:
 
-- at `minor.denyAt` (0.9) or above, the same goodbye and deny-list, without calling the model (brain.ts:577-580);
-- at `minor.cautionAt` (0.5) or above, each of their accounts is flagged for every persona (`flagMinorCaution`, brain.ts:407-411, :571).
+- at `minor.denyAt` (0.9) or above, the same goodbye and deny-list, without calling the model (brain.ts:580-583);
+- at `minor.cautionAt` (0.5) or above, each of their accounts is flagged for every persona (`flagMinorCaution`, brain.ts:410-414, :574).
 
 The caution is read on every DM turn on an adult channel, whether or not a check ran on that turn (another persona,
 or the app acting on a group-chat check, may have flagged them). It never appears on a channel without `adult`, even

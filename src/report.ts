@@ -8,10 +8,11 @@ import { createBrain, type Policy } from './brain.js';
 import type { Channel, ChannelId } from './channel.js';
 import type { Persona, PersonaConfig } from './config/personas.js';
 import { providerSet, type Llm, type LlmMessage } from './llm.js';
+import { diffPaths } from './merge.js';
 import { interruptionsOn } from './pacing.js';
 import { clockText } from './prompts.js';
 import { addDays, agendaOn, isOn, localDateOf, nextSpan, onlineMinutesByWeekday, spanAt, weekdayOf, WEEKDAYS, type DayAgenda, type LocalDate } from './schedule.js';
-import { DAY, MINUTE, TASKS, taskModel, type Settings } from './settings.js';
+import { DAY, MINUTE, ownSettings, TASKS, taskModel, type Settings } from './settings.js';
 import { createStore, openDatabase, type Person } from './store.js';
 
 /** A city's zone follows its daylight saving; an abbreviation (EST) or a fixed offset (Etc/GMT+5) never does. UTC is meant as it is. */
@@ -81,11 +82,14 @@ const nowText = (persona: PersonaConfig, now: number) => {
 };
 
 /**
- * A config check's lines on one persona, after the app's header line, with the settings its brain runs with: its
- * prompt's length, now (`status` in place of what its hours say, when the app gives one), today, tomorrow, today's
- * interruptions (`pacing.interruptions`) and its models.
+ * A config check's lines on one persona, after the app's header line, with the settings its brain is given (with its
+ * own pacing and relationship over them, as createBrain runs it: a ConfigError if they don't fit): its prompt's
+ * length, now (`status` in place of what its hours say, when the app gives one), today, tomorrow, today's
+ * interruptions (`pacing.interruptions`), its models, and the settings it changes for itself, if any.
  */
-export function personaReport(persona: Persona, { settings, now, status }: { settings: Settings; now: number; status?: string }): string[] {
+export function personaReport(persona: Persona, { settings: given, now, status }: { settings: Settings; now: number; status?: string }): string[] {
+	const settings = ownSettings(persona, given);
+	const own = diffPaths(given, settings);
 	const today = localDateOf(now, persona.timezone);
 	const tomorrow = addDays(today, 1);
 	const provider = providerSet(settings);
@@ -99,6 +103,7 @@ export function personaReport(persona: Persona, { settings, now, status }: { set
 			.filter(({ task, used }) => task !== 'vision' || used.model)
 			.map(({ task, used }) => `${task} ${(provider && used.model) || '(canned)'}${provider && used.ownProvider && used.baseUrl ? ` (${new URL(used.baseUrl).host})` : ''}`)
 			.join(', ')}`,
+		...(own.length ? [`  own settings: ${own.join(', ')}`] : []),
 	];
 }
 
@@ -118,7 +123,7 @@ export async function samplePrompt({
 	policy,
 }: {
 	persona: Persona;
-	/** As createBrain's: the settings its brain runs with. */
+	/** As createBrain's: the settings its brain is given, its own pacing and relationship over them. */
 	settings: Settings;
 	/** As createBrain's. */
 	identity?: string;
