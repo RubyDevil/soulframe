@@ -22,6 +22,14 @@ Where the beta stands and what is planned before 1.0.
 
 ## Planned: realism
 
+- **A mood that follows what happens, shared by everyone it talks with.** A persona has no mood today. Planned: one
+  mood per persona, not per person, kept in the store and moved by the code from what it lives through: its
+  conversations (how much they mattered and how they went: a warm one, a fight, bad news someone shared), its day (a
+  long shift, an evening it skipped) and the time since, drifting back to its own baseline while nothing happens. So a
+  hard conversation can leave it a little flat with the next person, and a good one carries over. The time lines of DM
+  turns and group-chat lines say how it feels now and, roughly, why ("you're still a bit shaken after an earlier
+  conversation"), never naming the other person or repeating what they said. How fast it moves and fades are
+  settings; off by default.
 - **Opening a link later.** Today a persona only ever knows a link's preview. A durable "I'll look at it" that comes
   back once it has had the time, with a turn of its own.
 - **Interruptions with a reason, told to the model.** Each interruption gets a reason fitting how long it lasts
