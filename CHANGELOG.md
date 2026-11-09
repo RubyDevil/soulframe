@@ -9,6 +9,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **A step clock**: `createStepClock()` runs reply queues without waiting while keeping every timestamp: give its
+  `now` and `timers` to the runtime, wrap the model's calls in `clock.track`, and `clock.run({ until, done })`. Each
+  wait (a glance, reading, typing, a pause, the backlog's gaps, the tick that sends openers) is skipped, the clock moved
+  forward to when it was due, from the real time on; nothing is skipped while a model call is under way, whose real
+  time counts as it does live. An evening's conversation runs in the time its model calls take, against a live model
+  too ([testing](./docs/testing.md#the-reply-queue)).
+- `Runtime.timers` and `createRuntime({ timers })`: what the reply queues and `watchSpans` wait with (`Timers`), the
+  system's (`systemTimers`) unless given. A runtime written by hand without it keeps working as before.
 - **Texting first, off by default** (`settings.initiative`). A persona may start a DM conversation itself with
   someone who wrote to it before, on the channels the app allows (`queue.allowInitiative(channel, conversationOf)`).
   This first kind is the follow-up: a DM turn may plan to text them again about something still ahead of them or

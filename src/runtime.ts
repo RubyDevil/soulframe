@@ -2,10 +2,11 @@ import { existsSync } from 'node:fs';
 import { inspect } from 'node:util';
 import { unhandled, type Brain, type Decision, type PersonAction, type Turn } from './brain.js';
 import type { Channel, ChannelId } from './channel.js';
+import { systemTimers, waitOn, type Timers } from './clock.js';
 import { LlmBudgetError, ModelNotConfiguredError, ProviderUnavailableError } from './llm.js';
 import { betweenMessagesMs, drawIn, fitDelay, glanceMs, interruptionAt, lookingMs, quietMs, readingMs, typingPlan, watchingChance, watchingMs, type Interruption } from './pacing.js';
 import { readableChars } from './perception.js';
-import { between, sleep, weightedPick, type Rng } from './rng.js';
+import { between, weightedPick, type Rng } from './rng.js';
 import { nextSpan, spanAt, type Hours, type Span } from './schedule.js';
 import { MINUTE, SECOND } from './settings.js';
 import { openerBlock, planCheckIns, planShare } from './initiative.js';
@@ -20,6 +21,8 @@ export interface Runtime {
 	/** True while the halt file exists: nothing is sent, nothing new is started. */
 	halted: () => boolean;
 	log: (persona: string, event: string, detail?: Record<string, unknown>) => void;
+	/** What its reply queues and `watchSpans` wait with: the system's timers unless given (a step clock's skips the waits, `createStepClock`). */
+	timers?: Timers;
 }
 
 export function createRuntime({
@@ -28,18 +31,21 @@ export function createRuntime({
 	haltFile,
 	rng = Math.random,
 	now = Date.now,
+	timers = systemTimers,
 }: {
 	store: Store;
 	dryRun: boolean;
 	haltFile: string;
 	rng?: Rng;
 	now?: () => number;
+	timers?: Timers;
 }): Runtime {
 	return {
 		now,
 		rng,
 		store,
 		dryRun,
+		timers,
 		halted: () => existsSync(haltFile),
 		log(persona, event, detail = {}) {
 			const fields = Object.entries(detail).map(([key, value]) => {
@@ -149,11 +155,13 @@ export function createReplyQueue({
 }) {
 	const { persona, settings } = brain;
 	const { retries, pacing } = settings;
+	const timers = runtime.timers ?? systemTimers;
+	const sleep = (ms: number) => waitOn(timers, ms);
 	const { burst, priority } = pacing;
 	/** Whether a turn that comes due while others wait is weighed by the Decisions importance check (`brain.assess`, which asks nothing while the checks are off). */
 	const assessing = settings.decisions.importance.enabled;
 	/** By person: the timer of a turn's delay, a retry or a backlog gap. */
-	const pending = new Map<number, NodeJS.Timeout>();
+	const pending = new Map<number, unknown>();
 	/** The backlog: people owed a turn while no span was open for it, oldest first. */
 	const waiting = new Map<number, Conversation>();
 	/** Due while they were still writing: due once their quiet ends. */
@@ -163,13 +171,13 @@ export function createReplyQueue({
 	/** How many messages they had written when `brain.assess` was last asked about them, by person: never twice for the same. */
 	const assessedAt = new Map<number, number>();
 	/** The quiet each is given after their newest message (`pacing.burst`): its timer, how many messages started it again, and what waits for its end. */
-	const quiet = new Map<number, { timer: NodeJS.Timeout; resets: number; ended: (() => void)[] }>();
+	const quiet = new Map<number, { timer: unknown; resets: number; ended: (() => void)[] }>();
 	/** Turns under way, by person: one at a time, but for one stuck past PRESENCE_LEASE. */
 	const active = new Map<number, TurnState>();
 	/** The turn the others wait for, until it has run PRESENCE_LEASE. */
 	let present: TurnState | null = null;
 	/** Lets the others go once that turn has run PRESENCE_LEASE. */
-	let lease: NodeJS.Timeout | undefined;
+	let lease: unknown;
 	/** A message that came in during their turn, too late for it to start over: their next turn comes once this one ends. */
 	const owedAfter = new Map<number, Conversation>();
 	/** When its last turn with each person ended: it may still be watching their chat (`pacing.watching`). */
@@ -180,7 +188,7 @@ export function createReplyQueue({
 	 * with the time it has left; and the scheduled ones already met, each taken or held once.
 	 */
 	let away: Interruption | null = null;
-	let comeback: NodeJS.Timeout | undefined;
+	let comeback: unknown;
 	/** When the last interruption ends (or ended): a chat last open before then is not being watched any more. */
 	let lastAwayEnd = 0;
 	let held: { ms: number } | null = null;
@@ -193,7 +201,7 @@ export function createReplyQueue({
 	 * Off its phone, its next look at its messages (`pacing.glance`): one for everyone, drawn when the first message comes
 	 * in, and everyone who wrote before it is noticed then, together; with its timer, and who waits for it.
 	 */
-	let nextGlance: { at: number; timer: NodeJS.Timeout } | null = null;
+	let nextGlance: { at: number; timer: unknown } | null = null;
 	const glancing = new Map<number, Conversation>();
 	/** When each person due first came due, kept while they write again: how long they waited (`pacing.priority`). */
 	const firstDue = new Map<number, number>();
@@ -207,7 +215,7 @@ export function createReplyQueue({
 	const providerWaits = new Map<number, number>();
 	/** The oldest message `requeue` answers, read before `start`'s tick records a new time. */
 	const backlogSince = Number(runtime.store.get(persona.id, 'lastOnlineAt') ?? runtime.now()) - BACKLOG_LOOKBACK;
-	let tick: NodeJS.Timeout | undefined;
+	let tick: unknown;
 	/** Set by `stop` (the app's, after a start that failed, say): a turn under way sends nothing more and nothing is timed or parked again, so whoever it was for is still owed at the next start. */
 	let stopped = false;
 	/** Why nothing may be sent or started now, if so: the queue stopped, or the halt switch. */
@@ -241,8 +249,8 @@ export function createReplyQueue({
 		away = { start: now, end };
 		lastAwayEnd = end;
 		runtime.log(persona.id, 'away', { from: new Date(now).toISOString(), until: new Date(end).toISOString() });
-		clearTimeout(comeback);
-		comeback = setTimeout(() => {
+		timers.clearTimeout(comeback);
+		comeback = timers.setTimeout(() => {
 			// Back, whatever the clock reads as the timer fires
 			away = null;
 			drain();
@@ -428,8 +436,8 @@ export function createReplyQueue({
 		if (current && current.resets >= burst.maxSettleResets) return;
 		const ms = quietMs(runtime.rng, pacing);
 		if (ms <= 0) return;
-		if (current) clearTimeout(current.timer);
-		quiet.set(personId, { timer: setTimeout(() => quieted(personId), ms), resets: current ? current.resets + 1 : 0, ended: current?.ended ?? [] });
+		if (current) timers.clearTimeout(current.timer);
+		quiet.set(personId, { timer: timers.setTimeout(() => quieted(personId), ms), resets: current ? current.resets + 1 : 0, ended: current?.ended ?? [] });
 	};
 
 	/** Their quiet is over: what waited for it goes on, a turn that came due meanwhile first. */
@@ -542,7 +550,7 @@ export function createReplyQueue({
 	const noticeWaiting = (answering: number) => {
 		const now = runtime.now();
 		// The look it was going to take is this one
-		if (nextGlance) clearTimeout(nextGlance.timer);
+		if (nextGlance) timers.clearTimeout(nextGlance.timer);
 		nextGlance = null;
 		const looking = [...glancing].filter(([personId]) => personId !== answering);
 		glancing.clear();
@@ -551,7 +559,7 @@ export function createReplyQueue({
 			if (why !== 'pacing' || personId === answering || !pending.has(personId)) continue;
 			const lag = watchingMs(runtime.rng, pacing);
 			if (at <= now + lag) continue;
-			clearTimeout(pending.get(personId));
+			timers.clearTimeout(pending.get(personId));
 			pending.delete(personId);
 			timeReply(personId, conversation, lag, 'pacing', true);
 		}
@@ -562,8 +570,8 @@ export function createReplyQueue({
 		active.set(personId, state);
 		present = state;
 		noticeWaiting(personId);
-		clearTimeout(lease);
-		lease = setTimeout(() => {
+		timers.clearTimeout(lease);
+		lease = timers.setTimeout(() => {
 			// Ended turns clear it, so this one is stuck: the others go on, whatever the clock reads as the timer fires
 			if (present === state) present = null;
 			next();
@@ -577,7 +585,7 @@ export function createReplyQueue({
 		lastActive = runtime.now();
 		if (present === state) {
 			present = null;
-			clearTimeout(lease);
+			timers.clearTimeout(lease);
 		}
 		// A message that came in too late for this turn gets its own, unless a draft written after it read it
 		const later = owedAfter.get(personId);
@@ -811,7 +819,7 @@ export function createReplyQueue({
 		if (stopped) return;
 		// setTimeout holds at most about 24.8 days
 		const delayMs = Math.round(Math.min(wait, 2_000_000_000));
-		pending.set(personId, setTimeout(() => due(personId, conversation), delayMs));
+		pending.set(personId, timers.setTimeout(() => due(personId, conversation), delayMs));
 		pendingWhy.set(personId, { why: reason, at: runtime.now() + delayMs, conversation });
 		runtime.log(persona.id, 'reply_scheduled', {
 			personId,
@@ -904,7 +912,7 @@ export function createReplyQueue({
 		const wait = fitDelay(ms, span.end - SPAN_END_MARGIN - now, pacing.glance.delaySeconds[0] * SECOND);
 		if (wait === null) return park(personId, conversation, 'span_ending');
 		if (glanceAt === null || wait < ms || stopped) return timeReply(personId, conversation, wait, 'pacing', onPhone);
-		if (!nextGlance) nextGlance = { at: glanceAt, timer: setTimeout(glance, ms) };
+		if (!nextGlance) nextGlance = { at: glanceAt, timer: timers.setTimeout(glance, ms) };
 		glancing.set(personId, conversation);
 		runtime.log(persona.id, 'reply_scheduled', { personId, platform: conversation.channel.id, delayMs: Math.round(ms), dueAt: new Date(glanceAt).toISOString(), reason: 'pacing', watching: false });
 	};
@@ -1021,10 +1029,10 @@ export function createReplyQueue({
 				owedAfter.delete(personId);
 				const entry = quiet.get(personId);
 				quiet.delete(personId);
-				if (entry) clearTimeout(entry.timer);
+				if (entry) timers.clearTimeout(entry.timer);
 				// A turn under way waiting for their quiet ends now: they ended it
 				for (const resolve of entry?.ended ?? []) resolve();
-				clearTimeout(pending.get(personId));
+				timers.clearTimeout(pending.get(personId));
 				pending.delete(personId);
 				glancing.delete(personId);
 				firstDue.delete(personId);
@@ -1066,7 +1074,7 @@ export function createReplyQueue({
 		 */
 		start() {
 			if (tick || stopped) return;
-			tick = setInterval(() => {
+			tick = timers.setInterval(() => {
 				const now = runtime.now();
 				if (!runtime.dryRun && spanAt(persona, now) && !runtime.halted()) runtime.store.set(persona.id, 'lastOnlineAt', String(now));
 				isAway();
@@ -1078,17 +1086,17 @@ export function createReplyQueue({
 		stop() {
 			stopped = true;
 			initiating.clear();
-			clearInterval(tick);
-			clearTimeout(lease);
-			clearTimeout(comeback);
-			if (nextGlance) clearTimeout(nextGlance.timer);
+			timers.clearInterval(tick);
+			timers.clearTimeout(lease);
+			timers.clearTimeout(comeback);
+			if (nextGlance) timers.clearTimeout(nextGlance.timer);
 			nextGlance = null;
 			glancing.clear();
-			for (const timer of pending.values()) clearTimeout(timer);
+			for (const timer of pending.values()) timers.clearTimeout(timer);
 			pending.clear();
 			// A turn waiting for someone's quiet goes on, to find the queue stopped
 			for (const entry of quiet.values()) {
-				clearTimeout(entry.timer);
+				timers.clearTimeout(entry.timer);
 				for (const resolve of entry.ended) resolve();
 			}
 			quiet.clear();
@@ -1125,6 +1133,7 @@ export function watchSpans(hours: Hours, channel: ChannelId, runtime: Runtime, o
 		onChange(span);
 	};
 	check();
-	const timer = setInterval(check, 30_000);
-	return () => clearInterval(timer);
+	const timers = runtime.timers ?? systemTimers;
+	const timer = timers.setInterval(check, 30_000);
+	return () => timers.clearInterval(timer);
 }

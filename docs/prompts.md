@@ -239,8 +239,8 @@ The brain fills it in at brain.ts:651-674. Each slot:
 | `personNotes` | `person.summary`, written by the model |
 | `channel` | the `Channel` (its `invitations` and `actions`) |
 | `memory` | `settings.memory` (`personNotes`, `selfNotes`) |
-| `extraLines` | `options.extraLines?.(person) ?? []`: the reply queue passes `Conversation.extraLines` (runtime.ts:706) |
-| `invitation` | `options.invitation` where `channel.invitations`, else nothing (brain.ts:647); the queue passes the name of `Conversation.invitation` (runtime.ts:685, :706) |
+| `extraLines` | `options.extraLines?.(person) ?? []`: the reply queue passes `Conversation.extraLines` (runtime.ts:714) |
+| `invitation` | `options.invitation` where `channel.invitations`, else nothing (brain.ts:647); the queue passes the name of `Conversation.invitation` (runtime.ts:693, :714) |
 | `joinNow` | `fullyOnline(persona, channel.id, now())`: a full online span is open on the channel (brain.ts:646) |
 | `time` | `directMessageTimePrompt` |
 | `minorCaution` | `!!channel.adult && minorCautioned(person)` (brain.ts:644) |
@@ -409,7 +409,7 @@ Sam is one of your regulars: you're at ease with each other and pick up where yo
 
 ### Extra lines
 
-`Conversation.extraLines?(person)` (runtime.ts:81): the app's lines for each DM turn on that conversation, given the
+`Conversation.extraLines?(person)` (runtime.ts:87): the app's lines for each DM turn on that conversation, given the
 person as `compose` reads them. Each line is its own paragraph, after the notes block and before the invitation and
 the time. Written by the app, word for word; soulframe writes none. DM turn only.
 
@@ -424,8 +424,8 @@ export const BREAK_INVITE_PROMPT = "You're only on for a few minutes, so you can
 ```
 
 DM turn only. Present when the channel has `invitations` and a name is passed: the app attaches
-`Conversation.invitation` (`{ name, join }`, runtime.ts:83) to the conversation, the reply queue keeps it from the
-incoming message (runtime.ts:1037) and passes its `name` to `compose` where `channel.invitations` (runtime.ts:685, :706). The
+`Conversation.invitation` (`{ name, join }`, runtime.ts:89) to the conversation, the reply queue keeps it from the
+incoming message (runtime.ts:1045) and passes its `name` to `compose` where `channel.invitations` (runtime.ts:693, :714). The
 name is the app's data, quoted as a JSON string. With a full online span open on the channel (`joinNow`) the line asks
 for a decision; on a break `BREAK_INVITE_PROMPT` takes its place, and the turn reports `inviteWaits` (brain.ts:687).
 Rendered (`joinNow` true, name `Friday "movie" night`):

@@ -1,4 +1,5 @@
 import { tmpdir } from 'node:os';
+import { setTimeout as delay } from 'node:timers/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createBrain, type Brain, type Turn } from '../src/brain.js';
@@ -11,6 +12,7 @@ import { STOP_QUESTION } from '../src/prompts.js';
 import { interruptionsOn } from '../src/pacing.js';
 import { seededRng, sleep, type Rng } from '../src/rng.js';
 import type { IncomingMessage } from '../src/perception.js';
+import { createStepClock } from '../src/clock.js';
 import { createReplyQueue, createRuntime, UnreachableError, watchSpans, type Conversation } from '../src/runtime.js';
 import { MINOR_EXIT, STOP_ACK } from '../src/safety.js';
 import { DAY, DEFAULT_SETTINGS, MINUTE, parseSettings, type Settings } from '../src/settings.js';
@@ -2178,5 +2180,52 @@ describe('texting first (settings.initiative)', () => {
 		expect(rehearsal.log).toHaveBeenCalledWith('test', 'dry_send', expect.objectContaining({ text: 'sooo how did it go??' }));
 		expect(outcomeOf(rehearsal.store, rehearsal.sam.id)).toBe('opener_rehearsed');
 		rehearsal.queue.stop();
+	});
+});
+
+describe('on a step clock (Runtime.timers)', () => {
+	it('two personas chat at human pace with no real waiting, every message stamped as it would be live', async () => {
+		const clock = createStepClock({ now: () => OPEN });
+		const store = memoryStore(clock.now);
+		const runtime = { now: clock.now, rng: seededRng('step'), store, dryRun: false, halted: () => false, log: () => undefined, timers: clock.timers };
+		// The default pacing: glances, reading, typing and pauses of seconds to minutes. The model takes 5 real ms (node:timers, never faked)
+		const settings = settingsOf({ pacing: { interruptions: { meanMinutes: 0 } } });
+		let calls = 0;
+		const llm = { complete: (_messages: unknown, { task }: { task: string }) => clock.track(delay(5).then(() => (task === 'directMessage' ? JSON.stringify({ reply: `message ${++calls}`, notes: null, self: null, action: 'none' }) : '{}'))) };
+		const sides = config.personas.map((persona) => {
+			const brain = createBrain({ persona, settings, runtime, llm });
+			return { persona, brain, queue: createReplyQueue({ brain, runtime, act: async () => undefined }) };
+		});
+		const sent: { from: string; text: string; at: number }[] = [];
+		const conversationOf = (from: number): Conversation => {
+			const me = sides[from]!;
+			const other = sides[1 - from]!;
+			return {
+				channel: PLAIN_DM,
+				async typing() {},
+				async send(text) {
+					sent.push({ from: me.persona.id, text, at: clock.now() });
+					const decision = other.brain.incoming(PLAIN_DM, me.persona.id, me.persona.name, text);
+					void other.queue.handle(decision, conversationOf(1 - from), text);
+				},
+			};
+		};
+		for (const side of sides) side.queue.start();
+		// robin opens, outside the queue
+		sides[0]!.brain.outgoing(PLAIN_DM, 'sky', 'sky', 'hey sky');
+		await sides[1]!.queue.handle(sides[1]!.brain.incoming(PLAIN_DM, 'robin', 'robin', 'hey sky'), conversationOf(1), 'hey sky');
+		const started = performance.now();
+		try {
+			expect(await clock.run({ until: OPEN + 6 * 60 * MINUTE, done: () => sent.length >= 6 })).toBe('done');
+		} finally {
+			for (const side of sides) side.queue.stop();
+		}
+		expect(performance.now() - started).toBeLessThan(5_000);
+		expect(sent.map((message) => message.from)).toEqual(['sky', 'robin', 'sky', 'robin', 'sky', 'robin']);
+		// Each reply waited as a person would: seconds at least, in order, and as the store has it
+		for (const [i, message] of sent.entries()) expect(message.at - (sent[i - 1]?.at ?? OPEN)).toBeGreaterThan(5_000);
+		expect(clock.skipped()).toBeGreaterThan(60_000);
+		const robinsView = store.history(store.person('robin', PLAIN_DM.id, 'sky')!.id);
+		expect(robinsView.filter((message) => message.direction === 'in').map((message) => message.at)).toEqual(sent.filter((message) => message.from === 'sky').map((message) => message.at));
 	});
 });

@@ -155,6 +155,11 @@ tests fast:
   (`personaReport`) lists today's.
 - **Fake timers**: Vitest's `vi.useFakeTimers()` and `await vi.runAllTimersAsync()` (or `advanceTimersByTimeAsync`).
   Don't call `queue.start()` under `runAllTimersAsync`: its 30-second interval never ends.
+- **A step clock**: keep the real pacing and skip its waits. `createStepClock()` gives a `now` and `timers` for the
+  runtime (`createRuntime({ ..., now: clock.now, timers: clock.timers })`); wrap the model's calls in `clock.track`
+  and `await clock.run({ done })`. Each timer runs as the clock is stepped to it, the clock moved forward to when it
+  was due, so every stored message and prompt reads the time it would have live. Unlike fake timers it needs no test
+  framework and never skips a wait while a model call is under way, so it also runs against a live model.
 
 Call `queue.stop()` at the end of a test that started anything. A `Runtime` you write yourself
 (`{ now, rng, store, dryRun, halted: () => false, log }`) avoids the halt file and keeps the console quiet; with
