@@ -75,8 +75,8 @@ export interface Scenario {
 export interface Setup {
 	live: boolean;
 	service: ServiceSettings;
-	/** The reviewer's settings: none, no review. */
-	reviewer?: Settings;
+	/** The reviewer's model client, one for the whole run (it learns what its model refuses once): none, no review. */
+	reviewer?: Llm;
 	/** Why there is no review, when there is none. */
 	noReview?: string;
 	apiKeyOf: (name: string) => string;
@@ -380,7 +380,7 @@ export async function converse(setup: Setup, scenario: Scenario, { dir, run }: {
 	else if (sent.length < 2) analysisProblem = 'nothing to review: the other persona never answered';
 	else {
 		say('Reviewing...');
-		const judge = llmsFor([{ id: 'reviewer', settings: setup.reviewer }], { dryRun: false, apiKeyOf, budget: service.text, rng }).get('reviewer')!;
+		const judge = setup.reviewer;
 		/** The system prompt each persona's model was last sent for a DM turn: the framework's instructions as they were. */
 		const lastPrompt = (id: string) => calls.findLast((call) => call.persona === id && call.task === 'directMessage')?.messages[0]?.content ?? null;
 		const review = {

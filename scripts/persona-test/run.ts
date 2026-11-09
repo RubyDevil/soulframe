@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { parse } from 'yaml';
 import { z } from 'zod';
-import { isPlainObject, modelKeys, parseServiceSettings, parseSettings, type Settings } from 'soulframe';
+import { isPlainObject, llmsFor, modelKeys, parseServiceSettings, parseSettings, type Settings } from 'soulframe';
 import { converse, reader, SetupError, type ConversationResult, type Scenario, type Setup, type StartRule } from './conversation.js';
 import { summaryMarkdown, type SuiteSummary } from './report.js';
 
@@ -267,7 +267,8 @@ const say = (line: string) => {
 const setup: Setup = {
 	live,
 	service,
-	...(reviewer && { reviewer }),
+	// One client for every review: a model that refuses a setting (a temperature) is learned once
+	...(reviewer && { reviewer: llmsFor([{ id: 'reviewer', settings: reviewer }], { dryRun: false, apiKeyOf, budget: service.text }).get('reviewer')! }),
 	...(!reviewer && { noReview: live ? 'skipped (--no-review)' : 'a canned run is not reviewed' }),
 	apiKeyOf,
 	...(args.identity !== undefined && { identity: args.identity }),
