@@ -132,6 +132,16 @@ export function unknownKeys(schema: z.ZodTypeAny, raw: unknown, path: (string | 
 /** An unknown key as a problem, with the nearest known key if any. */
 export const unknownKeyProblem = ({ path, suggestion }: UnknownKey): Problem => ({ path, message: `unknown key${didYouMean(suggestion)}` });
 
+/**
+ * Unknown keys as problems: a key an earlier version read says where it went (`moved`, by its dotted path), any other
+ * gets the nearest known key.
+ */
+export const unknownKeyProblems = (found: UnknownKey[], moved: Readonly<Record<string, string>> = {}): Problem[] =>
+	found.map((key) => {
+		const at = key.path.join('.');
+		return Object.hasOwn(moved, at) ? { path: key.path, message: moved[at]! } : unknownKeyProblem(key);
+	});
+
 /** The unknown keys found under `at`, each an issue: a key the schema doesn't know is never silently ignored. */
 export function unknownKeyIssues(found: UnknownKey[], at: readonly (string | number)[]): string[] {
 	return found.map((key) => unknownKeyProblem(key)).map(({ path, message }) => describe([...at, ...path], message, undefined));

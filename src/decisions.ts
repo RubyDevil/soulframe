@@ -1,21 +1,22 @@
 import { postModelJson, type TokenMeter } from './llm.js';
 import { between, type Rng } from './rng.js';
-import type { Settings } from './settings.js';
+import type { ServiceSettings } from './settings.js';
 
 /**
  * The Decisions API (OpenAI's by default): a classifier that answers typed questions (yes/no, or a level on a
  * scale) with probabilities, and writes no text. The questions themselves are model text, so they
  * are in `prompts.ts`; this file only sends them and reads the answers.
  *
- * `settings.decisions` is its only configuration and this file its only client (every check and the group-chat
- * gate): nothing here reads `settings.llm` or `settings.models`.
+ * The service settings' `decisions` is the client's only configuration (one client for every persona), and this file
+ * its only client (every check and the group-chat gate): nothing here reads `settings.models`. Which checks a brain
+ * asks, and their thresholds, are that brain's `Settings.decisions` (brain.ts).
  *
  * It only ever adds strictness to the code's own checks (`safety.ts`): `ask` never throws, and every
  * failure, timeout, refusal or unreadable answer comes back as "no signal", which leaves the path exactly
  * as it is without it.
  */
 
-type DecisionsSettings = Settings['decisions'];
+type DecisionsSettings = ServiceSettings['decisions'];
 
 /** A question as the API takes it; every text in it comes from prompts.ts. */
 export type Question =
@@ -140,7 +141,7 @@ export function scoreOf(answers: Answers | null, name: string): number | null {
 	return answer?.type === 'score' ? answer.score : null;
 }
 
-/** No checks at all: the default, and what runs while `settings.decisions.enabled` is off. */
+/** No checks at all: the default, and what runs while the service settings' `decisions.enabled` is off. */
 export const DISABLED_DECISIONS: Decisions = { enabled: false, ask: async () => null };
 
 /**
@@ -175,7 +176,7 @@ export function createScriptedDecisions(
 	};
 }
 
-/** The real client, for `settings.decisions` (built only when it is enabled and the key it names, if any, is set). */
+/** The client of the service settings' `decisions`: `DISABLED_DECISIONS` while it is off, so nothing is ever sent then. */
 export function createConfiguredDecisions({
 	settings,
 	apiKeyOf,
@@ -194,6 +195,7 @@ export function createConfiguredDecisions({
 	/** The clock of the day it logs a spent budget on: the runtime's (`runtime.now`), as its meter's should be. */
 	now?: () => number;
 }): Decisions {
+	if (!settings.enabled) return DISABLED_DECISIONS;
 	// The UTC day the spent budget was last logged, so it is logged once a day
 	let budgetLoggedOn = '';
 	return {

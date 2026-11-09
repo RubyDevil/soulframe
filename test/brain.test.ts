@@ -289,7 +289,7 @@ describe('turns', () => {
 		expect(seen[1]![0]!.content).toContain('The last line in the chat was 5 minutes ago.');
 	});
 
-	it.each([false, true])('composes a group-chat line with one model call and no Decisions call while decisions is off (quiet=%s)', async (quiet) => {
+	it.each([false, true])('composes a group-chat line with one model call and no Decisions call: the gate is the app\'s to ask (quiet=%s)', async (quiet) => {
 		const store = memoryStore();
 		let completions = 0;
 		// A client that would answer "stay quiet" to anything: it must not be asked
@@ -298,7 +298,6 @@ describe('turns', () => {
 			persona, settings: DEFAULT_SETTINGS, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.5, now: Date.now }, decisions,
 			llm: { async complete() { completions++; return JSON.stringify({ reply: 'hey all!' }); } },
 		});
-		expect(brain.settings.decisions.enabled).toBe(false);
 		expect(await brain.composeGroupChatLine(groupChannel('Trip planning'), [{ name: 'Sam', text: 'hmm', mine: false }], quiet, false)).toBe('hey all!');
 		expect(completions).toBe(1);
 		expect(decisions.calls).toHaveLength(0);

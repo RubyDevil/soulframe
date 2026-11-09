@@ -30,15 +30,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   with where it went, not only as unknown; a `_shared.yaml` or `<id>.yaml` left in the folder is reported by
   `loadPersonas`, which then loads no persona it may have set something for (a shared `sfw` or limit is never lost
   without a word).
-- `llmsFor` refuses settings that disagree on the budget every persona shares (`llm.dailyTokens`,
-  `directMessageReserve`, `concurrency`), naming each value.
+- **Service settings** (`parseServiceSettings`, `ServiceSettings`): what every persona shares, set once and never per
+  brain: the text provider's budget (`text`: `dailyTokens`, `directMessageReserve`, `concurrency`) and the Decisions
+  client (`decisions`: `enabled`, `baseUrl`, `apiKeyEnv`, `model`, `timeoutSeconds`, `dailyTokens`). Build the token
+  meters, the model clients (`llmsFor`'s new `budget`) and the Decisions client from them.
+- `models.default`: the provider and model of every task that names none (`baseUrl`, `apiKeyEnv`, `model`,
+  `jsonMode`, `timeoutSeconds`), and a `timeoutSeconds` of each task's own. `personaReport` names the host of a task on
+  a provider of its own.
 
 ### Changed
 
 - **BREAKING: settings are the brain's, never a persona's.** Give them to `createBrain({ persona, settings })`
-  (required: `parseSettings({})` gives every default), the same object for every persona or one of their own, and the same settings to `llmsFor`
-  (whose `{ id, settings }` entries are unchanged). `createReplyQueue({ brain, runtime, act })` takes no `persona`: it
-  answers with its brain's persona and settings, so the two can't differ.
+  (required: `parseSettings({})` gives every default), the same object for every persona or one of their own, and the
+  same settings to `llmsFor` (whose `{ id, settings }` entries are unchanged). `createReplyQueue({ brain, runtime,
+  act })` takes no `persona`: it answers with its brain's persona and settings, so the two can't differ.
 - **BREAKING: `decisions.groupChatGate.chimeInAt` is one number** (default `1.7`), no longer one per chattiness: give a
   quieter persona's brain a higher one (`2.2` was `quiet`'s, `1.2` `talkative`'s). The old shape is refused with a
   message that says so.
@@ -48,9 +53,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **BREAKING: `loadPersonas` reads `<dir>/<id>.md`** (frontmatter and prompt in one file) and answers
   `{ issues, personas }`, without `shared`.
 - **BREAKING: `personaReport(persona, { settings, now, status? })`** takes the settings its brain runs with in place
-  of `shared`: no `overrides` lines; `prompt:` gives the prompt's length; no `character:`
-  line.
+  of `shared`: no `overrides` lines; `prompt:` gives the prompt's length; no `character:` line.
 - `personaWarnings` warns only about the persona (its time zone, hours and channels); `samplePrompt` takes `settings`.
+- **BREAKING: the Decisions client's settings are the service settings'.** `decisions.enabled`, `baseUrl`,
+  `apiKeyEnv`, `model`, `timeoutSeconds` and `dailyTokens` moved there (each refused in a brain's settings with where
+  it went), and `createConfiguredDecisions` takes the service settings' `decisions`, giving `DISABLED_DECISIONS` while
+  it is off. A brain's `settings.decisions` keeps which checks it asks and their thresholds.
+- `vision` never takes the default model in the model client either (it already never did in the brain).
 
 ### Removed
 
@@ -70,6 +79,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **BREAKING: `settings:` in a persona's file**, and the split of settings into per-persona and global groups.
 - **BREAKING: `parsePersonas`** (use `parsePersona` per persona), the `Chattiness` type, the
   `prompt:` path key (the prompt is the file's body), and `PersonaConfig`'s `promptText`, `source` and `settings`.
+- **BREAKING: `settings.llm` is gone.** Its `baseUrl`, `apiKeyEnv`, `model`, `jsonMode` and `timeoutSeconds` are
+  `models.default`'s; its `dailyTokens`, `directMessageReserve` and `concurrency` are the service settings' `text`, and
+  `llmsFor` takes them as `budget` in place of `concurrency`. An old `llm` block is refused with where each key went.
+  `modelKeys` names `models.default.apiKeyEnv` and `models.<task>.apiKeyEnv`.
+
+### Security
+
+- **A task on a provider of its own no longer gets the default provider's key.** A task with its own `baseUrl` and no
+  `apiKeyEnv` used to be sent `llm.apiKeyEnv`'s key, so that key went to another host; it was given the default model
+  name and `jsonMode` too. Such a task now takes nothing of the default provider but its timeout: `parseSettings`
+  refuses it until it names its own `apiKeyEnv` (`''` for none) and `model`, and the model client never sends it the
+  default key.
 
 ### Fixed
 

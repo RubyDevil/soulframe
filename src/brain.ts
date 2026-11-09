@@ -201,7 +201,8 @@ export interface Brain {
 	 * Before their turn, while others wait for the persona too: how much their new messages matter, asked with the other
 	 * DM checks (settings.decisions.importance) and stored on the person (`importance`), so the reply queue can weigh their
 	 * turn. `compose` then uses those answers while no newer message came, asking nothing again. Nothing is asked unless
-	 * `decisions.enabled` and `decisions.importance.enabled`; it never throws, and a failure leaves the model's own rating.
+	 * the Decisions client is on (`ServiceSettings.decisions.enabled`) and `decisions.importance.enabled`; it never
+	 * throws, and a failure leaves the model's own rating.
 	 */
 	assess(personId: number, channel: Channel): Promise<void>;
 	/** A post in its own voice for `channel` (with its `notes`), following its rules and not repeating its recent posts, or null. The app picked where and when. */
@@ -302,7 +303,7 @@ export function createBrain({
 	 */
 	runtime: Pick<Runtime, 'now' | 'rng' | 'store'>;
 	llm: Llm;
-	/** Typed checks that only add strictness (`settings.decisions`); none by default. */
+	/** The Decisions client (`createConfiguredDecisions`), whose checks only add strictness (which run: `settings.decisions`); none by default. */
 	decisions?: Decisions;
 	/** The app's rules and allowed links; none by default. */
 	policy?: Policy;
@@ -312,7 +313,7 @@ export function createBrain({
 	const { store } = runtime;
 	// Read at each use: a clock swapped on the runtime is the brain's too
 	const now = () => runtime.now();
-	// Which checks run and their thresholds; whether any runs at all is `decisions.enabled` (the caller builds a real client only when the setting is on)
+	// Which checks run and their thresholds; whether any runs at all is the client's `enabled` (off while the service settings' decisions.enabled is)
 	const checks = settings.decisions;
 	const ctx = (use: DecisionsUse) => ({ use, personaId: persona.id });
 	const localTime = () => dateTimeText(now(), persona.timezone);

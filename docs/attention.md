@@ -169,9 +169,10 @@ or affinity are thrown away with it.
 
 | Key | Default | What it does |
 | --- | --- | --- |
-| `decisions.importance.enabled` | `true` | Only with the Decisions API on (`decisions.enabled`). Asks how much someone's new messages matter (0 to 3) when their turn comes due while others wait, so the pick weighs a confession before the model has read it, and with the other checks of every DM turn. Usually it rides along with the stop and age checks, at the cost of one more question; with those off, it is a request of its own. Off, or on any failure, the model's own rating of their last turn is used. |
+| `decisions.importance.enabled` | `true` | Only with the Decisions client on (the service settings' `decisions.enabled`). Asks how much someone's new messages matter (0 to 3) when their turn comes due while others wait, so the pick weighs a confession before the model has read it, and with the other checks of every DM turn. Usually it rides along with the stop and age checks, at the cost of one more question; with those off, it is a request of its own. Off, or on any failure, the model's own rating of their last turn is used. |
 
-Like the rest of `decisions`, it is in the settings your code gives each brain.
+Like the other checks' switches and thresholds, it is in the settings your code gives each brain; the client itself is
+the service settings'.
 
 ## `perception`: photos and links
 

@@ -1,16 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createCannedLlm, createConfiguredLlm, createTokenMeter, keyEnvFor, LlmBudgetError, llmsFor, ModelNotConfiguredError, modelKeys, providerSet, ProviderUnavailableError } from '../src/llm.js';
-import { DEFAULT_SETTINGS, SettingsSchema } from '../src/settings.js';
+import { DEFAULT_SERVICE_SETTINGS, DEFAULT_SETTINGS, ServiceSettingsSchema, SettingsSchema } from '../src/settings.js';
 import { memoryStore } from './fixtures.js';
 
 const answer = (content: string, totalTokens?: number) =>
 	new Response(JSON.stringify({ choices: [{ message: { content } }], ...(totalTokens !== undefined && { usage: { total_tokens: totalTokens } }) }), { status: 200 });
 
 const settings = SettingsSchema.parse({
-	llm: { baseUrl: 'https://llm.example/v1/', model: 'mid-model', jsonMode: true },
 	models: {
+		default: { baseUrl: 'https://llm.example/v1/', model: 'mid-model', jsonMode: true },
 		groupChat: { model: 'cheap-model', maxTokens: 50 },
 		post: { baseUrl: 'https://other.example/v1', apiKeyEnv: 'OTHER_KEY', model: 'post-model' },
+		vision: { model: 'eyes-model' },
 	},
 });
 
@@ -65,7 +66,7 @@ describe('images (models.vision)', () => {
 		const onlyVision = SettingsSchema.parse({ models: { vision: { baseUrl: 'https://eyes.example/v1', apiKeyEnv: 'EYES_KEY' } } });
 		expect(providerSet(onlyVision)).toBe(false);
 		expect(modelKeys(onlyVision).has('EYES_KEY')).toBe(false);
-		expect(modelKeys(SettingsSchema.parse({ models: { vision: { model: 'eyes', baseUrl: 'https://eyes.example/v1', apiKeyEnv: 'EYES_KEY' } } })).get('EYES_KEY')).toBe('settings.models.vision.apiKeyEnv');
+		expect(modelKeys(SettingsSchema.parse({ models: { vision: { model: 'eyes', baseUrl: 'https://eyes.example/v1', apiKeyEnv: 'EYES_KEY' } } })).get('EYES_KEY')).toBe('models.vision.apiKeyEnv');
 	});
 
 	it('is answered by the canned model too, as a description', async () => {
@@ -88,7 +89,7 @@ describe('createConfiguredLlm', () => {
 	it('uses OpenAI completion limits without sampling overrides for GPT-5', async () => {
 		const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(answer('{"status":"ok"}', 10));
 		const llm = createConfiguredLlm({
-			settings: SettingsSchema.parse({ llm: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-5.4-mini-2026-03-17', jsonMode: true } }),
+			settings: SettingsSchema.parse({ models: { default: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-5.4-mini-2026-03-17', jsonMode: true } } }),
 			apiKeyOf: () => 'test-key',
 		});
 		await llm.complete([{ role: 'user', content: 'Return JSON' }], { task: 'directMessage', json: true });
@@ -110,16 +111,10 @@ describe('createConfiguredLlm', () => {
 		expect(sent(fetch, 1).headers.authorization).toBe('Bearer key-of-OTHER_KEY');
 	});
 
-	it.each(['directMessage', 'groupChat', 'post'] as const)('uses a keyless local model for %s, and never settings.decisions', async (task) => {
+	it.each(['directMessage', 'groupChat', 'post'] as const)('uses a keyless local model for %s, and never the Decisions client', async (task) => {
 		const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(answer('local reply', 5));
 		const apiKeyOf = vi.fn(() => 'openai-key');
-		const llm = createConfiguredLlm({
-			settings: SettingsSchema.parse({
-				llm: { baseUrl: 'http://localhost:11434/v1/', model: 'llama3.2', apiKeyEnv: '' },
-				decisions: { enabled: true, baseUrl: 'https://api.openai.com/v1' },
-			}),
-			apiKeyOf,
-		});
+		const llm = createConfiguredLlm({ settings: SettingsSchema.parse({ models: { default: { baseUrl: 'http://localhost:11434/v1/', model: 'llama3.2', apiKeyEnv: '' } } }), apiKeyOf });
 		expect(await llm.complete([{ role: 'user', content: 'Hello' }], { task, json: true })).toBe('local reply');
 		expect(apiKeyOf).not.toHaveBeenCalled();
 		expect(fetch).toHaveBeenCalledTimes(1);
@@ -129,20 +124,20 @@ describe('createConfiguredLlm', () => {
 		expect(sent(fetch).headers).not.toHaveProperty('authorization');
 	});
 
-	it('inherits llm.jsonMode only with llm.baseUrl; a task on its own provider sets its own', async () => {
+	it("inherits default.jsonMode only on the default provider; a task on its own provider sets its own", async () => {
 		const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => answer('{"reply":"hi"}', 1));
 		const llm = createConfiguredLlm({
 			settings: SettingsSchema.parse({
-				llm: { baseUrl: 'https://llm.example/v1', model: 'mid-model', jsonMode: true },
 				models: {
+					default: { baseUrl: 'https://llm.example/v1', model: 'mid-model', jsonMode: true },
 					groupChat: { jsonMode: false },
-					post: { baseUrl: 'https://other.example/v1', jsonMode: true },
+					post: { baseUrl: 'https://other.example/v1', apiKeyEnv: 'OTHER_KEY', model: 'post-model', jsonMode: true },
 				},
 			}),
 			apiKeyOf: () => 'key',
 		});
 		const json = { response_format: { type: 'json_object' } };
-		// The setup's post model has its own provider and no jsonMode: llm.jsonMode is not its provider's
+		// The setup's post model has its own provider and no jsonMode: default.jsonMode is not its provider's
 		await setUp(0).llm.complete([], { task: 'post', json: true });
 		expect(sent(fetch, 0).body).not.toHaveProperty('response_format');
 		await llm.complete([], { task: 'directMessage', json: true });
@@ -157,15 +152,37 @@ describe('createConfiguredLlm', () => {
 		expect(sent(fetch, 4).body).not.toHaveProperty('response_format');
 	});
 
-	it('gives up a request after llm.timeoutSeconds (60 by default)', async () => {
+	it("gives up a request after the task's timeoutSeconds, else default.timeoutSeconds (60 by default)", async () => {
 		vi.spyOn(globalThis, 'fetch').mockImplementation(async () => answer('ok', 1));
 		const timeout = vi.spyOn(AbortSignal, 'timeout');
 		await setUp(0).llm.complete([], { task: 'directMessage' });
 		expect(timeout).toHaveBeenLastCalledWith(60_000);
-		const slow = createConfiguredLlm({ settings: SettingsSchema.parse({ llm: { baseUrl: 'https://llm.example/v1', model: 'm', timeoutSeconds: 120 } }), apiKeyOf: () => 'key' });
+		const slow = createConfiguredLlm({ settings: SettingsSchema.parse({ models: { default: { baseUrl: 'https://llm.example/v1', model: 'm', timeoutSeconds: 120 }, post: { timeoutSeconds: 30 } } }), apiKeyOf: () => 'key' });
 		await slow.complete([], { task: 'groupChat' });
 		expect(timeout).toHaveBeenLastCalledWith(120_000);
-		expect(SettingsSchema.safeParse({ llm: { timeoutSeconds: 1 } }).success).toBe(false);
+		await slow.complete([], { task: 'post' });
+		expect(timeout).toHaveBeenLastCalledWith(30_000);
+		expect(SettingsSchema.safeParse({ models: { default: { timeoutSeconds: 1 } } }).success).toBe(false);
+	});
+
+	it("never sends the default provider's key, model or jsonMode to a task's own provider", async () => {
+		const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => answer('{"reply":"hi"}', 1));
+		const apiKeyOf = vi.fn((name: string) => `key-of-${name}`);
+		// Written by hand, as checkSettings would refuse it: its own provider, no key and no model named
+		const leaky = SettingsSchema.parse({ models: { default: { baseUrl: 'https://llm.example/v1', model: 'mid-model', apiKeyEnv: 'MAIN_KEY', jsonMode: true }, groupChat: { baseUrl: 'https://other.example/v1' } } });
+		const llm = createConfiguredLlm({ settings: leaky, apiKeyOf });
+		await expect(llm.complete([], { task: 'groupChat' })).rejects.toBeInstanceOf(ModelNotConfiguredError);
+		const named = SettingsSchema.parse({ models: { ...leaky.models, groupChat: { baseUrl: 'https://other.example/v1', model: 'other-model' } } });
+		await expect(createConfiguredLlm({ settings: named, apiKeyOf }).complete([], { task: 'groupChat' })).rejects.toThrow("set models.groupChat.apiKeyEnv ('' for none)");
+		expect(fetch).not.toHaveBeenCalled();
+		expect(apiKeyOf).not.toHaveBeenCalled();
+		// With its own key named, its request carries that key and no jsonMode
+		const own = SettingsSchema.parse({ models: { ...leaky.models, groupChat: { baseUrl: 'https://other.example/v1', model: 'other-model', apiKeyEnv: 'OTHER_KEY' } } });
+		await createConfiguredLlm({ settings: own, apiKeyOf }).complete([], { task: 'groupChat', json: true });
+		expect(sent(fetch).headers.authorization).toBe('Bearer key-of-OTHER_KEY');
+		expect(sent(fetch).body).toMatchObject({ model: 'other-model' });
+		expect(sent(fetch).body).not.toHaveProperty('response_format');
+		expect(apiKeyOf).not.toHaveBeenCalledWith('MAIN_KEY');
 	});
 
 	it('lets a task disable authentication on an otherwise authenticated provider', async () => {
@@ -173,8 +190,7 @@ describe('createConfiguredLlm', () => {
 		const apiKeyOf = vi.fn(() => { throw new Error('Should not read a key'); });
 		const llm = createConfiguredLlm({
 			settings: SettingsSchema.parse({
-				llm: { baseUrl: 'https://llm.example/v1', model: 'remote-model' },
-				models: { groupChat: { baseUrl: 'http://localhost:11434/v1', apiKeyEnv: '', model: 'llama3.2' } },
+				models: { default: { baseUrl: 'https://llm.example/v1', model: 'remote-model' }, groupChat: { baseUrl: 'http://localhost:11434/v1', apiKeyEnv: '', model: 'llama3.2' } },
 			}),
 			apiKeyOf,
 		});
@@ -203,7 +219,7 @@ describe('createConfiguredLlm', () => {
 		expect(fetch).toHaveBeenCalledTimes(1);
 	});
 
-	it('keeps llm.directMessageReserve (0.3) of the day for DMs: group chats and posts stop at 70%', async () => {
+	it('keeps the budget.directMessageReserve (0.3) of the day for DMs: group chats and posts stop at 70%', async () => {
 		const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => answer('ok', 1));
 		const { llm, meter } = setUp(1000);
 		meter.add(700);
@@ -213,7 +229,7 @@ describe('createConfiguredLlm', () => {
 		expect(fetch).toHaveBeenCalledTimes(1);
 	});
 
-	it('keeps the DM reserve through a burst of group-chat lines waiting behind llm.concurrency (4) just under 70%', async () => {
+	it('keeps the DM reserve through a burst of group-chat lines waiting behind budget.concurrency (4) just under 70%', async () => {
 		const answers: (() => void)[] = [];
 		const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise<Response>((resolve) => answers.push(() => resolve(answer('{"reply": "hi all"}', 50)))));
 		const { llm, meter } = setUp(1000);
@@ -275,21 +291,41 @@ describe('createConfiguredLlm', () => {
 
 	it('rejects with ModelNotConfiguredError, sending nothing, for a task with no provider or no model', async () => {
 		const fetch = vi.spyOn(globalThis, 'fetch');
-		const postOnly = SettingsSchema.parse({ models: { post: { baseUrl: 'https://other.example/v1', model: 'post-model' } } });
-		const noModel = SettingsSchema.parse({ llm: { baseUrl: 'https://llm.example/v1' } });
+		const postOnly = SettingsSchema.parse({ models: { post: { baseUrl: 'https://other.example/v1', apiKeyEnv: 'OTHER_KEY', model: 'post-model' } } });
+		const noModel = SettingsSchema.parse({ models: { default: { baseUrl: 'https://llm.example/v1' } } });
 		for (const unset of [postOnly, noModel]) {
 			const llm = createConfiguredLlm({ settings: unset, apiKeyOf: () => 'key' });
 			await expect(llm.complete([], { task: 'directMessage' })).rejects.toBeInstanceOf(ModelNotConfiguredError);
 		}
+		// vision never takes the default model, which may not take images
+		const chatOnly = SettingsSchema.parse({ models: { default: { baseUrl: 'https://llm.example/v1', model: 'chat-model' } } });
+		await expect(createConfiguredLlm({ settings: chatOnly, apiKeyOf: () => 'key' }).complete([], { task: 'vision' })).rejects.toBeInstanceOf(ModelNotConfiguredError);
 		expect(fetch).not.toHaveBeenCalled();
 	});
 });
 
 describe('keyEnvFor', () => {
-	it("is the task's own apiKeyEnv, else llm.apiKeyEnv; '' for none", () => {
+	it("is the task's own apiKeyEnv, else default.apiKeyEnv on the default provider, never on its own; '' for none", () => {
 		expect(keyEnvFor(settings, 'directMessage')).toBe('LLM_API_KEY');
 		expect(keyEnvFor(settings, 'post')).toBe('OTHER_KEY');
 		expect(keyEnvFor(SettingsSchema.parse({ models: { groupChat: { apiKeyEnv: '' } } }), 'groupChat')).toBe('');
+		expect(keyEnvFor(SettingsSchema.parse({ models: { groupChat: { baseUrl: 'https://other.example/v1' } } }), 'groupChat')).toBeUndefined();
+	});
+});
+
+describe('modelKeys', () => {
+	it('names each key a task with a provider reads, once, with the setting naming it', () => {
+		expect([...modelKeys(settings)]).toEqual([['LLM_API_KEY', 'models.default.apiKeyEnv'], ['OTHER_KEY', 'models.post.apiKeyEnv']]);
+		expect(modelKeys(DEFAULT_SETTINGS).size).toBe(0);
+	});
+});
+
+describe('providerSet', () => {
+	it("is a text task's provider: default's, or one of its own, never vision's alone", () => {
+		expect(providerSet(settings)).toBe(true);
+		expect(providerSet(DEFAULT_SETTINGS)).toBe(false);
+		expect(providerSet(SettingsSchema.parse({ models: { post: { baseUrl: 'https://other.example/v1', apiKeyEnv: '', model: 'p' } } }))).toBe(true);
+		expect(providerSet(SettingsSchema.parse({ models: { vision: { baseUrl: 'https://eyes.example/v1', apiKeyEnv: '', model: 'eyes' } } }))).toBe(false);
 	});
 });
 
@@ -308,7 +344,8 @@ describe('SettingsSchema', () => {
 		expect(parsed.pacing.returnOnlineReplyDelayMinutes).toEqual({ range: [0, 0], shape: 'lognormal' });
 		expect(parsed.pacing.backlogGapSeconds).toEqual({ range: [30, 150], shape: 'lognormal' });
 		expect(parsed.models.directMessage.maxTokens).toBe(400);
-		expect(parsed.llm).toMatchObject({ dailyTokens: 200_000, directMessageReserve: 0.3, concurrency: 4 });
+		expect(parsed.models.default).toEqual({ apiKeyEnv: 'LLM_API_KEY', jsonMode: false, timeoutSeconds: 60 });
+		expect(DEFAULT_SERVICE_SETTINGS.text).toEqual({ dailyTokens: 200_000, directMessageReserve: 0.3, concurrency: 4 });
 	});
 	it('refuses a range that runs backwards', () => {
 		expect(() => SettingsSchema.parse({ retries: { delayMinutes: [4, 1] } })).toThrow();
@@ -322,17 +359,17 @@ describe('SettingsSchema', () => {
 		expect(() => SettingsSchema.parse({ pacing: { glance: { meanSeconds: 60 } } })).toThrow();
 	});
 	it('keeps the typed checks off unless turned on, and their minor tiers in order', () => {
-		expect(DEFAULT_SETTINGS.decisions.enabled).toBe(false);
+		expect(DEFAULT_SERVICE_SETTINGS.decisions.enabled).toBe(false);
 		expect(DEFAULT_SETTINGS.decisions.minor).toEqual({ enabled: true, denyAt: 0.9, cautionAt: 0.5, groupChats: true });
 		expect(() => SettingsSchema.parse({ decisions: { minor: { cautionAt: 0.95, denyAt: 0.9 } } })).toThrow();
 		expect(() => SettingsSchema.parse({ decisions: { minor: { denyAt: 0.3, cautionAt: 0.2 } } })).toThrow();
 	});
 	it.each(['https://gateway.example/v1', 'http://localhost:8080/v1'])('accepts any URL for the Decisions API: %s', (baseUrl) => {
-		expect(SettingsSchema.parse({ decisions: { baseUrl } }).decisions.baseUrl).toBe(baseUrl);
+		expect(ServiceSettingsSchema.parse({ decisions: { baseUrl } }).decisions.baseUrl).toBe(baseUrl);
 	});
 	it('refuses a Decisions baseUrl that is not a URL, and has no Decisions entry among the text models', () => {
-		expect(SettingsSchema.safeParse({ decisions: { baseUrl: 'not a URL' } }).success).toBe(false);
-		expect(Object.keys(DEFAULT_SETTINGS.models)).toEqual(['directMessage', 'groupChat', 'post', 'vision']);
+		expect(ServiceSettingsSchema.safeParse({ decisions: { baseUrl: 'not a URL' } }).success).toBe(false);
+		expect(Object.keys(DEFAULT_SETTINGS.models)).toEqual(['default', 'directMessage', 'groupChat', 'post', 'vision']);
 	});
 });
 
@@ -359,13 +396,13 @@ describe('createTokenMeter', () => {
 
 describe('llmsFor', () => {
 	const personas = [
-		{ id: 'robin', settings: SettingsSchema.parse({ llm: { baseUrl: 'https://llm.example/v1', model: 'mini' }, models: { directMessage: { model: 'robin-model' } } }) },
-		{ id: 'sky', settings: SettingsSchema.parse({ llm: { baseUrl: 'https://llm.example/v1', model: 'mini' } }) },
+		{ id: 'robin', settings: SettingsSchema.parse({ models: { default: { baseUrl: 'https://llm.example/v1', model: 'mini' }, directMessage: { model: 'robin-model' } } }) },
+		{ id: 'sky', settings: SettingsSchema.parse({ models: { default: { baseUrl: 'https://llm.example/v1', model: 'mini' } } }) },
 	];
 
 	it("gives each persona a client with its own models", async () => {
 		const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => answer('ok', 1));
-		const llms = llmsFor(personas, { dryRun: false, concurrency: 4, apiKeyOf: (name) => `key-of-${name}`, rng: () => 0 });
+		const llms = llmsFor(personas, { dryRun: false, budget: DEFAULT_SERVICE_SETTINGS.text, apiKeyOf: (name) => `key-of-${name}`, rng: () => 0 });
 		await llms.get('robin')!.complete([{ role: 'user', content: 'hey' }], { task: 'directMessage' });
 		await llms.get('sky')!.complete([{ role: 'user', content: 'hey' }], { task: 'directMessage' });
 		expect([sent(fetch, 0).body.model, sent(fetch, 1).body.model]).toEqual(['robin-model', 'mini']);
@@ -374,32 +411,23 @@ describe('llmsFor', () => {
 	it('refuses a persona without a provider, naming it, except in a dry run (canned lines, no request)', async () => {
 		const fetch = vi.spyOn(globalThis, 'fetch');
 		const all = [...personas, { id: 'jo', settings: DEFAULT_SETTINGS }];
-		expect(() => llmsFor(all, { dryRun: false, concurrency: 4, apiKeyOf: () => 'key' })).toThrow('no provider for: jo');
-		const llms = llmsFor(all, { dryRun: true, concurrency: 4, apiKeyOf: () => 'key', rng: () => 0 });
+		expect(() => llmsFor(all, { dryRun: false, budget: DEFAULT_SERVICE_SETTINGS.text, apiKeyOf: () => 'key' })).toThrow('no provider for: jo');
+		const llms = llmsFor(all, { dryRun: true, budget: DEFAULT_SERVICE_SETTINGS.text, apiKeyOf: () => 'key', rng: () => 0 });
 		expect(JSON.parse(await llms.get('jo')!.complete([{ role: 'user', content: 'hey' }], { task: 'directMessage' }))).toMatchObject({ action: 'none' });
 		expect(fetch).not.toHaveBeenCalled();
 	});
-	it('refuses settings that disagree on the budget every persona shares, naming each value', () => {
-		const tight = { id: 'kai', settings: SettingsSchema.parse({ llm: { baseUrl: 'https://llm.example/v1', model: 'mini', directMessageReserve: 0.5 } }) };
-		expect(() => llmsFor([...personas, tight], { dryRun: false, concurrency: 4, apiKeyOf: () => 'key' })).toThrow(
-			'settings.llm.directMessageReserve are one budget for every persona: give every persona the same (robin 0.3, sky 0.3, kai 0.5)',
-		);
-		// Their models, providers and keys may be their own
-		expect(llmsFor(personas, { dryRun: false, concurrency: 4, apiKeyOf: () => 'key' }).size).toBe(2);
-	});
-
 	it('gives canned lines to a persona in `keyless`, without a request', async () => {
 		const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => answer('ok', 1));
-		const llms = llmsFor(personas, { dryRun: true, concurrency: 4, apiKeyOf: () => 'key', keyless: new Set(['sky']), rng: () => 0 });
+		const llms = llmsFor(personas, { dryRun: true, budget: DEFAULT_SERVICE_SETTINGS.text, apiKeyOf: () => 'key', keyless: new Set(['sky']), rng: () => 0 });
 		expect(JSON.parse(await llms.get('sky')!.complete([{ role: 'user', content: 'hey' }], { task: 'directMessage' }))).toMatchObject({ action: 'none' });
 		expect(fetch).not.toHaveBeenCalled();
 		expect(await llms.get('robin')!.complete([{ role: 'user', content: 'hey' }], { task: 'directMessage' })).toBe('ok');
 	});
 
-	it('keeps `concurrency` requests in flight at most, for every persona together', async () => {
+	it('keeps `budget.concurrency` requests in flight at most, for every persona together', async () => {
 		const answers: (() => void)[] = [];
 		const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise<Response>((resolve) => answers.push(() => resolve(answer('ok', 1)))));
-		const llms = llmsFor(personas, { dryRun: false, concurrency: 4, apiKeyOf: () => 'key', rng: () => 0 });
+		const llms = llmsFor(personas, { dryRun: false, budget: DEFAULT_SERVICE_SETTINGS.text, apiKeyOf: () => 'key', rng: () => 0 });
 		const calls = ['robin', 'robin', 'robin', 'sky', 'sky'].map((id) => llms.get(id)!.complete([], { task: 'directMessage' }));
 		await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(4));
 		// The fifth waits for a place
@@ -412,7 +440,7 @@ describe('llmsFor', () => {
 	});
 
 	it('does not mistake the Decisions API for a text provider', () => {
-		const settings = SettingsSchema.parse({ decisions: { enabled: true, baseUrl: 'https://api.openai.com/v1' } });
-		expect(() => llmsFor([{ id: 'jo', settings }], { dryRun: false, concurrency: 4, apiKeyOf: () => 'key' })).toThrow('no provider for: jo');
+		const settings = SettingsSchema.parse({ decisions: { stop: { at: 0.95 } } });
+		expect(() => llmsFor([{ id: 'jo', settings }], { dryRun: false, budget: DEFAULT_SERVICE_SETTINGS.text, apiKeyOf: () => 'key' })).toThrow('no provider for: jo');
 	});
 });

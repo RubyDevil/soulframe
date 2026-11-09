@@ -234,15 +234,38 @@ function parseSettings(raw: unknown, options?: { source?: string }): { settings?
 
 `raw` (parsed YAML or JSON, or values in code) read as settings, every setting it leaves out at its default: `undefined`,
 `null` (an empty YAML file) and `{}` are every default. Never throws: with any problem (a value out of range, a key the
-schema doesn't know, with the nearest one, a task with no model once a provider is set) there are no `settings`, and
-each issue gives its path after `source › ` when given. See [configuration](./configuration.md#settings).
+schema doesn't know, with the nearest one or where it went for a key of the 0.1 betas, a task with no model once a
+provider is set, a task on a provider of its own that names no key or model) there are no `settings`, and each issue
+gives its path after `source › ` when given. See [configuration](./configuration.md#settings).
+
+### `parseServiceSettings`
+
+```ts
+function parseServiceSettings(raw: unknown, options?: { source?: string }): { service?: ServiceSettings; issues: string[] };
+```
+
+`raw` read as the service settings, as `parseSettings` reads a brain's. See
+[configuration](./configuration.md#service-settings).
+
+### `ServiceSettings`
+
+```ts
+type ServiceSettings = {
+	text: { dailyTokens: number; directMessageReserve: number; concurrency: number };
+	decisions: { enabled: boolean; baseUrl: string; apiKeyEnv: string; model: string; timeoutSeconds: number; dailyTokens: number };
+};
+```
+
+What the whole service shares, set once and never per brain: the text provider's budget (`text`), which every
+persona's model client spends together, and the Decisions client (`decisions`), one for every persona. Build the
+token meters (`createTokenMeter`), the model clients (`llmsFor`'s `budget`) and the Decisions client
+(`createConfiguredDecisions`) from it.
 
 ### `Settings`
 
 ```ts
 type Settings = {
-	llm: { /* ... */ };
-	models: { directMessage: { /* ... */ }; groupChat: { /* ... */ }; post: { /* ... */ }; vision: { /* ... */ } };
+	models: { default: { /* ... */ }; directMessage: { /* ... */ }; groupChat: { /* ... */ }; post: { /* ... */ }; vision: { /* ... */ } };
 	perception: { /* ... */ };
 	decisions: { /* ... */ };
 	memory: { /* ... */ };
@@ -322,7 +345,7 @@ function settingsWarnings(settings: Settings): string[];
 ```
 
 What is valid but probably wrong in settings: a reply that may be written again more than once
-(`pacing.burst.maxRestarts`, each restart paid for), and no text provider (`llm.baseUrl`).
+(`pacing.burst.maxRestarts`, each restart paid for), and no text provider (`models.default.baseUrl`).
 
 ### `personaReport`
 
@@ -920,21 +943,21 @@ function llmsFor(
 	options: {
 		dryRun: boolean;
 		apiKeyOf: (envName: string) => string;
-		meter?: TokenMeter;
-		concurrency: number;              // settings.llm.concurrency
+		meter?: TokenMeter;               // createTokenMeter(store, budget.dailyTokens)
+		budget: ServiceSettings['text'];  // the budget every persona shares
 		keyless?: ReadonlySet<string>;    // persona ids whose key is unset
 		rng?: Rng;
 	},
 ): Map<string, Llm>;
 ```
 
-One model client per persona id, each with the settings given for it (those its brain runs with: `settings.models` over
-`settings.llm`), against an
-OpenAI-compatible `/chat/completions` endpoint; the `meter` and the `concurrency` limit are shared by all. A persona in
-`keyless`, and in a dry run one without a provider, gets the canned model; without a provider outside a dry run it
-throws, naming every such persona. One meter and one limit spend one budget, so settings that disagree on
-`llm.dailyTokens`, `directMessageReserve` or `concurrency` throw too, naming each persona's value. Requests time out after `llm.timeoutSeconds` and are retried once; past
-`1 - llm.directMessageReserve` of the meter's limit only DMs and their photos are generated. A task left without a provider or a
+One model client per persona id, each with the settings given for it (those its brain runs with: each task's model
+over `models.default`), against an OpenAI-compatible `/chat/completions` endpoint; the `meter` and the limit of
+`budget.concurrency` requests in flight are shared by all. A task on a provider of its own (its own `baseUrl`) is sent
+only what it names: never the default provider's key, model or `jsonMode`. A persona in `keyless`, and in a dry run
+one without a provider, gets the canned model; without a provider outside a dry run it throws, naming every such
+persona. Requests time out after the task's `timeoutSeconds` (else `models.default.timeoutSeconds`) and are retried
+once; past `1 - budget.directMessageReserve` of the meter's limit only DMs and their photos are generated. A task left without a provider or a
 model rejects at once with a configuration error that the reply queue never retries: the person stays owed, for a
 start with the settings fixed (`reply_given_up` is audited with `reason: 'model_not_configured'`).
 
@@ -973,7 +996,7 @@ function modelKeys(settings: Settings): Map<string, string>;
 ```
 
 The environment variables a persona's text model reads, each with the setting that names it (for example
-`LLM_API_KEY → 'settings.llm.apiKeyEnv'`): one per task with a provider (`vision` only once it names a model), none for an empty key. For checking at start
+`LLM_API_KEY → 'models.default.apiKeyEnv'`): one per task with a provider (`vision` only once it names a model), none for an empty key. For checking at start
 that every key is set.
 
 ## Decisions
@@ -996,7 +1019,7 @@ answer types are not exported; reach them as `Parameters<Decisions['ask']>[1]` a
 
 ```ts
 function createConfiguredDecisions(options: {
-	settings: Settings['decisions'];
+	settings: ServiceSettings['decisions'];
 	apiKeyOf: (envName: string) => string;
 	meter?: TokenMeter;
 	log?: (persona: string, event: string, detail?: Record<string, unknown>) => void;
@@ -1005,8 +1028,9 @@ function createConfiguredDecisions(options: {
 }): Decisions;
 ```
 
-The client for a Decisions API at `{settings.baseUrl}/decisions`. Build it only when `settings.decisions.enabled` is
-on (use `DISABLED_DECISIONS` otherwise). Every failure, timeout, refusal or spent budget answers `null` (or a refusal
+The client for a Decisions API at `{settings.baseUrl}/decisions`, one for every persona, from the service settings'
+`decisions`; while their `enabled` is off it is `DISABLED_DECISIONS`, and nothing is ever sent. Which checks each brain
+asks, and their thresholds, are that brain's `settings.decisions`. Every failure, timeout, refusal or spent budget answers `null` (or a refusal
 for one question) and is logged (`decisions_failed`, `decisions_refused`, `decisions_budget_spent`, once per UTC day
 of `now`), never the message text.
 
