@@ -1,16 +1,40 @@
 import { describe, expect, it, vi } from 'vitest';
-import { betweenMessagesMs, fitDelay, quickReplyMs, readingMs, replyDelayMs, splitReply, typingMs, typingPlan } from '../src/pacing.js';
+import { betweenMessagesMs, drawIn, fitDelay, glanceMs, interruptionAt, interruptionsOn, normalQuantile, quietMs, readingMs, replyDelay, skewedMs, splitReply, typingMs, typingPlan, watchingChance, watchingMs } from '../src/pacing.js';
 import { seededRng } from '../src/rng.js';
+import { ScheduleSchema } from '../src/config/hours.js';
 import { DEFAULT_SETTINGS, SettingsSchema, type Settings } from '../src/settings.js';
 
 describe('millisecond durations', () => {
 	it('returns whole milliseconds for replies, typing and pauses', () => {
 		const rng = seededRng('whole-milliseconds');
 		for (let sample = 0; sample < 200; sample++) {
-			expect(Number.isInteger(replyDelayMs(rng))).toBe(true);
+			expect(Number.isInteger(replyDelay(rng, null).ms)).toBe(true);
+			expect(Number.isInteger(replyDelay(rng, 30_000).ms)).toBe(true);
 			expect(Number.isInteger(typingMs('A message long enough to avoid the minimum typing duration.', rng))).toBe(true);
 			expect(Number.isInteger(betweenMessagesMs(rng))).toBe(true);
 		}
+	});
+});
+
+describe('quietMs', () => {
+	const withSettle = (settleSeconds: [number, number]) => SettingsSchema.parse({ pacing: { burst: { settleSeconds } } }).pacing;
+
+	it('draws the quiet after their newest message within settleSeconds', () => {
+		expect(quietMs(() => 0)).toBe(2_000);
+		// Log-normal by default: the middle draw is the geometric middle, √3 s
+		expect(quietMs(() => 0.5, withSettle([1, 3]))).toBe(1_732);
+	});
+
+	it('is 0 without a draw when there is no quiet', () => {
+		const rng = vi.fn(() => 0.5);
+		expect(quietMs(rng, withSettle([0, 0]))).toBe(0);
+		expect(rng).not.toHaveBeenCalled();
+	});
+
+	it('refuses a burst setting it does not know, and maxRestarts below 1', () => {
+		expect(SettingsSchema.safeParse({ pacing: { burst: { settle: [1, 2] } } }).success).toBe(false);
+		expect(SettingsSchema.safeParse({ pacing: { burst: { maxRestarts: 0 } } }).success).toBe(false);
+		expect(DEFAULT_SETTINGS.pacing.burst).toEqual({ settleSeconds: { range: [2, 5], shape: 'lognormal' }, maxSettleResets: 3, restartOnNewMessage: true, maxRestarts: 1 });
 	});
 });
 
@@ -39,7 +63,7 @@ describe('typingPlan', () => {
 	});
 
 	it('cuts a long message into equal stretches around its pauses, the typing time unchanged', () => {
-		const pacing = pausing({ chance: 1, max: 2, seconds: [1, 1] });
+		const pacing = pausing({ chance: 1, max: 2, seconds: { range: [1, 1], shape: 'lognormal' } });
 		const { typing, pauses } = typingPlan(long, seededRng('p'), pacing);
 		expect(pauses).toEqual([1_000, 1_000]);
 		expect(typing).toHaveLength(3);
@@ -74,42 +98,130 @@ describe('readingMs', () => {
 
 describe('the typing settings', () => {
 	it('default to no thinking pause and a human reading speed, and refuse an unknown or out-of-range key', () => {
-		expect(DEFAULT_SETTINGS.pacing).toMatchObject({ readingCharsPerSecond: [15, 25], readingDurationSeconds: [1, 20], thinkingPauses: { chance: 0, minChars: 120, max: 2, seconds: [2, 6] } });
+		expect(DEFAULT_SETTINGS.pacing).toMatchObject({
+			readingCharsPerSecond: { range: [15, 25], shape: 'normal' },
+			readingDurationSeconds: [1, 20],
+			thinkingPauses: { chance: 0, minChars: 120, max: 2, seconds: { range: [2, 6], shape: 'lognormal' } },
+		});
 		expect(() => SettingsSchema.parse({ pacing: { thinkingPauses: { chanse: 0.2 } } })).toThrow();
 		expect(() => SettingsSchema.parse({ pacing: { thinkingPauses: { max: 4 } } })).toThrow();
 		expect(() => SettingsSchema.parse({ pacing: { readingCharsPerSecond: [25, 15] } })).toThrow();
 	});
 });
 
-describe('replyDelayMs', () => {
-	it('is mostly under a minute, sometimes minutes, never over 15', () => {
+describe('replyDelay', () => {
+	it('is the time until it next glances at its messages without a turn to go by: skewed around 40 s, never under 4 s or over 15 min', () => {
 		const rng = seededRng('delays');
-		const delays = Array.from({ length: 2000 }, () => replyDelayMs(rng));
-		const quick = delays.filter((d) => d < 60_000).length / delays.length;
-		expect(quick).toBeGreaterThan(0.55);
-		expect(quick).toBeLessThan(0.75);
-		expect(delays.some((d) => d > 5 * 60_000)).toBe(true);
-		expect(Math.max(...delays)).toBeLessThanOrEqual(15 * 60_000);
+		const delays = Array.from({ length: 4000 }, () => replyDelay(rng, null));
+		expect(delays.every((delay) => !delay.watching)).toBe(true);
+		const share = (under: number) => delays.filter((delay) => delay.ms < under).length / delays.length;
+		// Half within the median, nine in ten within the 90th percentile, a few over five minutes
+		expect(share(40_000)).toBeGreaterThan(0.47);
+		expect(share(40_000)).toBeLessThan(0.53);
+		expect(share(150_000)).toBeGreaterThan(0.88);
+		expect(share(150_000)).toBeLessThan(0.92);
+		expect(share(5 * 60_000)).toBeLessThan(0.99);
+		expect(Math.min(...delays.map((delay) => delay.ms))).toBeGreaterThanOrEqual(4_000);
+		expect(Math.max(...delays.map((delay) => delay.ms))).toBeLessThanOrEqual(15 * 60_000);
 	});
-});
 
-describe('quickReplyMs', () => {
-	it('gives whole milliseconds within quickReplyDelaySeconds', () => {
-		const rng = seededRng('quick');
-		const pacing = { ...DEFAULT_SETTINGS.pacing, quickReplyDelaySeconds: [10, 20] as [number, number] };
+	it('is a short lag while it is still watching their chat, likelier the sooner they answer', () => {
+		const rng = seededRng('watching');
+		const shareWatching = (sinceMs: number) => Array.from({ length: 4000 }, () => replyDelay(rng, sinceMs)).filter((delay) => delay.watching).length / 4000;
+		expect(shareWatching(0)).toBe(1);
+		expect(shareWatching(90_000)).toBeGreaterThan(0.45);
+		expect(shareWatching(90_000)).toBeLessThan(0.55);
+		expect(shareWatching(15 * 60_000)).toBeLessThan(0.01);
 		for (let sample = 0; sample < 200; sample++) {
-			const delay = quickReplyMs(rng, pacing);
-			expect(Number.isInteger(delay)).toBe(true);
-			expect(delay).toBeGreaterThanOrEqual(10_000);
-			expect(delay).toBeLessThanOrEqual(20_000);
+			const delay = replyDelay(rng, 0);
+			expect(delay.ms).toBeGreaterThanOrEqual(2_000);
+			expect(delay.ms).toBeLessThanOrEqual(20_000);
 		}
 	});
 
-	it("is replyDelayMs's quick branch, with the same draws", () => {
-		const quick = { ...DEFAULT_SETTINGS.pacing, quickReplyChance: 1, slowReplyChance: 0 };
-		const draws = seededRng('same');
-		draws();
-		expect(replyDelayMs(seededRng('same'), quick)).toBe(quickReplyMs(draws, quick));
+	it('draws the chance only with a turn to go by, then the delay', () => {
+		const rng = vi.fn(() => 0);
+		expect(replyDelay(rng, null)).toEqual({ ms: 4_000, watching: false });
+		expect(rng).toHaveBeenCalledTimes(1);
+		expect(replyDelay(rng, 10_000)).toEqual({ ms: 2_000, watching: true });
+		expect(rng).toHaveBeenCalledTimes(3);
+	});
+});
+
+describe('watchingChance, skewedMs, watchingMs and glanceMs', () => {
+	const pacing = (settings: Record<string, unknown>) => SettingsSchema.parse({ pacing: settings }).pacing;
+
+	it('halves the chance that it still watches every halfLifeSeconds', () => {
+		expect([0, 90_000, 180_000].map((ms) => watchingChance(ms))).toEqual([1, 0.5, 0.25]);
+		expect(watchingChance(10_000, pacing({ watching: { halfLifeSeconds: 10 } }))).toBe(0.5);
+	});
+
+	it('draws a log-normal: the median at the middle draw, the 90th percentile at 0.9, the bounds at the ends', () => {
+		const shape = { medianSeconds: 40, p90Seconds: 150, delaySeconds: [4, 900] as const };
+		expect(skewedMs(() => 0.5, shape)).toBe(40_000);
+		expect(skewedMs(() => 0.9, shape)).toBe(150_000);
+		expect(skewedMs(() => 0, shape)).toBe(4_000);
+		expect(skewedMs(() => 0.999999, shape)).toBe(900_000);
+		expect([0.001, 0.025, 0.5, 0.975].map((p) => Number(normalQuantile(p).toFixed(4)))).toEqual([-3.0902, -1.96, 0, 1.96]);
+	});
+
+	it('gives whole milliseconds within their bounds', () => {
+		const rng = seededRng('ranges');
+		const own = pacing({ watching: { medianSeconds: 2, p90Seconds: 3, delaySeconds: [1, 3] }, glance: { medianSeconds: 20, p90Seconds: 30, delaySeconds: [10, 40] } });
+		for (let sample = 0; sample < 500; sample++) {
+			const watching = watchingMs(rng, own);
+			const glance = glanceMs(rng, own);
+			expect(Number.isInteger(watching) && Number.isInteger(glance)).toBe(true);
+			expect(watching).toBeGreaterThanOrEqual(1_000);
+			expect(watching).toBeLessThanOrEqual(3_000);
+			expect(glance).toBeGreaterThanOrEqual(10_000);
+			expect(glance).toBeLessThanOrEqual(40_000);
+		}
+	});
+
+	it('refuses a 90th percentile not above the median', () => {
+		expect(SettingsSchema.safeParse({ pacing: { glance: { medianSeconds: 60, p90Seconds: 60 } } }).success).toBe(false);
+		expect(SettingsSchema.safeParse({ pacing: { watching: { medianSeconds: 9 } } }).success).toBe(false);
+	});
+});
+
+describe('interruptions', () => {
+	// Online 19:00 to 23:00 UTC every day, with a 10-minute break at 12:30
+	const persona = { id: 'robin', timezone: 'UTC', schedule: ScheduleSchema.parse({ days: { 'mon-sun': { online: [{ start: ['19:00', '19:00'], end: ['23:00', '23:00'] }], breaks: [{ start: ['12:30', '12:30'], minutes: [10, 10] }] } } }) };
+	const day = { year: 2026, month: 10, day: 14 };
+	const often = SettingsSchema.parse({ pacing: { interruptions: { meanMinutes: 20, minutes: [2, 8] } } }).pacing;
+
+	it('come now and then inside its online time, never on a break, each 2 to 8 minutes, the same on every draw', () => {
+		const found = interruptionsOn(persona, day, often);
+		expect(found.length).toBeGreaterThan(0);
+		expect(interruptionsOn(persona, day, often)).toEqual(found);
+		for (const { start, end } of found) {
+			expect(start).toBeGreaterThanOrEqual(Date.UTC(2026, 9, 14, 19));
+			expect(end).toBeLessThanOrEqual(Date.UTC(2026, 9, 14, 23));
+			expect(end - start).toBeLessThanOrEqual(8 * 60_000);
+		}
+		// One every 20 minutes of online time on average, over many days
+		const days = Array.from({ length: 60 }, (_, i) => ({ year: 2026, month: 1 + Math.floor(i / 28), day: 1 + (i % 28) }));
+		const perDay = days.reduce((sum, date) => sum + interruptionsOn(persona, date, often).length, 0) / days.length;
+		expect(perDay).toBeGreaterThan(8);
+		expect(perDay).toBeLessThan(11);
+	});
+
+	it('refuse a mean gap between 0 and a minute, which would make them nearly endless', () => {
+		expect(SettingsSchema.safeParse({ pacing: { interruptions: { meanMinutes: 0.001 } } }).success).toBe(false);
+		expect(SettingsSchema.safeParse({ pacing: { interruptions: { meanMinutes: 1 } } }).success).toBe(true);
+	});
+
+	it('are none with meanMinutes 0', () => {
+		const none = SettingsSchema.parse({ pacing: { interruptions: { meanMinutes: 0 } } }).pacing;
+		expect(interruptionsOn(persona, day, none)).toEqual([]);
+		expect(interruptionAt(persona, Date.UTC(2026, 9, 14, 20), none)).toBeNull();
+	});
+
+	it('say which one is scheduled at a moment', () => {
+		const [first] = interruptionsOn(persona, day, often);
+		expect(interruptionAt(persona, first!.start, often)).toEqual(first);
+		expect(interruptionAt(persona, first!.end, often)).not.toEqual(first);
 	});
 });
 
@@ -119,6 +231,92 @@ describe('fitDelay', () => {
 		expect(fitDelay(90_000, 60_000, 4_000)).toBe(60_000);
 		expect(fitDelay(30_000, 3_000, 4_000)).toBeNull();
 		expect(fitDelay(30_000, -30_000, 4_000)).toBeNull();
+	});
+});
+
+describe('drawIn and the shapes of drawn ranges', () => {
+	const shares = (shape: 'uniform' | 'normal' | 'lognormal', range: [number, number] = [10, 30]) => {
+		const rng = seededRng(`shape-${shape}`);
+		const values = Array.from({ length: 8000 }, () => drawIn(rng, { range, shape }));
+		const inMiddle = values.filter((v) => v >= 15 && v <= 25).length / values.length;
+		return { values, inMiddle, median: [...values].sort((a, b) => a - b)[4000]! };
+	};
+
+	it('keeps every draw within the range, the least at 0 and the most at the top, in every shape', () => {
+		for (const shape of ['uniform', 'normal', 'lognormal'] as const) {
+			const { values } = shares(shape);
+			expect(Math.min(...values)).toBeGreaterThanOrEqual(10);
+			expect(Math.max(...values)).toBeLessThanOrEqual(30);
+			expect(drawIn(() => 0, { range: [10, 30], shape })).toBe(10);
+			expect(drawIn(() => 0.9999999, { range: [10, 30], shape })).toBeCloseTo(30, 3);
+			expect(drawIn(() => 0.5, { range: [7, 7], shape })).toBe(7);
+		}
+	});
+
+	it('spreads uniform evenly, normal around the middle, lognormal around the geometric middle', () => {
+		// The middle half of the range holds half the uniform draws, 95% of the normal ones (two standard deviations)
+		expect(shares('uniform').inMiddle).toBeCloseTo(0.5, 1);
+		expect(shares('normal').inMiddle).toBeGreaterThan(0.65);
+		expect(shares('normal').median).toBeCloseTo(20, 0);
+		expect(shares('lognormal').median).toBeCloseTo(Math.sqrt(10 * 30), 0);
+		// From 0: its median at the geometric middle of a tenth of the most and the most
+		expect(shares('lognormal', [0, 10]).median).toBeCloseTo(Math.sqrt(10), 0);
+	});
+
+	it('reads [least, most] with the setting\'s own shape, and { range, shape } as written', () => {
+		const parsed = (value: unknown) => SettingsSchema.parse({ pacing: { backlogGapSeconds: value } }).pacing.backlogGapSeconds;
+		expect(parsed([10, 20])).toEqual({ range: [10, 20], shape: 'lognormal' });
+		expect(parsed({ range: [10, 20], shape: 'uniform' })).toEqual({ range: [10, 20], shape: 'uniform' });
+		expect(parsed({ range: [10, 20] })).toEqual({ range: [10, 20], shape: 'lognormal' });
+		expect(DEFAULT_SETTINGS.pacing.typingCharsPerSecond).toEqual({ range: [3.5, 7], shape: 'normal' });
+		expect(DEFAULT_SETTINGS.retries.delayMinutes).toEqual({ range: [1, 4], shape: 'uniform' });
+		for (const bad of [{ range: [20, 10] }, { range: [10, 20], shape: 'gaussian' }, { range: [10, 20], spread: 2 }]) {
+			expect(SettingsSchema.safeParse({ pacing: { backlogGapSeconds: bad } }).success).toBe(false);
+		}
+	});
+});
+
+describe('the draws, as properties', () => {
+	const unit = Array.from({ length: 999 }, (_, i) => (i + 0.5) / 999);
+
+	it('never go backwards as the draw rises, in any shape, and stay within the range', () => {
+		for (const shape of ['uniform', 'normal', 'lognormal'] as const) {
+			for (const range of [[10, 30], [0, 10], [0.8, 3.5], [5, 5]] as [number, number][]) {
+				const values = unit.map((u) => drawIn(() => u, { range, shape }));
+				for (let i = 1; i < values.length; i++) expect(values[i]!, `${shape} ${range} at ${unit[i]}`).toBeGreaterThanOrEqual(values[i - 1]!);
+				expect(Math.min(...values)).toBeGreaterThanOrEqual(range[0]);
+				expect(Math.max(...values)).toBeLessThanOrEqual(range[1]);
+			}
+		}
+	});
+
+	it('skew the same way for the same draw: lognormal below normal below uniform at the low end, the median at the middle', () => {
+		const at = (shape: 'uniform' | 'normal' | 'lognormal', u: number) => drawIn(() => u, { range: [10, 90], shape });
+		// Lognormal's median is the geometric middle (30), below the arithmetic one (50) the others have
+		expect(at('lognormal', 0.5)).toBeCloseTo(30, 6);
+		expect(at('normal', 0.5)).toBeCloseTo(50, 6);
+		expect(at('uniform', 0.5)).toBeCloseTo(50, 6);
+		// And its tail runs further above its median than its head below it
+		expect(at('lognormal', 0.95) - at('lognormal', 0.5)).toBeGreaterThan(at('lognormal', 0.5) - at('lognormal', 0.05));
+	});
+
+	it('read the normal quantile as its own inverse: symmetric, increasing, and 1.96 at the 97.5th percentile', () => {
+		for (const p of unit.slice(0, 499)) expect(normalQuantile(p) + normalQuantile(1 - p)).toBeCloseTo(0, 7);
+		const z = unit.map(normalQuantile);
+		for (let i = 1; i < z.length; i++) expect(z[i]!).toBeGreaterThan(z[i - 1]!);
+		expect(normalQuantile(0.975)).toBeCloseTo(1.959964, 5);
+		expect(normalQuantile(0)).toBe(-Infinity);
+		expect(normalQuantile(1)).toBe(Infinity);
+	});
+
+	it('give a log-normal reply delay that holds its median and its 90th percentile over many draws', () => {
+		const rng = seededRng('lognormal-delays');
+		const shape = { medianSeconds: 40, p90Seconds: 150, delaySeconds: [1, 100_000] as const };
+		const draws = Array.from({ length: 20_000 }, () => skewedMs(rng, shape) / 1000).sort((a, b) => a - b);
+		expect(draws[10_000]!).toBeGreaterThan(37);
+		expect(draws[10_000]!).toBeLessThan(43);
+		expect(draws[18_000]!).toBeGreaterThan(140);
+		expect(draws[18_000]!).toBeLessThan(160);
 	});
 });
 

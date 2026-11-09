@@ -253,13 +253,17 @@ describe('keyEnvFor', () => {
 describe('SettingsSchema', () => {
 	it('fills in every default, and keeps what is given', () => {
 		const parsed = SettingsSchema.parse({ memory: { personNotes: 150 } });
-		expect(parsed.memory).toEqual({ personNotes: 150, selfNotes: 800, historyMessages: 20, conversationGapHours: 6, relationshipAfter: [2, 5, 12] });
+		expect(parsed.memory).toEqual({ personNotes: 150, selfNotes: 800, historyMessages: 20, conversationGapHours: 6 });
+		// The shipped levels unless replaced (prompts.ts)
+		expect(parsed.relationship).toEqual({ familiarity: { growth: 0.012, fadeHalfLifeDays: 60 }, affinity: { enabled: true, step: 0.05, fadeHalfLifeDays: 0 }, hysteresis: 0.05 });
+		expect(parsed.pacing.priority).toEqual({ weighted: true, agingMinutes: 2, importanceHalfLifeMinutes: 30 });
+		expect(parsed.decisions.importance).toEqual({ enabled: true });
 		expect(parsed.context).toEqual({ situation: true, upcoming: true, awayContext: true, relationship: true, timeSince: true });
-		expect(parsed.pacing.quickReplyDelaySeconds).toEqual([4, 45]);
-		expect(parsed.pacing.slowReplyDelaySeconds).toEqual([60, 240]);
-		expect(parsed.pacing.busyReplyDelaySeconds).toEqual([300, 900]);
-		expect(parsed.pacing.returnOnlineReplyDelayMinutes).toEqual([0, 0]);
-		expect(parsed.pacing.backlogGapSeconds).toEqual([30, 150]);
+		expect(parsed.pacing.watching).toEqual({ halfLifeSeconds: 90, chatHalfLifeSeconds: 90, medianSeconds: 4, p90Seconds: 8, delaySeconds: [2, 20] });
+		expect(parsed.pacing.glance).toEqual({ medianSeconds: 40, p90Seconds: 150, delaySeconds: [4, 900] });
+		expect(parsed.pacing.interruptions).toEqual({ meanMinutes: 40, minutes: { range: [2, 8], shape: 'lognormal' }, holdAtImportance: 2, calmMinutes: 5 });
+		expect(parsed.pacing.returnOnlineReplyDelayMinutes).toEqual({ range: [0, 0], shape: 'lognormal' });
+		expect(parsed.pacing.backlogGapSeconds).toEqual({ range: [30, 150], shape: 'lognormal' });
 		expect(parsed.models.directMessage.maxTokens).toBe(400);
 		expect(parsed.llm).toMatchObject({ dailyTokens: 200_000, directMessageReserve: 0.3, concurrency: 4 });
 	});
@@ -268,7 +272,11 @@ describe('SettingsSchema', () => {
 	});
 	it('rejects obsolete or misspelled pacing settings', () => {
 		expect(() => SettingsSchema.parse({ pacing: { quickShare: 1 } })).toThrow();
-		expect(() => SettingsSchema.parse({ pacing: { quickReplyDelaySecond: [4, 15] } })).toThrow();
+		// The per-message delay rolls are gone: watching, glance and interruptions time a reply now
+		for (const key of ['quickReplyChance', 'slowReplyChance', 'quickReplyDelaySeconds', 'slowReplyDelaySeconds', 'busyReplyDelaySeconds']) {
+			expect(() => SettingsSchema.parse({ pacing: { [key]: key.endsWith('Chance') ? 0.5 : [4, 15] } })).toThrow();
+		}
+		expect(() => SettingsSchema.parse({ pacing: { glance: { meanSeconds: 60 } } })).toThrow();
 	});
 	it('keeps the typed checks off unless turned on, and their minor tiers in order', () => {
 		expect(DEFAULT_SETTINGS.decisions.enabled).toBe(false);

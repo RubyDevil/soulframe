@@ -14,7 +14,7 @@
 
 import { z } from 'zod';
 
-/** [least, most]: a random value between the two is picked each time. */
+/** [least, most]: the bounds a value is kept within, or drawn from evenly (soulframe's own drawn ranges are `drawn`, with a shape). */
 export const range = (min: number, max: number, floor = 0) =>
 	z
 		.tuple([z.number().min(floor), z.number().min(floor)])
@@ -22,10 +22,45 @@ export const range = (min: number, max: number, floor = 0) =>
 		.refine(([low, high]) => low <= high, 'the first number must not be above the second');
 
 /**
+ * How the values of a drawn range spread between its least and its most: `uniform`, any value as likely as any other;
+ * `normal`, most near the middle (a bell curve, about 95% inside the range), for a speed someone keeps close to;
+ * `lognormal`, skewed like the times people take (most near a typical value, a few much longer), its median the
+ * geometric middle of the range (pacing.ts drawIn).
+ */
+export const SHAPES = ['uniform', 'normal', 'lognormal'] as const;
+export type Shape = (typeof SHAPES)[number];
+
+/**
+ * A range a value is drawn from each time, with the shape of its draws: `[least, most]` keeps this setting's own shape,
+ * `{ range: [least, most], shape }` sets it. Read as `{ range, shape }` either way.
+ */
+export const drawn = (min: number, max: number, shape: Shape, floor = 0) => {
+	const pair = z
+		.tuple([z.number().min(floor), z.number().min(floor)])
+		.refine(([low, high]) => low <= high, 'the first number must not be above the second');
+	return z
+		.union([pair, z.object({ range: pair, shape: z.enum(SHAPES).default(shape) }).strict()])
+		.default([min, max])
+		.transform((value): { range: [number, number]; shape: Shape } => (Array.isArray(value) ? { range: value, shape } : value));
+};
+
+/**
  * A probability up to 1 at or above which a check acts. The floor (0.3 unless given) keeps one mistyped
  * value from making a check hit everyone: at 0, even a probability of 0 would count.
  */
 const at = (value: number, min = 0.3) => z.number().min(min).max(1).default(value);
+
+/**
+ * Levels a value is described by in the prompt, lowest first: each from its `from` up to the next one's, its `text`
+ * with {name} for the person's name (an empty text says nothing). The first starts at `min`, the lowest the value goes.
+ */
+const levels = (min: number) =>
+	z
+		.array(z.object({ from: z.number().min(min).max(1), text: z.string().max(400) }).strict())
+		.min(2)
+		.max(12)
+		.refine((list) => list[0]?.from === min, `the first level must start at ${min}`)
+		.refine((list) => list.every((level, i) => i === 0 || level.from > list[i - 1]!.from), 'each level must start above the one before');
 
 /** One model, for one kind of text generation task. */
 const ModelSchema = (defaults: { maxTokens: number; temperature: number }) =>
@@ -149,6 +184,18 @@ export const SettingsSchema = z
 						at: at(0.9, 0.5),
 					})
 					.default({}),
+				/**
+				 * How much their newest messages matter (small talk to something big, like a confession), asked with the other DM
+				 * checks when their turn comes due while others wait, so the queue knows before the model writes (`pacing.priority`).
+				 * Off, or on any failure, the model's own rating of their last turn is used. Its own switch: off here costs nothing
+				 * extra even with the checks on, and with the stop and age checks off it is a request of its own.
+				 */
+				importance: z
+					.object({
+						/** Whether to ask it at all (only ever with `decisions.enabled`). */
+						enabled: z.boolean().default(true),
+					})
+					.default({}),
 				/** The group-chat gate: a cheap check decides quiet vs speak before the group-chat model is called (a failure lets the model decide as before). */
 				groupChatGate: z
 					.object({
@@ -183,31 +230,141 @@ export const SettingsSchema = z
 				selfNotes: z.number().int().min(0).max(2000).default(800),
 				/** Messages of the conversation sent with each turn (the notes carry what matters from older ones). */
 				historyMessages: z.number().int().min(2).max(100).default(20),
-				/** Hours without a message from them after which their next one starts a new conversation (counted for the relationship). */
+				/** Hours without a message from them after which their next one starts a new conversation (the relationship shown is set again at each). */
 				conversationGapHours: z.number().min(0.5).max(168).default(6),
-				/** Conversations after which the relationship is acquainted, regular, close (counted by the code, see brain.ts relationshipOf). */
-				relationshipAfter: z
-					.tuple([z.number().int().min(1), z.number().int().min(1), z.number().int().min(1)])
-					.default([2, 5, 12])
-					.refine(([a, b, c]) => a <= b && b <= c, 'each must not be below the one before'),
 			})
+			.default({}),
+
+		/**
+		 * How it comes to know and like each person, kept for each of them. Familiarity (0 to 1) is counted by the code:
+		 * each turn it keeps adds to it, more when the conversation mattered (the turn's importance), and it fades while
+		 * they are apart. Affinity (-1 to 1) is moved one small step per turn by the model, never set outright. Both decide
+		 * who it answers first when several wait (`pacing.priority`), and the DM prompt describes them as levels, set once
+		 * per conversation: the shipped ones (prompts.ts) unless replaced here, thresholds and words alike.
+		 */
+		relationship: z
+			.object({
+				familiarity: z
+					.object({
+						/** The share of what is left to know that an ordinary turn (importance 1) adds: small talk adds a quarter of it, a turn that matters a lot five times. */
+						growth: z.number().min(0).max(0.5).default(0.012),
+						/** Days apart over which it halves, counted when they next write; 0 never fades. */
+						fadeHalfLifeDays: z.number().min(0).max(3650).default(60),
+						/** The levels the prompt describes, lowest first: each from its `from` (0 to 1, the first 0), its `text` with {name} for their name. Left out: the shipped seven. */
+						levels: levels(0).optional(),
+					})
+					.strict()
+					.default({}),
+				affinity: z
+					.object({
+						/** Whether to keep it at all: off, the model is asked nothing about it, the prompt says nothing of it, and it weighs nothing. */
+						enabled: z.boolean().default(true),
+						/** How far one turn may move it: the model answers -1, 0 or 1. */
+						step: z.number().min(0.001).max(0.5).default(0.05),
+						/** Days apart over which it drifts halfway back to neutral, counted when they next write; 0 never. */
+						fadeHalfLifeDays: z.number().min(0).max(3650).default(0),
+						/** The levels the prompt describes, lowest first: each from its `from` (-1 to 1, the first -1), its `text` with {name}; an empty text says nothing. Left out: the shipped five. */
+						levels: levels(-1).optional(),
+					})
+					.strict()
+					.default({}),
+				/** How far below a level's threshold a value must fall before the level shown goes back down: no flip-flop around one. */
+				hysteresis: z.number().min(0).max(0.5).default(0.05),
+			})
+			.strict()
 			.default({}),
 
 		/** How fast it answers and types. */
 		pacing: z
 			.object({
-				/** Probability of the quick delay; slow has its own probability and the remainder uses the busy delay. */
-				quickReplyChance: z.number().min(0).max(1).default(0.65),
-				slowReplyChance: z.number().min(0).max(1).default(0.27),
-				quickReplyDelaySeconds: range(4, 45),
-				slowReplyDelaySeconds: range(60, 240),
-				busyReplyDelaySeconds: range(300, 900),
+				/**
+				 * While it is on its phone, a new message from anyone is noticed after a short lag: right after a turn with
+				 * anyone the chance starts at 1 and halves every `halfLifeSeconds` (1 while it writes a reply), so a live
+				 * conversation with one person doesn't leave another waiting for its next glance, and a pause of a few minutes
+				 * means it put the phone down. An interruption since then (`interruptions`) means it looked away.
+				 */
+				watching: z
+					.object({
+						/** Seconds after its last turn with anyone over which the chance that it is still on its phone halves. */
+						halfLifeSeconds: z.number().min(1).max(3600).default(90),
+						/** Seconds after its last turn with someone over which the chance that it still has their chat open halves: their weight when several wait (`priority`). */
+						chatHalfLifeSeconds: z.number().min(1).max(3600).default(90),
+						/** The lag before it answers while watching (also every delay on a short break, when it is on its phone anyway): half are shorter than this, in seconds. */
+						medianSeconds: z.number().min(0.1).max(600).default(4),
+						/** …and nine in ten shorter than this (above the median): how far the slow ones go. */
+						p90Seconds: z.number().min(0.1).max(3600).default(8),
+						/** The shortest and longest, in seconds. */
+						delaySeconds: range(2, 20),
+					})
+					.strict()
+					.default({})
+					.refine((watching) => watching.p90Seconds > watching.medianSeconds, 'p90Seconds must be above medianSeconds'),
+				/**
+				 * Not watching: the time until it next glances at its messages. Skewed like real answer times (a log-normal
+				 * distribution): most come within a minute, around a typical time, and a few take much longer.
+				 */
+				glance: z
+					.object({
+						/** Half of its glances come sooner than this, in seconds. */
+						medianSeconds: z.number().min(1).max(3600).default(40),
+						/** …and nine in ten sooner than this (above the median): how long the tail is. */
+						p90Seconds: z.number().min(1).max(7200).default(150),
+						/** The shortest and longest, in seconds; the least is also the shortest time a reply must still fit in its span. */
+						delaySeconds: range(4, 900),
+					})
+					.strict()
+					.default({})
+					.refine((glance) => glance.p90Seconds > glance.medianSeconds, 'p90Seconds must be above medianSeconds'),
+				/**
+				 * Now and then, while online (not on a short break), something takes it away from its messages for a few
+				 * minutes: nobody's turn starts until it is back (one under way is finished first), and it is watching no chat
+				 * when it comes back. Drawn per day from a seed, like its agenda, so a restart finds the same ones. Not in
+				 * the middle of a conversation that matters: one that comes then waits until it calms down. A planned leave
+				 * (the end of its online time) is its agenda's, and comes whatever the conversation.
+				 */
+				interruptions: z
+					.object({
+						/** Minutes of online time between two, on average (they come at random moments: a memoryless clock); 0 for none. */
+						meanMinutes: z
+							.number()
+							.min(0)
+							.max(1440)
+							.default(40)
+							.refine((minutes) => minutes === 0 || minutes >= 1, 'must be 0 (none) or at least 1'),
+						/** How long each lasts, in minutes (never past the end of its span). */
+						minutes: drawn(2, 8, 'lognormal'),
+						/**
+						 * The importance (0 small talk to 3 something that matters a lot) at or above which a conversation holds an
+						 * interruption off: 2, something personal, by default; 4 never holds one off.
+						 */
+						holdAtImportance: z.number().min(0).max(4).default(2),
+						/** Minutes without an exchange after which such a conversation has calmed down, and a held interruption may come. */
+						calmMinutes: z.number().min(0.5).max(120).default(5),
+					})
+					.strict()
+					.default({}),
+				/** Who goes first when several are due at once (one person at a time: while it answers one, the others wait). */
+				priority: z
+					.object({
+						/**
+						 * Picked at random by weight: how close it is to them (`relationship`), how much their conversation matters now
+						 * (its importance), whether it is still watching their chat, and how long they have waited. false: in the order
+						 * they came due.
+						 */
+						weighted: z.boolean().default(true),
+						/** Minutes of waiting that add their whole weight again (it grows as 1 + waited / agingMinutes), so nobody waits forever. */
+						agingMinutes: z.number().min(0.1).max(120).default(2),
+						/** Minutes over which the importance of their conversation fades halfway back to that of an ordinary chat. */
+						importanceHalfLifeMinutes: z.number().min(1).max(1440).default(30),
+					})
+					.strict()
+					.default({}),
 				/** Typing speed, in characters per second; the typing indicator shows for as long as the message would take. */
-				typingCharsPerSecond: range(3.5, 7, 0.5),
+				typingCharsPerSecond: drawn(3.5, 7, 'normal', 0.5),
 				/** The shortest and longest the typing indicator shows for one message, in seconds (thinking pauses come on top). */
 				typingDurationSeconds: range(1.5, 45),
 				/** Reading speed, in characters per second: before it types, it spends as long as it takes to read what they wrote (the unread messages together). */
-				readingCharsPerSecond: range(15, 25, 1),
+				readingCharsPerSecond: drawn(15, 25, 'normal', 1),
 				/** The shortest and longest the reading takes, in seconds. */
 				readingDurationSeconds: range(1, 20),
 				/** Pauses while typing a long message: the indicator goes off a moment, as when someone stops to think, then on again. */
@@ -220,25 +377,38 @@ export const SettingsSchema = z
 						/** The most pauses in one message. */
 						max: z.number().int().min(1).max(3).default(2),
 						/** How long each pause lasts, typing off. */
-						seconds: range(2, 6),
+						seconds: drawn(2, 6, 'lognormal'),
 					})
 					.strict()
 					.default({}),
 				/**
-				 * One person at a time: while it is composing or sending a reply to someone, it starts nobody else's, so what it
-				 * learns about itself is never overwritten by a turn that began before it (self notes are read when a turn starts and
-				 * written when it ends). Others wait their turn, a few seconds at a time. Turn it off only if you accept that:
-				 * parallel turns can lose each other's self notes. A turn stuck for over 10 minutes stops blocking the others.
+				 * Someone who writes in bursts, several messages in a row: how long it waits for them to finish before it starts the
+				 * reply, and what a message that comes in while it writes one does.
 				 */
-				singlePresence: z.boolean().default(true),
+				burst: z
+					.object({
+						/** Seconds of quiet after their newest message before it starts writing the reply; a message in that time starts the wait again. [0, 0] for none. */
+						settleSeconds: drawn(2, 5, 'lognormal'),
+						/** The most messages that may start the wait again; past them it starts writing anyway, so someone who never stops still gets a reply. */
+						maxSettleResets: z.number().int().min(0).max(20).default(3),
+						/**
+						 * A message that comes in while it writes the reply, before the first message of it is sent: the draft is dropped
+						 * and written again with that message read. Off, that message gets a turn of its own once this one is sent.
+						 */
+						restartOnNewMessage: z.boolean().default(true),
+						/** The most times in a row one reply may be written again so. Each costs a whole DM turn of tokens (the dropped draft is paid for): personaWarnings warns above 1. */
+						maxRestarts: z.number().int().min(1).max(5).default(1),
+					})
+					.strict()
+					.default({}),
 				/** Seconds between two messages of the same reply. */
-				betweenReplyMessagesSeconds: range(0.8, 3.5),
+				betweenReplyMessagesSeconds: drawn(0.8, 3.5, 'lognormal'),
 				/** Chance that a long reply (over 90 characters) is sent as two messages. */
 				replySplitChance: z.number().min(0).max(1).default(0.35),
 				/** Extra minutes after a span opens, before the first backlog reply of that span; [0, 0] disables the extra wait. */
-				returnOnlineReplyDelayMinutes: range(0, 0),
+				returnOnlineReplyDelayMinutes: drawn(0, 0, 'lognormal'),
 				/** Seconds before each backlog conversation: messages that came in offline are answered one person at a time, oldest first. */
-				backlogGapSeconds: range(30, 150),
+				backlogGapSeconds: drawn(30, 150, 'lognormal'),
 			})
 			.strict()
 			.default({}),
@@ -255,7 +425,7 @@ export const SettingsSchema = z
 				upcoming: z.boolean().default(true),
 				/** In DMs, that their messages came in while it was offline: "These messages came in while you were at work (from 12:16 PM)…". */
 				awayContext: z.boolean().default(true),
-				/** How well it knows the person, in DMs: "Sam is one of your regulars…" (memory.relationshipAfter). */
+				/** How well it knows and likes the person, in DMs: "Sam is one of your regulars… You like Sam." (`relationship`). */
 				relationship: z.boolean().default(true),
 				/** How long since each side wrote in DMs ("Their last message was 25 minutes ago…"), and since the last line in a group chat. */
 				timeSince: z.boolean().default(true),
@@ -268,7 +438,7 @@ export const SettingsSchema = z
 				/** Failed tries at one answer before giving up (the person can write again); a spent budget or a provider outage counts none. */
 				attempts: z.number().int().min(1).max(10).default(3),
 				/** Minutes before the next try (times the attempt number); while the provider is down, doubled after each try, up to 16 times. */
-				delayMinutes: range(1, 4),
+				delayMinutes: drawn(1, 4, 'uniform'),
 				/** While the day's tokens are spent, minutes between checks. */
 				budgetCheckMinutes: z.number().min(1).default(60),
 			})
@@ -282,7 +452,7 @@ export type Settings = z.infer<typeof SettingsSchema>;
  * The setting groups a persona may set for itself (its file's `settings:`), deep-merged over `_shared.yaml`'s
  * (config/personas.ts). Everything else is set once for every persona.
  */
-export const PERSONA_SETTINGS = ['models', 'memory', 'pacing', 'context', 'retries'] as const;
+export const PERSONA_SETTINGS = ['models', 'memory', 'relationship', 'pacing', 'context', 'retries'] as const;
 /** Set once for every persona: the text provider and its daily cap, the Decisions checks. */
 export const GLOBAL_SETTINGS = ['llm', 'decisions'] as const;
 /** Why a group can't be set per persona, for the error message. */
@@ -297,8 +467,7 @@ export const SETTINGS_CLASSIFIED: [Unclassified] extends [never] ? true : never 
 /** Rules across settings that the schema can't express. */
 export function checkSettings(settings: Settings): { path: (string | number)[]; message: string }[] {
 	const issues: { path: (string | number)[]; message: string }[] = [];
-	const { pacing, llm, models } = settings;
-	if (pacing.quickReplyChance + pacing.slowReplyChance > 1) issues.push({ path: ['pacing'], message: 'quickReplyChance and slowReplyChance add up to more than 1' });
+	const { llm, models } = settings;
 	for (const [task, model] of Object.entries(models)) {
 		if (llm.baseUrl === undefined && model.baseUrl === undefined) continue;
 		if (!model.model && !llm.model) issues.push({ path: ['models', task], message: 'no model named (set it, or settings.llm.model)' });

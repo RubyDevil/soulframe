@@ -6,10 +6,11 @@ import { moodOf } from './mood.js';
 import { splitReply } from './pacing.js';
 import { hostOf, isStopRequest, MINOR_EXIT, minorSignal, STOP_ACK, stripForeignLinks } from './safety.js';
 import { busyAt, fullyOnline, situationAt } from './schedule.js';
-import { HOUR, MINUTE } from './settings.js';
+import { DAY, HOUR, MINUTE } from './settings.js';
 import {
 	ADDRESSED_QUESTION,
 	ADULTS_ONLY_RULE,
+	AFFINITY_LEVELS,
 	CHIME_IN_QUESTION,
 	dateTimeText,
 	dayPrompt,
@@ -17,12 +18,15 @@ import {
 	directMessageTimePrompt,
 	dmCheckInput,
 	dmMinorQuestion,
+	FAMILIARITY_LEVELS,
 	groupChatGateQuestions,
 	groupChatLineInput,
 	groupChatMinorQuestion,
 	groupChatTask,
 	groupChatTimePrompt,
 	groupChatTranscript,
+	IMPORTANCE_QUESTION,
+	importanceQuestion,
 	MINOR_QUESTION,
 	POST_REQUEST,
 	postTask,
@@ -30,7 +34,8 @@ import {
 	STOP_QUESTION,
 	stopQuestion,
 	systemPrompt,
-	type Relationship,
+	type Level,
+	type Trend,
 } from './prompts.js';
 import type { Runtime } from './runtime.js';
 import type { Person } from './store.js';
@@ -57,6 +62,12 @@ export interface Turn {
 	inviteWaits?: true;
 	/** The code's goodbye: it goes out even though the person is no longer active. */
 	final?: true;
+	/**
+	 * Saves what the turn wrote and decided (its notes on the person and on itself, a block or an action, audited):
+	 * nothing of it is stored before. The reply queue calls it once the turn is kept (its first message sent, or its
+	 * messages marked handled), never for a draft it drops to write the reply again. Calling it again does nothing.
+	 */
+	keep?: () => void;
 }
 
 export interface ParsedTurn {
@@ -65,6 +76,10 @@ export interface ParsedTurn {
 	/** Rewritten notes, or `undefined` to keep them. */
 	notes?: string;
 	self?: string;
+	/** How much the conversation matters now, 0 to 3, as the model rated it; `undefined` when it didn't. */
+	importance?: number;
+	/** How the exchange changed its feelings: -1 cooler, 0 none, 1 warmer; `undefined` when it didn't say. */
+	affinity?: -1 | 0 | 1;
 	action: PersonAction;
 	acceptInvite?: true;
 }
@@ -104,7 +119,13 @@ const replyOnly = (text: string): ParsedTurn | null => {
 };
 
 /** A line that starts like one of the answer's fields ("notes: …", `"reply": …`): JSON that lost its braces. */
-const FIELD_LINE = /^\s*"?(?:reply|notes|self|action|acceptInvite)"?\s*:/im;
+const FIELD_LINE = /^\s*"?(?:reply|notes|self|importance|affinity|action|acceptInvite)"?\s*:/im;
+
+/** A number the model gave, written as one or as a numeric string; else null. */
+const numberOf = (value: unknown) => {
+	const number = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : Number.NaN;
+	return Number.isFinite(number) ? number : null;
+};
 
 /**
  * The model's JSON answer, read leniently: the text from its first `{` to its last `}`, raw line breaks in its strings
@@ -124,11 +145,16 @@ export function parseTurn(raw: string, actions: readonly string[] = []): ParsedT
 	const action = typeof json.action === 'string' && (json.action === 'block' || actions.includes(json.action)) ? json.action : 'none';
 	const notes = textOrNull(json.notes);
 	const self = textOrNull(json.self);
+	const importance = numberOf(json.importance);
+	const affinity = numberOf(json.affinity);
 	return {
 		reply: textOrNull(json.reply),
 		action,
 		...(notes !== null && { notes }),
 		...(self !== null && { self }),
+		// 0 to 3, whole; a change of feeling only ever one step
+		...(importance !== null && { importance: Math.min(3, Math.max(0, Math.round(importance))) }),
+		...(affinity !== null && { affinity: Math.sign(affinity) as -1 | 0 | 1 }),
 		...(json.acceptInvite === true && { acceptInvite: true as const }),
 	};
 }
@@ -150,11 +176,19 @@ export interface Brain {
 	 */
 	incoming(channel: Channel, externalId: string, name: string, text: string, at?: number): Decision;
 	/**
-	 * What to do now in the conversation with the person on `channel`. Stores nothing it says: the reply queue records
-	 * each message once sent. `invitation`: a pending group-chat invitation's name, heeded only where `channel.invitations`;
-	 * `extraLines`: the app's lines for this turn (`Conversation.extraLines`), given the person as compose reads them.
+	 * What to do now in the conversation with the person on `channel`. Stores nothing it says (the reply queue records
+	 * each message once sent), nor what it wrote and decided until the turn's `keep` is called. `invitation`: a pending
+	 * group-chat invitation's name, heeded only where `channel.invitations`; `extraLines`: the app's lines for this turn
+	 * (`Conversation.extraLines`), given the person as compose reads them.
 	 */
 	compose(personId: number, channel: Channel, options?: { invitation?: string; extraLines?: (person: Person) => readonly string[] }): Promise<Turn>;
+	/**
+	 * Before their turn, while others wait for the persona too: how much their new messages matter, asked with the other
+	 * DM checks (settings.decisions.importance) and stored on the person (`importance`), so the reply queue can weigh their
+	 * turn. `compose` then uses those answers while no newer message came, asking nothing again. Nothing is asked unless
+	 * `decisions.enabled` and `decisions.importance.enabled`; it never throws, and a failure leaves the model's own rating.
+	 */
+	assess(personId: number, channel: Channel): Promise<void>;
 	/** A post in its own voice for `channel` (with its `notes`), following its rules and not repeating its recent posts, or null. The app picked where and when. */
 	composePost(channel: Channel, post: { rules: string; examples: readonly string[]; recent: readonly string[] }): Promise<string | null>;
 	/** What to say in a group chat (`chat`, with its `notes`), or `null` to stay quiet; `quiet` when the chat went silent a while, `hosted` in its own. */
@@ -179,9 +213,35 @@ const lineTarget = (chat: Channel) => chat.targetLength ?? Math.min(150, Math.fl
 export const unhandled = <M extends { direction: 'in' | 'out'; at: number }>(history: M[], handledAt: number) =>
 	history.filter((m) => m.direction === 'in' && m.at > handledAt);
 
-/** The relationship from the conversations so far: acquainted, regular and close from each count in `after`. */
-export const relationshipOf = (conversations: number, [acquainted, regular, close]: readonly [number, number, number]): Relationship =>
-	conversations >= close ? 'close' : conversations >= regular ? 'regular' : conversations >= acquainted ? 'acquainted' : 'new';
+/**
+ * The level `value` is on (its index in `levels`, lowest first), given the one shown before (`previous`, -1 for none):
+ * up as soon as it reaches a level's `from`, but down only once it falls `margin` below the `from` of the one shown, so
+ * a value near a threshold does not flip between two levels.
+ */
+export function levelIndex(levels: readonly Level[], value: number, previous: number, margin: number): number {
+	let index = 0;
+	for (const [i, level] of levels.entries()) if (value >= level.from) index = i;
+	return previous > index && previous < levels.length && value >= levels[previous]!.from - margin ? previous : index;
+}
+
+/** How much a kept turn adds to familiarity, by its importance (0 to 3), times `relationship.familiarity.growth`. */
+const IMPORTANCE_GROWTH = [0.25, 1, 2.5, 5] as const;
+/** How far familiarity must have risen above its slow-moving average for the prompt to say they grew closer, or have faded while they were apart to say things feel more distant. */
+const TREND_STEP = 0.05;
+/** How much of the way to familiarity its average moves at each new conversation. */
+const TREND_FOLLOW = 0.4;
+
+/** The relationship as the DM prompt shows it, set once per conversation (kv `relationship:<person id>`). */
+interface Shown {
+	/** The conversation it was set for (`Person.conversations`). */
+	conversation: number;
+	/** The levels shown (indexes in the level lists). */
+	familiarity: number;
+	affinity: number;
+	trend: Trend;
+	/** Familiarity's slow-moving average, the trend's reference. */
+	baseline: number;
+}
 
 /** The app's content policy. soulframe applies none of its own beyond `Channel.adult` and the persona's `sfw`. */
 export interface Policy {
@@ -269,15 +329,81 @@ export function createBrain({
 	};
 
 	/** One request for the checks on their new messages (age on an 18+ channel, stop), each when it is on; the persona's last reply is context only. */
-	const checkIncoming = async (channel: Channel, theirNew: { text: string }[], yourLast: { text: string } | undefined) => {
+	/**
+	 * One request for the checks on their new messages (age on an 18+ channel, stop), each when it is on, and with them how
+	 * much the messages matter (`decisions.importance`): `alone` asks it even when no other check is on. The persona's
+	 * last reply is context only.
+	 */
+	const checkIncoming = async (channel: Channel, theirNew: { text: string }[], yourLast: { text: string } | undefined, alone = false) => {
 		if (!decisions.enabled) return null;
-		const questions: Question[] = [
+		const checksOn: Question[] = [
 			...(channel.adult && checks.minor.enabled ? [dmMinorQuestion] : []),
 			...(checks.stop.enabled ? [stopQuestion] : []),
 		];
+		const questions = checks.importance.enabled && (alone || checksOn.length) ? [...checksOn, importanceQuestion] : checksOn;
 		const judged = theirNew.slice(-checks.dmMessages).map((m) => clip(m.text, 500));
 		if (!questions.length || !judged.length) return null;
 		return decisions.ask(dmCheckInput({ personaName: persona.name, yourLast: yourLast ? clip(yourLast.text, 300) : null, theirNew: judged }), questions, ctx('dmCheck'));
+	};
+
+	/**
+	 * The checks `assess` asked ahead of a turn, by person, with how many messages they had written then: `compose` waits
+	 * for one still in flight and uses its answers while nothing newer came.
+	 */
+	const assessed = new Map<number, Promise<{ incoming: number; answers: Awaited<ReturnType<typeof checkIncoming>> }>>();
+	/** Stores how much their messages matter, as a check rated it (a stored check outcome, as a caution flag is). */
+	const rateImportance = (personId: number, answers: Awaited<ReturnType<typeof checkIncoming>>) => {
+		const rated = scoreOf(answers, IMPORTANCE_QUESTION);
+		if (rated !== null) store.updatePerson(personId, { importance: rated, importanceAt: now() });
+	};
+
+	const { relationship } = settings;
+	const familiarityLevels = relationship.familiarity.levels ?? FAMILIARITY_LEVELS;
+	const affinityLevels = relationship.affinity.levels ?? AFFINITY_LEVELS;
+	const relationshipKey = (personId: number) => `relationship:${personId}`;
+	/** The relationship as shown in their conversation so far, if it was set. */
+	const shownOf = (person: Person): Shown | undefined => {
+		try {
+			return JSON.parse(store.get(persona.id, relationshipKey(person.id)) ?? 'null') ?? undefined;
+		} catch {
+			return undefined;
+		}
+	};
+	/**
+	 * A new conversation with them, after `apartMs` apart: familiarity fades for that time, and affinity when it drifts
+	 * (`fadeHalfLifeDays`), and the relationship the prompt shows is set for the whole conversation: each level from the
+	 * one shown before (the hysteresis margin), and the way familiarity went against its slow-moving average.
+	 */
+	const startConversation = (person: Person, apartMs: number) => {
+		const fade = (value: number, halfLifeDays: number) => (halfLifeDays > 0 ? value * 0.5 ** (apartMs / (halfLifeDays * DAY)) : value);
+		const familiarity = fade(person.familiarity, relationship.familiarity.fadeHalfLifeDays);
+		const affinity = fade(person.affinity, relationship.affinity.fadeHalfLifeDays);
+		const before = shownOf(person);
+		const baseline = before?.baseline ?? familiarity;
+		const drift = familiarity - baseline;
+		// Apart long enough to lose some: more distant; else closer when it rose well above its average
+		const trend: Trend = person.familiarity - familiarity >= TREND_STEP ? 'distant' : drift >= TREND_STEP ? 'closer' : null;
+		const shown: Shown = {
+			conversation: person.conversations,
+			familiarity: levelIndex(familiarityLevels, familiarity, before?.familiarity ?? -1, relationship.hysteresis),
+			affinity: levelIndex(affinityLevels, affinity, before?.affinity ?? -1, relationship.hysteresis),
+			trend,
+			baseline: baseline + drift * TREND_FOLLOW,
+		};
+		store.set(persona.id, relationshipKey(person.id), JSON.stringify(shown));
+		return { person: store.updatePerson(person.id, { familiarity, affinity }), shown };
+	};
+
+	/** How things stand with them as the DM prompt says it, set for their conversation (set now when it was not, as for someone known before levels were kept). */
+	const relationshipNow = (person: Person) => {
+		const shown = shownOf(person)?.conversation === person.conversations ? shownOf(person)! : startConversation(person, 0).shown;
+		return {
+			familiarity: familiarityLevels[shown.familiarity],
+			...(relationship.affinity.enabled && { affinity: affinityLevels[shown.affinity] }),
+			trend: shown.trend,
+			conversations: person.conversations,
+			knownFor: now() - person.firstSeenAt,
+		};
 	};
 
 	/**
@@ -307,12 +433,15 @@ export function createBrain({
 			// late, older than one already had, keeps their last message the newer one, and their name: the newest message
 			// has the name they go by now (for someone linked across channels, the one where they last wrote)
 			const newConversation = at - person.lastInAt >= settings.memory.conversationGapHours * HOUR;
+			const apart = at - person.lastInAt;
 			const renamed = at >= person.lastInAt && name !== '' && name !== person.name;
 			person = store.updatePerson(person.id, {
 				lastInAt: Math.max(person.lastInAt, at),
 				...(newConversation && { conversations: person.conversations + 1 }),
 				...(renamed && { name }),
 			});
+			// What they were apart fades, and how things stand is set for this conversation
+			if (newConversation) person = startConversation(person, apart).person;
 			store.addMessage(person.id, channel, 'in', text, at);
 
 			// The code's own checks, first and at once (the age one on an 18+ channel); the typed checks (settings.decisions) only add to them in `compose`
@@ -337,8 +466,12 @@ export function createBrain({
 			// What they wrote since their last turn: one that comes in while this one is composed has a turn of its own
 			const theirNew = unhandled(history, person.handledAt);
 
-			// Typed checks of their new messages, in any wording (settings.decisions); with no answer, the turn is as without them
-			const checked = await checkIncoming(channel, theirNew, yourLast);
+			// Typed checks of their new messages, in any wording (settings.decisions); with no answer, the turn is as without them.
+			// Those `assess` asked as their turn came due stand while no newer message came
+			const early = await assessed.get(person.id);
+			assessed.delete(person.id);
+			const checked = early?.answers && early.incoming === person.incoming ? early.answers : await checkIncoming(channel, theirNew, yourLast);
+			if (checked !== early?.answers) rateImportance(person.id, checked);
 			// The code's own checks may have ended it during the wait (a newer message), even if the check failed: theirs stands, nothing more is sent
 			person = store.personById(person.id);
 			if (person.state !== 'active') return { messages: [], action: 'none' };
@@ -381,13 +514,8 @@ export function createBrain({
 				}),
 				minorCaution: caution,
 				// Counted by the code, never by the model; it changes nothing in the rules or the checks
-				relationship: settings.context.relationship
-					? {
-						relationship: relationshipOf(person.conversations, settings.memory.relationshipAfter),
-						conversations: person.conversations,
-						knownFor: now() - person.firstSeenAt,
-					}
-					: undefined,
+				relationship: settings.context.relationship ? relationshipNow(person) : undefined,
+				affinity: relationship.affinity.enabled,
 			});
 			const messages: LlmMessage[] = [
 				{ role: 'system', content: system(channel, rules, task) },
@@ -399,20 +527,47 @@ export function createBrain({
 			// Never sent as it is (it would carry its notes): the queue tries again, as after any failed model call
 			if (!turn) throw new Error('LLM answered unreadable JSON');
 
-			if (turn.notes !== undefined) person = store.updatePerson(person.id, { summary: clip(turn.notes, settings.memory.personNotes) });
-			if (turn.self !== undefined) store.set(persona.id, 'selfNotes', clip(turn.self, settings.memory.selfNotes));
-
 			const reply = !turn.reply ? '' : clip(allowedLinksOnly(turn.reply), channel.maxLength);
 
 			const { action } = turn;
 			const invite = invitation === undefined ? {} : !joinNow ? { inviteWaits: true as const } : turn.acceptInvite && action === 'none' ? { acceptInvite: true as const } : {};
-			if (action === 'block') {
-				store.updatePerson(person.id, { state: 'blocked' });
-				store.audit(persona.id, 'blocked', { personId: person.id, platform: channel.id });
-			} else if (action !== 'none') store.audit(persona.id, 'action', { personId: person.id, platform: channel.id, action });
-			if (!reply) return { messages: [], action, ...invite };
+			let kept = false;
+			// Stored only once the queue keeps the turn: a draft it drops leaves nothing behind
+			const keep = () => {
+				if (kept) return;
+				kept = true;
+				const id = person.id;
+				if (turn.notes !== undefined) store.updatePerson(id, { summary: clip(turn.notes, settings.memory.personNotes) });
+				if (turn.self !== undefined) store.set(persona.id, 'selfNotes', clip(turn.self, settings.memory.selfNotes));
+				// What the turn meant: familiarity grows by its importance (unrated, an ordinary chat), affinity moves one step at most
+				const { familiarity, affinity } = store.personById(id);
+				const gain = Math.min(1, relationship.familiarity.growth * IMPORTANCE_GROWTH[turn.importance ?? 1]!);
+				store.updatePerson(id, {
+					familiarity: familiarity + (1 - familiarity) * gain,
+					...(relationship.affinity.enabled && turn.affinity && { affinity: Math.min(1, Math.max(-1, affinity + relationship.affinity.step * turn.affinity)) }),
+					...(turn.importance !== undefined && { importance: turn.importance, importanceAt: now() }),
+				});
+				if (action === 'block') {
+					store.updatePerson(id, { state: 'blocked' });
+					store.audit(persona.id, 'blocked', { personId: id, platform: channel.id });
+				} else if (action !== 'none') store.audit(persona.id, 'action', { personId: id, platform: channel.id, action });
+			};
+			if (!reply) return { messages: [], action, ...invite, keep };
 
-			return { messages: splitReply(reply, runtime.rng, settings.pacing), action, ...invite };
+			return { messages: splitReply(reply, runtime.rng, settings.pacing), action, ...invite, keep };
+		},
+
+		async assess(personId, channel) {
+			if (!decisions.enabled || !checks.importance.enabled) return;
+			const person = store.personById(personId);
+			if (person.state !== 'active') return;
+			const history = store.history(person.id, settings.memory.historyMessages);
+			const asking = checkIncoming(channel, unhandled(history, person.handledAt), history.findLast((m) => m.direction === 'out'), true).then((answers) => {
+				rateImportance(person.id, answers);
+				return { incoming: person.incoming, answers };
+			});
+			assessed.set(person.id, asking);
+			await asking;
 		},
 
 		async composePost(channel, { rules, examples, recent }) {

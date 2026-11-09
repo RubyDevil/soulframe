@@ -169,7 +169,7 @@ Thrown by an application that refuses a config; its message lists the issues ("`
 function describe(path: readonly (string | number)[], message: string, got: unknown): string;
 ```
 
-A problem as shown: `"settings.pacing.quickReplyChance: <message> (got 1.5)"`. `got` undefined shows no value; a long
+A problem as shown: `"settings.pacing.replySplitChance: <message> (got 1.5)"`. `got` undefined shows no value; a long
 one is cut at 40 characters.
 
 ### `suggest`
@@ -224,13 +224,17 @@ type Settings = {
 	models: { directMessage: { /* ... */ }; groupChat: { /* ... */ }; post: { /* ... */ } };
 	decisions: { /* ... */ };
 	memory: { /* ... */ };
+	relationship: { /* ... */ };
 	pacing: { /* ... */ };
 	context: { /* ... */ };
 	retries: { /* ... */ };
 };
 ```
 
-Every setting of a persona, defaults filled in. Each key is in [configuration](./configuration.md#settings).
+Every setting of a persona, defaults filled in. Each key is in [configuration](./configuration.md#settings). A drawn
+range (a value drawn from it each time: `pacing.typingCharsPerSecond`, `pacing.backlogGapSeconds`,
+`retries.delayMinutes`, …) is read as `{ range: [least, most], shape }`, whichever way the config wrote it; a range
+that is only a limit stays `[least, most]`.
 
 ### `range`
 
@@ -239,7 +243,8 @@ function range(min: number, max: number, floor?: number): z.ZodType<[number, num
 ```
 
 The zod schema of a `[least, most]` setting: two numbers at or above `floor` (default 0), defaulting to `[min, max]`,
-the first not above the second. For an application that declares its own settings the same way.
+the first not above the second. For an application that declares its own settings the same way. Draw from it with
+`between(rng, ...value)` (evenly); soulframe's own drawn ranges also carry a shape (see `Settings`).
 
 ### `SECOND`, `MINUTE`, `HOUR`, `DAY`
 
@@ -258,7 +263,7 @@ const DAY = 86_400_000;
 function diffPaths(a: unknown, b: unknown, prefix?: string): string[];
 ```
 
-The dotted paths where `b` differs from `a` (leaves and arrays compared whole), e.g. `['pacing.quickReplyChance']`.
+The dotted paths where `b` differs from `a` (leaves and arrays compared whole), e.g. `['pacing.watching.halfLifeSeconds']`.
 
 ### `isPlainObject`
 
@@ -415,6 +420,7 @@ interface Brain {
 		invitation?: string;
 		extraLines?: (person: Person) => readonly string[];
 	}): Promise<Turn>;
+	assess(personId: number, channel: Channel): Promise<void>;
 	composePost(channel: Channel, post: { rules: string; examples: readonly string[]; recent: readonly string[] }): Promise<string | null>;
 	composeGroupChatLine(chat: Channel, recent: GroupChatLine[], quiet: boolean, hosted: boolean): Promise<string | null>;
 	wantsToSpeak(chatId: string, recent: GroupChatLine[]): Promise<{ speak: boolean; addressed: number; chimeIn: number } | null>;
@@ -427,11 +433,15 @@ interface Brain {
   message under another name, the person takes that name), counts a new conversation after
   `memory.conversationGapHours` of silence, and runs the code's stop check (and, where `channel.adult`, its under-18
   check). Answers a `Decision`.
-- **`compose`**: the DM turn for the person, now. Runs the typed checks when enabled, builds the prompt, calls the
-  model with `task: 'directMessage'` and stores the rewritten notes. It stores nothing it says: the reply queue
-  records each message once sent. `invitation` is a pending group-chat invitation's name, heeded only where
-  `channel.invitations`; `extraLines` gives the application's lines for this turn. Throws when the model's answer
-  can't be read (the queue retries). The answer, `Turn`, is:
+- **`compose`**: the DM turn for the person, now. Runs the typed checks when enabled, builds the prompt and calls the
+  model with `task: 'directMessage'`. It stores nothing it says (the reply queue records each message once sent), nor,
+  until the turn's `keep()` is called, what it wrote and decided: the rewritten notes on the person and on itself, a
+  block, an action (each audited then). The reply queue calls `keep()` once it keeps the turn (its first message sent,
+  or its messages marked handled) and never for a draft it drops to write the reply again; call it yourself when you
+  use `compose` without the queue. The checks' own outcomes (a stop, a deny-listing, a minor caution) are stored at
+  once. `invitation` is a pending group-chat invitation's name, heeded only where `channel.invitations`; `extraLines`
+  gives the application's lines for this turn. Throws when the model's answer can't be read (the queue retries). The
+  answer, `Turn`, is:
 
   ```ts
   {
@@ -440,9 +450,15 @@ interface Brain {
   	acceptInvite?: true;            // join the pending invitation
   	inviteWaits?: true;             // the invitation waits for full online time (a short break)
   	final?: true;                   // the code's goodbye: sent even though the person is no longer active
+  	keep?: () => void;              // stores what the turn wrote and decided; a second call does nothing
   }
   ```
 
+- **`assess`**: how much the person's new messages matter, asked ahead of their turn with the other DM checks
+  (`settings.decisions.importance`; nothing is asked unless the Decisions client is enabled), and stored on the person
+  (`importance`). The reply queue calls it when someone's turn comes due while others wait, to weigh who goes first;
+  `compose` then uses those answers while no newer message came, asking nothing again. Never throws: a failure leaves
+  the model's own rating of their last turn.
 - **`composePost`**: a post for `channel` in the persona's voice, with the channel's `notes`, following `rules`, like
   `examples`, not repeating `recent`; every link removed when `policy.allowedLinks` is set; `null` when under 10
   characters. Uses `task: 'post'`.
@@ -528,8 +544,8 @@ function createReplyQueue(options: {
 }): ReplyQueue;
 ```
 
-Answers people at a human pace (see [concepts](./concepts.md#the-reply-queue-and-the-backlog)). `act` carries out a
-block, or one of the channel's `actions`, that the persona chose, routed by the person's identities.
+Answers people at a human pace, one person at a time (see [concepts](./concepts.md#the-reply-queue-and-the-backlog)).
+`act` carries out a block, or one of the channel's `actions`, that the persona chose, routed by the person's identities.
 
 ### `ReplyQueue`
 
@@ -545,14 +561,16 @@ interface ReplyQueue {
 
 - **`handle`**: acts on `brain.incoming`'s decision. `ignore` does nothing; `final` cancels anything pending for the
   person and sends the goodbye after 2 to 10 seconds, in or out of hours (the promise resolves once it is sent);
-  `reply` times their turn or puts it in the backlog, and keeps `conversation.invitation` for it. `text` is for the log.
+  `reply` times their turn or puts it in the backlog, and keeps `conversation.invitation` for it; while their turn is
+  being written, it makes the draft start over or gets a turn of its own once that one ends (`pacing.burst`). `text`
+  is for the log.
 - **`schedule`**: times a turn for the person directly: after `delay` ms when given (a retry), else as `handle` does.
   A person whose turn is already coming is not scheduled twice.
 - **`requeue`**: after a start, puts everyone who last wrote on `channel` and is still owed a turn since the persona
   was last online into the backlog, oldest first. `conversationOf` answers their conversation, or `null` when they
   can't be reached there any more.
 - **`start`**: once every channel is up: every 30 seconds, records when the persona was last online (not halted, not a
-  dry run) and moves the backlog on. Keeps the process alive until `stop`. A second call, or one after `stop`, does
+  dry run) and moves the backlog and the turns that came due on. Keeps the process alive until `stop`. A second call, or one after `stop`, does
   nothing.
 - **`stop`**: stops for good: timers cleared, the backlog and invitations dropped; a turn under way sends nothing more.
 
@@ -563,7 +581,7 @@ interface Conversation {
 	channel: Channel;
 	typing(on: boolean): Promise<void>;
 	typingRefreshMs?: number;      // how long one typing(true) shows on the platform: repeated at that rhythm
-	markRead?(): Promise<void>;    // a read receipt, once per reply, when the reading starts
+	markRead?(): Promise<void>;    // a read receipt, as it starts writing each draft of a reply
 	send(text: string): Promise<void>;
 	delivered?(text: string): void;
 	extraLines?(person: Person): readonly string[];
@@ -573,9 +591,10 @@ interface Conversation {
 
 Where a reply goes, implemented by a channel adapter: see [channels](./channels.md). Each stretch of typing is one
 `typing(true)` (repeated every `typingRefreshMs` ms when given, while the message is typed) and one `typing(false)`;
-a thinking pause (`pacing.thinkingPauses`) ends one stretch and starts the next. Before its first message every reply is read for as long as
-the unread messages take (`pacing.readingCharsPerSecond`), and `markRead()`, when given, is called as that starts; a
-rejection from it, as from `typing`, counts as a failed delivery. Without either, the calls are one `typing(true)`, the
+a thinking pause (`pacing.thinkingPauses`) ends one stretch and starts the next. While the model writes a reply, the
+unread messages are read for as long as they take (`pacing.readingCharsPerSecond`), and `markRead()`, when given, is
+called as that starts (again for a draft written again: a turn left on read shows them read too); a rejection from it,
+as from `typing`, counts as a failed delivery. Without either, the calls are one `typing(true)`, the
 typing time, `send`, one `typing(false)` per message. `delivered(text)`, when given, is called after each message of
 a reply went out (once `send` resolved), and in a dry run after each message logged in place of sending; never for
 one whose send failed. A dry run makes every other call as a live run does.
@@ -659,7 +678,10 @@ function createStore(db: Database, now?: () => number): Store;
 ```
 
 Creates the package's tables in `db` if missing, then answers the store. `now` (default `Date.now`) stamps what it
-records. Data the application kept in a layout of its own is its own to migrate before this (`inTransaction`).
+records. A database made by an earlier beta gets the columns added since (`familiarity`, `affinity`, `importance`,
+`importanceAt`), in one transaction; familiarity then starts from each person's conversations so far (1 - 0.9^n), so
+someone who was close stays close. Data the application kept in a layout of its own is its own to migrate before this
+(`inTransaction`).
 
 ### `inTransaction`
 
@@ -691,6 +713,12 @@ interface Store {
 	audit(persona: string, kind: string, detail?: Record<string, unknown>): void;
 	auditLog(persona?: string, limit?: number): { at: number; persona: string; kind: string; detail: Record<string, unknown> }[];
 	sweep(before: number): void;
+	block(personId: number): boolean;
+	unblock(personId: number): boolean;
+	undeny(channel: ChannelId, externalId: string): boolean;
+	clearMinorCaution(channel: ChannelId, externalId: string): boolean;
+	forgetPerson(personId: number, options?: { includeEnded?: boolean }): boolean;
+	resetPersona(persona: string, options?: { includeEnded?: boolean }): { people: number; messages: number };
 }
 ```
 
@@ -711,6 +739,23 @@ interface Store {
   `lastOnlineAt` per persona, and the persona `'*'` for token counts and minor flags.
 - **`audit`**, **`auditLog`**: the audit log (newest first, default 50, for one persona or all).
 - **`sweep`**: deletes messages and audit lines older than `before`. The application sweeps its own tables.
+- **`block`**, **`unblock`**: by hand, for an operator. `block` makes an active person `blocked`: the persona ignores
+  what they write and cuts a reply under way. `unblock` makes someone `stopped` (they asked to stop) or `blocked`
+  `active` again. Both are audited with `source: 'manual'`, answer whether anything changed, and only touch the store:
+  blocking on the platform itself is the application's (`act`), and unblocking someone who asked to stop is your call,
+  not the persona's.
+- **`undeny`**, **`clearMinorCaution`**: by hand, the other way for the safety lists: `undeny` takes an account off the
+  deny list and makes the people with it `active` again, unless another of their accounts is still listed;
+  `clearMinorCaution` takes the flag off an account. They answer whether the account was on the list, and `undeny` is
+  audited for each persona. These lists protect people: use them for a mistake you checked, not as routine.
+- **`forgetPerson`**: deletes one person (their messages, notes, familiarity and affinity, accounts and the audit lines
+  about them) in one transaction. The deny list and minor flags are kept, so a deny-listed account stays so. Someone
+  who asked to stop, was blocked or denied is kept too, since forgetting them would let the persona answer them
+  again; `{ includeEnded: true }` forgets them as well. Answers whether anyone was forgotten.
+- **`resetPersona`**: deletes everything one persona knows: its people and their messages (ended people kept, as
+  above), its kv (self notes, when it was last online) and its audit lines (kept for ended people kept). Other personas,
+  the deny list and the minor flags are untouched. Answers how many people and messages went. For a fresh start in
+  development, or a persona retired and brought back; nothing asks for confirmation, so guard it in your tooling.
 
 ### `Person`
 
@@ -727,8 +772,15 @@ interface Person {
 	lastInAt: number;      // when they last wrote, 0 never
 	handledAt: number;     // their messages up to this time had a turn
 	firstSeenAt: number;
+	familiarity: number;   // 0 to 1: how well the persona knows them (counted by the code, fading while apart)
+	affinity: number;      // -1 to 1: how it feels about them (a small step per kept turn, as the model answers)
+	importance: number;    // 0 to 3: how much their conversation mattered at their last turn
+	importanceAt: number;  // when that was rated, 0 never
 }
 ```
+
+`familiarity`, `affinity` and `importance` are what `settings.relationship` and `pacing.priority` read; an application
+may read them (to show how close someone is) or set them through `updatePerson` (to seed someone known elsewhere).
 
 ### `PersonState`
 

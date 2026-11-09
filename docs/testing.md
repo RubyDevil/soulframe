@@ -134,11 +134,16 @@ Return `null` from `ask` to test that a failure behaves as if the checks were of
 The reply queue uses real timers (`setTimeout`, `setInterval`) for its delays, typing and backlog. Two ways to keep
 tests fast:
 
-- **Zero the pacing** in the test persona: `settings: { pacing: { quickReplyChance: 1, slowReplyChance: 0,
-  quickReplyDelaySeconds: [0, 0], typingDurationSeconds: [0, 0], betweenReplyMessagesSeconds: [0, 0] } }` (and
-  `readingDurationSeconds: [0, 0]`), then wait
+- **Zero the pacing** in the test persona: `settings: { pacing: { glance: { delaySeconds: [0, 0] },
+  watching: { delaySeconds: [0, 0] }, interruptions: { meanMinutes: 0 }, typingDurationSeconds: [0, 0],
+  betweenReplyMessagesSeconds: [0, 0] } }` (and `readingDurationSeconds: [0, 0]`, `burst: { settleSeconds: [0, 0] }`),
+  then wait
   for the `reply_sent` event (wrap `runtime.log`) or poll the store. A code goodbye (`final`) still waits 2 to 10
   seconds.
+- **Interruptions** (`pacing.interruptions`) come from the persona's own seed, per day, as its agenda does, not from
+  the `rng` you pass: a test at a fixed time is inside one or not, the same on every run. Turn them off
+  (`interruptions: { meanMinutes: 0 }`) where they are not what the test is about; the config check
+  (`personaReport`) lists today's.
 - **Fake timers**: Vitest's `vi.useFakeTimers()` and `await vi.runAllTimersAsync()` (or `advanceTimersByTimeAsync`).
   Don't call `queue.start()` under `runAllTimersAsync`: its 30-second interval never ends.
 

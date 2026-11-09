@@ -122,23 +122,60 @@ channel), all sharing one brain, one reply queue and one memory.
 
 ## The reply queue and the backlog
 
+Every setting below is explained in plain terms in [attention, timing and relationships](./attention.md).
+
 `brain.incoming` decides at once what a message calls for; the **reply queue** (`createReplyQueue`) decides when and
 delivers:
 
+- **One person at a time.** While it writes or sends a reply to someone, it starts nobody else's: turns that came due
+  wait, and the first to come due starts the moment it is free, with no polling. What a turn learns about the persona
+  itself (its self notes, read when a turn starts and stored when it ends) is never overwritten by a turn that began
+  earlier. A turn under way for over 10 minutes stops holding the others back, so a send that never returns cannot
+  silence the persona.
+- **Who goes first.** When several turns are due while it is busy, the next is drawn at random by weight
+  (`pacing.priority`): how close it is to them (familiarity, affinity), how much their conversation matters now (its
+  importance, fading back to an ordinary chat's), up to three times as much while it still watches their chat, and
+  more the longer they waited, so nobody waits forever (`reply_picked`). With the typed checks on, how much their new
+  messages matter is asked as their turn comes due (`brain.assess`, `decisions.importance`), so a confession can go
+  ahead of a "hey, what's up" before the model has read either. `weighted: false` takes them in the order they came due.
 - **One turn per person at a time.** More messages from them while a turn waits are answered together
   (`reply_batched`).
-- **Inside an open span**, a turn is timed with a random delay from `settings.pacing`: usually quick, sometimes slow,
-  now and then a long "busy" gap. On a `break` only the quick delay is used. A turn is always due at least 90 seconds
-  before its span ends.
+- **Bursts.** A turn starts only once they stopped writing: `pacing.burst.settleSeconds` of quiet after their newest
+  message, each message starting the wait again, up to `maxSettleResets` times. A message that comes in while the reply
+  is being written, before its first message is sent, drops the draft (`reply_superseded`, then `reply_restarted`): it
+  is written again, with that message read, once they are quiet (`restartOnNewMessage`, at most `maxRestarts` times in
+  a row). Nothing of a dropped draft is sent or stored: a turn's notes, block or action are kept only with the turn
+  (`Turn.keep`). Too late for that (something was sent already, or the restarts are spent), the message gets a turn of
+  its own once this one ends (`reply_after_turn`).
+- **Inside an open span**, a turn is timed by what the persona is doing. While it writes a reply to anyone, and for a
+  while after, it is on its phone (`pacing.watching`: the chance starts at 1 and halves every 90 seconds by default),
+  and a new message from anyone is noticed after a short lag: a live conversation with one person doesn't leave
+  another waiting for its next glance (they still wait for the reply under way, one person at a time). Otherwise it
+  notices a message when it next looks at its messages, one look for everyone: whoever wrote before it is noticed
+  then, together, and picked among by weight; and once it picks up its phone for someone's turn it notices whatever
+  else was waiting (`pacing.glance`: skewed like
+  real answer times, around a median of 40 seconds by default, a few taking minutes). On a `break` it is on its phone: only the short lag. A turn is always due at least
+  90 seconds before its span ends.
+- **Interruptions.** Now and then while online, something takes it away from its messages for a few minutes
+  (`pacing.interruptions`, drawn per day from a seed, like the agenda; `personaReport` lists today's). No turn starts
+  until it is back, a reply it was typing is finished first, and it watches no chat when it comes back. One that comes
+  in the middle of a conversation that matters (its importance at `holdAtImportance` or more, an exchange within
+  `calmMinutes`, or a turn of theirs coming) is held off and taken once that conversation calms down
+  (`interruption_held`); the end of its online time is its agenda's and comes regardless. Being busy with others
+  needs no roll of its own: their turns, one at a time, are what keeps someone waiting.
 - **Otherwise it waits in the backlog.** When a span opens on its channel, the backlog is answered one person at a
   time, oldest first, with `backlogGapSeconds` before each (and `returnOnlineReplyDelayMinutes` more before the first
   one of a span).
 - **Delivery** types before each message for a time proportional to its length (`typingCharsPerSecond`, within
   `typingDurationSeconds`, each persona's own), pauses between the messages of one reply, and splits a long single
   reply in two now and then (`replySplitChance`). The model may also write up to three messages itself, one per line.
-  Before it types, it reads what they wrote, as long as that takes at its reading speed (`readingCharsPerSecond`, `readingDurationSeconds`). Three opt-in touches make it look closer to a person typing: the conversation's `typingRefreshMs` keeps the
+  Each of these values is drawn from its range with a shape that fits it: speeds on a bell curve around the middle,
+  waits and pauses skewed like the time people take (see [configuration](./configuration.md#settings)).
+  While the model writes the reply, it reads what they wrote, as long as that takes at its reading speed
+  (`readingCharsPerSecond`, `readingDurationSeconds`); typing starts once both are done. Three opt-in touches make it
+  look closer to a person typing: the conversation's `typingRefreshMs` keeps the
   indicator on while a long message is typed (platforms drop it after a few seconds), its `markRead()` shows their
-  messages read when the reply starts, and `thinkingPauses` lets typing
+  messages read as it starts writing the reply, and `thinkingPauses` lets typing
   stop a moment and start again in a long message. The halt switch, `stop()` and the person's state are checked after
   every wait, and typing never stays on after a reply is cut short or fails.
 - **Restarts.** While running (`queue.start()`), the queue records every 30 seconds when the persona was last online.
@@ -175,9 +212,15 @@ loads; `node --disable-warning=ExperimentalWarning` hides it.
 - **Notes.** The model rewrites, at most each turn, its notes on the person (`Person.summary`, up to
   `memory.personNotes` characters) and on itself (made-up details it must keep consistent, up to `memory.selfNotes`,
   shared by all its conversations).
-- **Relationship.** Counted by the code, never by the model: a message after `memory.conversationGapHours` of silence
-  starts a new conversation, and `memory.relationshipAfter` turns the count into `new`, `acquainted`, `regular` or
-  `close`, which the DM prompt mentions.
+- **Relationship.** Two numbers per person, in the store. **Familiarity** (0 to 1) is counted by the code, never set
+  by the model: each turn the reply queue keeps adds to it, more when the conversation mattered (the turn's
+  `importance`, 0 to 3, which the model rates), and it fades while they are apart. **Affinity** (-1 to 1) is moved one
+  small step per turn as the model answers (warmer, cooler, or no change), never set outright; it can be turned off.
+  The DM prompt describes both as levels, shipped as seven and five sentences in `prompts.ts` and replaceable,
+  thresholds and words, per persona (`settings.relationship`). The levels are set once per conversation (a message
+  after `memory.conversationGapHours` of silence starts one), go back down only past a margin, and come with the way
+  things went lately ("You've grown closer lately."), so the tone changes a step at a time, between conversations.
+  Both also weigh who it answers first (below).
 - **Deny list.** Shared by every persona and keyed by channel and account: someone deny-listed by one persona is never
   approached by another, and every person with that account is denied at once.
 - **Minor flags**, **kv** (small per-persona values, token counts) and the **audit** log (what was decided, with the

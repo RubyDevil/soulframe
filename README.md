@@ -35,12 +35,17 @@ safe for work (`sfw: true`).
   every problem is reported with its file and path, unknown keys come with a "did you mean".
 - **A day that looks real.** Online hours by weekday, short breaks, busy blocks with a reason ("at work", "at the gym"),
   skipped days, all drawn per day from a seed so a restart draws the same agenda, across daylight saving changes too.
-- **Human pacing.** Reply delays, typing time proportional to each message at each persona's own speed, long replies
-  split in two, a backlog answered one person at a time when the persona comes back online; opt-in read receipts,
-  typing kept alive on platforms that expire it, and thinking pauses in long messages.
+- **Human pacing.** One person at a time, the next picked by closeness, how much their conversation matters and how
+  long they waited; answers within seconds while it still has someone's chat open, and when it next glances at its
+  messages otherwise; short interruptions now and then; one reply to someone who writes in bursts (a draft written
+  again when they add to it mid-reply), messages read while the reply is written, typing time proportional to each
+  message at each persona's own speed, long replies split in two, a backlog answered one person at a time when the
+  persona comes back online; opt-in read receipts, typing kept alive on platforms that expire it, and thinking pauses
+  in long messages.
 - **Memory that stays small.** People, their accounts on each channel, the conversation history, the model's own notes
-  on each person and on itself, a relationship counted from conversations, a cross-persona deny list and an audit log,
-  all in one SQLite file (Node's built-in `node:sqlite`), its tables made on open.
+  on each person and on itself, how well it knows and likes each of them (familiarity grown by what their
+  conversations meant, affinity moved a step at a time, both described in levels you can rewrite), a cross-persona
+  deny list and an audit log, all in one SQLite file (Node's built-in `node:sqlite`), its tables made on open.
 - **Three capabilities.** Direct-message turns (reply, notes, block or an action the channel declares, accept a
   group-chat invitation), lines in a group chat (or staying quiet), and short posts for a channel's rules.
 - **Your words, your rules.** The persona's identity phrase and writing style are yours to give (`identity`, `style`),
@@ -140,11 +145,11 @@ const { personas, issues } = parsePersonas({
 			// Instant replies for the demo (the defaults wait seconds to minutes, as a person would)
 			settings: {
 				pacing: {
-					quickReplyChance: 1,
-					slowReplyChance: 0,
-					quickReplyDelaySeconds: [0, 0],
+					glance: { delaySeconds: [0, 0] },
+					interruptions: { meanMinutes: 0 },
 					readingDurationSeconds: [0, 0],
 					typingDurationSeconds: [0, 0],
+					burst: { settleSeconds: [0, 0] },
 				},
 			},
 		},
@@ -210,6 +215,8 @@ Read [concepts](./docs/concepts.md) for the whole picture.
 
 - [Concepts](./docs/concepts.md): persona, agenda, channels, the reply queue, memory, the brain, safeguards and policy, Decisions.
 - [Configuration](./docs/configuration.md): every key of `_shared.yaml` and `<id>.yaml`, with type, default and range.
+- [Attention, timing and relationships](./docs/attention.md): when it answers, who goes first, how it gets to know
+  people, every setting of it explained, and coming from `0.1.0-beta.0`.
 - [API reference](./docs/api.md): every export of `soulframe`.
 - [Writing a channel adapter](./docs/channels.md): `Conversation`, delivery errors, invitations, restarts, presence.
 - [Testing](./docs/testing.md): the canned model, in-memory stores, a fixed clock and randomness.
@@ -245,6 +252,25 @@ them (`apiKeyOf`).
   client needs to signal a spent budget or an outage.
 - Freeze the public API and the database layout; document the migration policy.
 - More channel adapter examples.
+
+### Planned: realism
+
+- **Interruptions with a reason, told to the model.** Each interruption gets a reason fitting how long it lasts
+  (reasons are configured with the lengths they suit, so a 3-minute absence is never "took a shower"), and the next
+  DM turn's time line says it: "You were away for 3 minutes (a phone call)", so the persona can say "sorry, got
+  pulled away" instead of carrying on as if nothing happened.
+- **Reactions instead of replies.** An optional `Conversation.react(emoji)`: where the platform has reactions, a DM
+  turn may answer "ok", "lol" or a photo with one, as it can leave a message on read now.
+- **Their typing indicator.** An optional `queue.typing(personId)` an adapter calls when the platform shows the person
+  typing: the wait for the end of their burst (`pacing.burst`) goes on while they type, so it never answers
+  mid-sentence.
+- **False starts.** Now and then typing shows, stops, and nothing is sent yet; now and then a message is read and only
+  answered a while later. Each rare, with its own setting.
+- **Typos and corrections, made by the code.** Opt-in: a sent message now and then carries a plausible typo (a
+  neighbouring key, a swapped or doubled letter), drawn by the code, never asked of the model. The queue keeps what
+  was meant: where the channel can edit a sent message (an optional `Conversation.edit`), the persona edits it back a
+  few seconds later; elsewhere it sends a short correction ("*tomorrow"), in a style the settings choose (the word
+  with an asterisk, or nothing at all).
 
 ## Contributing
 

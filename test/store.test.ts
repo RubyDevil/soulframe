@@ -149,3 +149,154 @@ describe('minor caution', () => {
 		expect(store.isMinorCautioned('chat', 'u-kid')).toBe(false);
 	});
 });
+
+describe('a database made by the first beta', () => {
+	it('gets the columns added since, familiarity starting from the conversations so far', () => {
+		const db = openDatabase(':memory:');
+		// The first beta's people table
+		db.exec(`CREATE TABLE people (id INTEGER PRIMARY KEY, persona TEXT NOT NULL, name TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'active', incoming INTEGER NOT NULL DEFAULT 0, summary TEXT NOT NULL DEFAULT '', conversations INTEGER NOT NULL DEFAULT 0, last_in_at INTEGER NOT NULL DEFAULT 0, handled_at INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`);
+		db.prepare('INSERT INTO people (persona, name, conversations, created_at, updated_at) VALUES (?, ?, ?, 0, 0)').run('robin', 'Sam', 5);
+		db.prepare('INSERT INTO people (persona, name, conversations, created_at, updated_at) VALUES (?, ?, ?, 0, 0)').run('robin', 'Kai', 0);
+		const store = createStore(db, () => 0);
+		// 5 conversations made Sam a regular, as the conversation counts did
+		expect(store.personById(1)).toMatchObject({ familiarity: 1 - 0.9 ** 5, affinity: 0, importance: 1, importanceAt: 0 });
+		expect(store.personById(2).familiarity).toBe(0);
+		// Opening it again changes nothing
+		store.updatePerson(1, { familiarity: 0.7 });
+		expect(createStore(db, () => 0).personById(1).familiarity).toBe(0.7);
+		db.close();
+	});
+});
+
+describe('forgetting and resetting', () => {
+	/** Two personas with people who talked, notes, kv and audit lines. */
+	const populated = () => {
+		const store = memoryStore(() => 1_000);
+		const ana = store.createPerson('robin', 'forum', 'ana', 'Ana');
+		const bo = store.createPerson('robin', 'forum', 'bo', 'Bo');
+		const cy = store.createPerson('sky', 'forum', 'cy', 'Cy');
+		for (const person of [ana, bo, cy]) {
+			store.addMessage(person.id, 'forum', 'in', 'hi');
+			store.addMessage(person.id, 'forum', 'out', 'hey');
+			store.audit(person.persona, 'sent', { personId: person.id });
+			store.set(person.persona, `relationship:${person.id}`, '{}');
+		}
+		store.updatePerson(ana.id, { summary: 'likes jazz', familiarity: 0.5 });
+		store.set('robin', 'selfNotes', 'has a cat');
+		store.set('sky', 'selfNotes', 'has a dog');
+		store.audit('robin', 'started');
+		return { store, ana, bo, cy };
+	};
+
+	it('forgets one person with their messages, accounts, levels and audit lines, and nobody else', () => {
+		const { store, ana, bo } = populated();
+		expect(store.forgetPerson(ana.id)).toBe(true);
+		expect(() => store.personById(ana.id)).toThrow();
+		expect(store.person('robin', 'forum', 'ana')).toBeUndefined();
+		expect(store.history(ana.id)).toEqual([]);
+		expect(store.get('robin', `relationship:${ana.id}`)).toBeNull();
+		expect(store.auditLog('robin').filter((row) => row.detail.personId === ana.id)).toEqual([]);
+		// The others, and the persona's own values
+		expect(store.history(bo.id)).toHaveLength(2);
+		expect(store.get('robin', `relationship:${bo.id}`)).toBe('{}');
+		expect(store.get('robin', 'selfNotes')).toBe('has a cat');
+		expect(store.forgetPerson(ana.id)).toBe(false);
+		// Someone new on that account starts from nothing
+		expect(store.createPerson('robin', 'forum', 'ana', 'Ana').familiarity).toBe(0);
+	});
+
+	it('keeps a person who asked to stop, was blocked or denied, unless includeEnded', () => {
+		const { store, ana } = populated();
+		store.updatePerson(ana.id, { state: 'stopped' });
+		expect(store.forgetPerson(ana.id)).toBe(false);
+		expect(store.personById(ana.id).state).toBe('stopped');
+		expect(store.forgetPerson(ana.id, { includeEnded: true })).toBe(true);
+	});
+
+	it('keeps the deny list and the minor flags of a forgotten account', () => {
+		const { store, ana } = populated();
+		store.deny('forum', 'ana', 'minor');
+		store.cautionMinor('forum', 'ana', 0.6);
+		expect(store.forgetPerson(ana.id, { includeEnded: true })).toBe(true);
+		expect(store.isDenied('forum', 'ana')).toBe(true);
+		expect(store.isMinorCautioned('forum', 'ana')).toBe(true);
+	});
+
+	it("resets one persona: its people, messages, kv and audit, and no other persona's, nor the deny list", () => {
+		const { store, ana, bo, cy } = populated();
+		store.deny('forum', 'dee', 'minor');
+		store.cautionMinor('forum', 'dee', 0.7);
+		expect(store.resetPersona('robin')).toEqual({ people: 2, messages: 4 });
+		expect([ana, bo].map((p) => store.person('robin', 'forum', p.ids.forum!))).toEqual([undefined, undefined]);
+		expect(store.get('robin', 'selfNotes')).toBeNull();
+		expect(store.auditLog('robin')).toEqual([]);
+		// The other persona, the deny list and the minor flags
+		expect(store.history(cy.id)).toHaveLength(2);
+		expect(store.get('sky', 'selfNotes')).toBe('has a dog');
+		expect(store.auditLog('sky')).toHaveLength(1);
+		expect(store.isDenied('forum', 'dee')).toBe(true);
+		expect(store.isMinorCautioned('forum', 'dee')).toBe(true);
+		// Nothing left to reset
+		expect(store.resetPersona('robin')).toEqual({ people: 0, messages: 0 });
+	});
+
+	it('keeps the ended people of a persona and their audit lines, unless includeEnded', () => {
+		const { store, ana, bo } = populated();
+		store.updatePerson(bo.id, { state: 'blocked' });
+		expect(store.resetPersona('robin')).toEqual({ people: 1, messages: 2 });
+		expect(store.personById(bo.id).state).toBe('blocked');
+		expect(store.history(bo.id)).toHaveLength(2);
+		expect(store.auditLog('robin').map((row) => row.detail.personId)).toEqual([bo.id]);
+		expect(() => store.personById(ana.id)).toThrow();
+		expect(store.resetPersona('robin', { includeEnded: true })).toEqual({ people: 1, messages: 2 });
+		expect(store.auditLog('robin')).toEqual([]);
+	});
+});
+
+describe('blocking and unblocking by hand', () => {
+	it('blocks an active person, audited, and unblocks them or someone who asked to stop; nothing else', () => {
+		const store = memoryStore(() => 5_000);
+		const ana = store.createPerson('robin', 'forum', 'ana', 'Ana');
+		expect(store.block(ana.id)).toBe(true);
+		expect(store.personById(ana.id).state).toBe('blocked');
+		expect(store.auditLog('robin')[0]).toMatchObject({ kind: 'blocked', detail: { personId: ana.id, source: 'manual' } });
+		// Already ended, or nobody
+		expect(store.block(ana.id)).toBe(false);
+		expect(store.block(99)).toBe(false);
+		expect(store.unblock(ana.id)).toBe(true);
+		expect(store.personById(ana.id).state).toBe('active');
+		expect(store.auditLog('robin')[0]).toMatchObject({ kind: 'unblocked', detail: { personId: ana.id, from: 'blocked', source: 'manual' } });
+		store.updatePerson(ana.id, { state: 'stopped' });
+		expect(store.unblock(ana.id)).toBe(true);
+		// Active already; denied is lifted by undeny
+		expect(store.unblock(ana.id)).toBe(false);
+		store.deny('forum', 'ana', 'minor');
+		expect(store.unblock(ana.id)).toBe(false);
+		expect(store.personById(ana.id).state).toBe('denied');
+	});
+
+	it('takes an account off the deny list and makes its people active, unless another account of theirs is still listed', () => {
+		const store = memoryStore(() => 5_000);
+		const ana = store.createPerson('robin', 'forum', 'ana', 'Ana');
+		store.link(ana.id, 'chat', 'ana-chat');
+		store.deny('forum', 'ana', 'minor');
+		store.deny('chat', 'ana-chat', 'minor');
+		expect(store.personById(ana.id).state).toBe('denied');
+		expect(store.undeny('forum', 'ana')).toBe(true);
+		expect(store.isDenied('forum', 'ana')).toBe(false);
+		// The other account is still listed
+		expect(store.personById(ana.id).state).toBe('denied');
+		expect(store.undeny('chat', 'ana-chat')).toBe(true);
+		expect(store.personById(ana.id).state).toBe('active');
+		expect(store.auditLog('robin')[0]).toMatchObject({ kind: 'undenied', detail: { personId: ana.id, platform: 'chat', source: 'manual' } });
+		expect(store.undeny('chat', 'ana-chat')).toBe(false);
+	});
+
+	it('clears a minor-caution flag once, and says if there was none', () => {
+		const store = memoryStore();
+		store.cautionMinor('forum', 'ana', 0.6);
+		expect(store.clearMinorCaution('forum', 'ana')).toBe(true);
+		expect(store.isMinorCautioned('forum', 'ana')).toBe(false);
+		expect(store.clearMinorCaution('forum', 'ana')).toBe(false);
+	});
+});

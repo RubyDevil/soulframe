@@ -42,7 +42,7 @@ export function createChatAdapter({ persona, brain, queue, runtime, client }: { 
 		},
 		// This platform shows typing for 5 seconds per signal: the queue signals again every 4 while it types
 		typingRefreshMs: 4_000,
-		// Their messages show as read when the reply starts; it reads them (pacing.readingCharsPerSecond) before it types
+		// Their messages show as read as it starts writing the reply; it reads them (pacing.readingCharsPerSecond) while the model writes
 		markRead: () => client.markRead(userId).catch(() => undefined),
 		async send(text) {
 			try {
@@ -166,10 +166,12 @@ described above: one `typing(true)` per message, the typing time, the send, one 
   default). Give how long one signal shows, or a little less, and the queue calls `typing(true)` again at that rhythm
   until the message is sent. It checks the halt switch, `queue.stop()` and the person's state at each one, so a reply
   cut short stops typing then, not at the end of the typing time.
-- **`markRead()`**: shows the person their messages were read (a read receipt). The queue calls it once per reply,
-  when the reading starts, then waits as long as reading what they wrote takes (15 to 25 characters a second by
-  default, 1 to 20 seconds) before typing starts. That wait happens without `markRead` too. A reply halted or cancelled before then types nothing. A rejection counts as a failed delivery, as
-  for `typing`: swallow it if a missing receipt doesn't matter. A turn the persona leaves on read sends no receipt.
+- **`markRead()`**: shows the person their messages were read (a read receipt). The queue calls it as it starts
+  writing a reply (again for a draft written again with a newer message), and reads what they wrote while the model
+  writes, as long as that takes (15 to 25 characters a second by default, 1 to 20 seconds): typing starts once both
+  are done. That reading happens without `markRead` too. A reply halted or cancelled before then types nothing. A
+  rejection counts as a failed delivery, as for `typing`: swallow it if a missing receipt doesn't matter. A turn the
+  persona leaves on read shows their messages read too, as a person who read them and chose not to answer.
 - **Thinking pauses** are the persona's setting, not the adapter's (`pacing.thinkingPauses`, off by default): a long
   message may stop typing a moment (`typing(false)`) and start again (`typing(true)`), as when someone stops to think.
   Your `typing` sees nothing new: stretches of typing, each ended by one `typing(false)`.
@@ -305,7 +307,10 @@ DMs.
 
 The reply queue and `watchSpans` report through `runtime.log(persona, event, detail)` (the brain logs nothing: what it
 decides goes to the store's audit log). Events include `dm_received`,
-`reply_scheduled`, `reply_batched`, `reply_waiting` (in the backlog, with the next opening), `reply_processing`,
+`reply_scheduled` (with `watching`: timed as it still had their chat open), `reply_batched`, `reply_waiting` (in the
+backlog, with the next opening), `away` (an interruption, from and until), `interruption_held` (one held off by a conversation that matters), `reply_processing`,
+`reply_superseded` (a message that makes the draft start over), `reply_restarted`, `reply_after_turn` (a message that
+gets a turn of its own once this one ends), `reply_picked` (who went first among several due, with their weight),
 `dm_sent`, `reply_sent`, `reply_skipped` (left on read), `reply_failed`, `reply_waiting_budget`,
 `reply_waiting_provider`, `reply_cancelled`, `reply_paused`, `unreachable`, `delivery_failed`, `invite_accepted`,
 `invite_not_joined`, `action_skipped` (an action not carried out while halted or stopped), `hours_open` and `hours_closed`, and in a dry run `dry_send`, `dry_block` and `dry_<action>` for a channel's own action. Your

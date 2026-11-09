@@ -1,11 +1,12 @@
-import { describe, expect, it } from 'vitest';
-import { createBrain, parseTurn, relationshipOf, type Policy } from '../src/brain.js';
+import { describe, expect, it, vi } from 'vitest';
+import { createBrain, levelIndex, parseTurn, type Policy } from '../src/brain.js';
 import type { Channel, ChannelId } from '../src/channel.js';
 import { createScriptedDecisions, type Decisions } from '../src/decisions.js';
 import { DEFAULT_SETTINGS, HOUR, MINUTE, SettingsSchema } from '../src/settings.js';
 import { ScheduleSchema } from '../src/config/hours.js';
 import type { Llm, LlmMessage } from '../src/llm.js';
 import { ADULTS_ONLY_RULE, AWARE_PROMPT, BREAK_INVITE_PROMPT, dateTimeText, directMessageTimePrompt, dmCheckInput, identityPrompt, MINOR_CAUTION_PROMPT, moodText, rulesPrompt, SFW_RULE } from '../src/prompts.js';
+import { seededRng } from '../src/rng.js';
 import { MINOR_EXIT, STOP_ACK } from '../src/safety.js';
 import { addDays, parseClock, zonedToUtc } from '../src/schedule.js';
 import type { Person, Store } from '../src/store.js';
@@ -176,13 +177,16 @@ describe('turns', () => {
 	});
 
 	it('may leave a message on read, sending nothing', async () => {
-		const { result, store, person } = await start(turn({}));
-		expect(result).toEqual({ messages: [], action: 'none' });
+		const { result } = await start(turn({}));
+		expect(result).toEqual({ messages: [], action: 'none', keep: expect.any(Function) });
 	});
 
 	it('keeps its notes small, cut after a whole word, and reads them back in the next turn', async () => {
 		const written = { notes: 'likes jazz and rain. '.repeat(50).trim(), self: `grew up by the sea, has a cat named Miso. ${'likes rain. '.repeat(100).trim()}` };
-		const { store, person, brain, seen } = await start(turn({ reply: 'ok', ...written }));
+		const { store, person, brain, seen, result } = await start(turn({ reply: 'ok', ...written }));
+		// Nothing is stored before the queue keeps the turn
+		expect([store.personById(person.id).summary, store.get(persona.id, 'selfNotes')]).toEqual(['', null]);
+		result.keep!();
 		const kept = { notes: store.personById(person.id).summary, self: store.get(persona.id, 'selfNotes')! };
 		for (const [key, max] of [['notes', DEFAULT_SETTINGS.memory.personNotes], ['self', DEFAULT_SETTINGS.memory.selfNotes]] as const) {
 			expect(kept[key].length).toBeLessThanOrEqual(max);
@@ -195,15 +199,21 @@ describe('turns', () => {
 		expect(seen[1]![0]!.content).toContain(`Your notes about Sam: ${kept.notes}`);
 	});
 
-	it('blocks: the person is ignored from then on', async () => {
-		const { result, brain } = await start(turn({ reply: 'bye', action: 'block' }));
+	it('blocks once the turn is kept: the person is ignored from then on', async () => {
+		const { result, brain, store, person } = await start(turn({ reply: 'bye', action: 'block' }));
 		expect(result.action).toBe('block');
+		expect(store.personById(person.id).state).toBe('active');
+		result.keep!();
+		// Once only
+		result.keep!();
+		expect(store.auditLog().filter((row) => row.kind === 'blocked')).toHaveLength(1);
 		expect(brain.incoming(DM.forum, 'p1', 'Sam', 'hello?')).toEqual({ kind: 'ignore', reason: 'blocked' });
 	});
 
 	it("takes a channel's own action only there, and audits it", async () => {
 		const forum = await start(turn({ reply: 'meh', action: SNOOZE.name }), 'forum');
 		expect(forum.result.action).toBe(SNOOZE.name);
+		forum.result.keep!();
 		expect(forum.store.auditLog('robin')[0]).toMatchObject({ kind: 'action', detail: { personId: forum.person.id, platform: 'forum', action: SNOOZE.name } });
 		expect(forum.brain.incoming(DM.forum, 'p1', 'Sam', 'hello?').kind).toBe('reply');
 		expect((await start(turn({ reply: 'meh', action: SNOOZE.name }), 'chat')).result.action).toBe('none');
@@ -299,6 +309,19 @@ describe('turns', () => {
 });
 
 describe('parseTurn', () => {
+	it('reads the importance (0 to 3, whole) and a change of feeling (one step at most), from numbers or numeric strings', () => {
+		const parsed = (fields: Record<string, unknown>) => parseTurn(JSON.stringify({ reply: 'ok', ...fields }));
+		expect(parsed({ importance: 2, affinity: -1 })).toMatchObject({ importance: 2, affinity: -1 });
+		expect(parsed({ importance: 7.6, affinity: 3 })).toMatchObject({ importance: 3, affinity: 1 });
+		expect(parsed({ importance: '1', affinity: '0' })).toMatchObject({ importance: 1, affinity: 0 });
+		expect(parsed({ importance: -2 })).toMatchObject({ importance: 0 });
+		const unrated = parsed({ importance: 'lots', affinity: null });
+		expect(unrated).not.toHaveProperty('importance');
+		expect(unrated).not.toHaveProperty('affinity');
+		// Fields that lost their JSON are never sent as the reply
+		expect(parseTurn('sure\nimportance: 2')).toBeNull();
+	});
+
 	it('reads the JSON, even wrapped in other text', () => {
 		expect(parseTurn('sure: {"reply": "hi", "notes": "likes jazz", "self": null, "action": "block"} done')).toEqual({ reply: 'hi', notes: 'likes jazz', action: 'block' });
 	});
@@ -365,6 +388,58 @@ describe('typed checks (settings.decisions)', () => {
 	};
 	const audits = (store: Store, kind: string) => store.auditLog().filter((row) => row.kind === kind);
 
+	it('asks how much their messages matter ahead of their turn, with the other checks, and compose uses those answers while nothing newer came', async () => {
+		const decisions = scripted({ writer_is_minor: 0, wants_no_contact: 0, conversation_importance: 3 });
+		const { brain, store } = setUp(turn('oh no, what happened?'), decisions);
+		const { person } = brain.incoming(DM.chat, 'd1', 'Sam', 'i need to tell you something') as { person: Person };
+		await brain.assess(person.id, DM.chat);
+		expect(store.personById(person.id)).toMatchObject({ importance: 3, importanceAt: NOW });
+		expect((await brain.compose(person.id, DM.chat)).messages).toEqual(['oh no, what happened?']);
+		expect(decisions.calls.map((call) => call.names)).toEqual([['writer_is_minor', 'wants_no_contact', 'conversation_importance']]);
+		// A newer message since: compose asks again
+		await brain.assess(person.id, DM.chat);
+		brain.incoming(DM.chat, 'd1', 'Sam', 'are you there?');
+		await brain.compose(person.id, DM.chat);
+		expect(decisions.calls).toHaveLength(3);
+	});
+
+	it('waits in compose for an assess still in flight, asking nothing twice', async () => {
+		let answer!: () => void;
+		const slow: Decisions = {
+			enabled: true,
+			ask: (_input, questions) =>
+				new Promise((resolve) => {
+					answer = () => resolve(new Map(questions.map((q) => [q.name, q.type === 'score' ? { type: 'score', name: q.name, score: 2, probabilities: {}, confidence: null } : { type: 'predicate', name: q.name, probability: 0 }])));
+				}),
+		};
+		const ask = vi.spyOn(slow, 'ask');
+		const { brain, store } = setUp(turn('hey you'), slow);
+		const { person } = brain.incoming(DM.chat, 'd1', 'Sam', 'hi there') as { person: Person };
+		const assessing = brain.assess(person.id, DM.chat);
+		const composing = brain.compose(person.id, DM.chat);
+		answer();
+		await assessing;
+		expect((await composing).messages).toEqual(['hey you']);
+		expect(ask).toHaveBeenCalledTimes(1);
+		expect(store.personById(person.id).importance).toBe(2);
+	});
+
+	it('asks it alone ahead of a turn when no other check is on, never alone in compose, and not at all when it is off', async () => {
+		const asked = async (decisionsSettings: Record<string, unknown>) => {
+			const own = personasOf({ robin: robin() }, { prompt: 'You are playful and warm.', shared: { settings: { decisions: decisionsSettings } } })[0]!;
+			const decisions = scripted({ conversation_importance: 2 });
+			const store = memoryStore(() => NOW);
+			const brain = createBrain({ persona: own, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => NOW }, llm: { complete: async () => turn('hey') }, decisions });
+			const { person } = brain.incoming(DM.chat, 'd1', 'Sam', 'hi') as { person: Person };
+			await brain.assess(person.id, DM.chat);
+			brain.incoming(DM.chat, 'd1', 'Sam', 'hello?');
+			await brain.compose(person.id, DM.chat);
+			return { names: decisions.calls.map((call) => call.names), importance: store.personById(person.id).importance };
+		};
+		expect(await asked({ minor: { enabled: false }, stop: { enabled: false } })).toEqual({ names: [['conversation_importance']], importance: 2 });
+		expect(await asked({ importance: { enabled: false } })).toEqual({ names: [['writer_is_minor', 'wants_no_contact']], importance: 1 });
+	});
+
 	it("leaves the code's own checks first: they act without asking", () => {
 		const decisions = scripted({});
 		const { brain, store } = setUp('never sent', decisions);
@@ -418,7 +493,7 @@ describe('typed checks (settings.decisions)', () => {
 		for (const script of [{ writer_is_minor: 0.3 }, down as () => never, {}] as Script[]) {
 			const run = await start(script);
 			expect(run.decisions!.calls.length).toBeGreaterThan(0);
-			expect(run.result).toEqual(plain.result);
+			expect({ ...run.result, keep: undefined }).toEqual({ ...plain.result, keep: undefined });
 			expect(run.seen).toEqual(plain.seen);
 		}
 	});
@@ -578,7 +653,8 @@ describe('persona settings, character and relationship', () => {
 		const dm = async (text: string, channel: Channel = DM.forum) => {
 			const decision = brain.incoming(channel, 'p1', 'Sam', text);
 			if (decision.kind !== 'reply') throw new Error('expected a reply');
-			const { messages } = await brain.compose(decision.person.id, channel);
+			const { messages, keep } = await brain.compose(decision.person.id, channel);
+			keep?.();
 			delivered(store, decision.person, channel.id, messages);
 			return { person: store.personById(decision.person.id), system: seen.at(-1)![0]!.content, messages };
 		};
@@ -669,8 +745,8 @@ describe('persona settings, character and relationship', () => {
 		clock.now += 7 * 3_600_000;
 		run = await dm('back!');
 		expect(run.person.conversations).toBe(2);
-		expect(run.system).toContain('You and Sam have talked a few times and are getting to know each other.');
-		expect(run.system).toContain('You first talked 8 hours ago; this is conversation 2 with them.');
+		// Two ordinary turns so far: familiarity 0.024, still the first level
+		expect(run.system).toContain("You're still getting to know Sam. You first talked 8 hours ago; this is conversation 2 with them.");
 	});
 
 	it("clips by the channel's limit, and splits by the persona's own pacing, not the global one", async () => {
@@ -689,19 +765,72 @@ describe('persona settings, character and relationship', () => {
 		expect((await withPersona({ settings: { pacing: { replySplitChance: 1 } } }, turn(long)).dm('hey')).messages).toHaveLength(2);
 	});
 
-	it("counts conversations with the persona's own gap and thresholds", async () => {
-		const { dm, clock } = withPersona({ settings: { memory: { conversationGapHours: 1, relationshipAfter: [2, 3, 4] } } });
-		expect((await dm('hey')).person.conversations).toBe(1);
-		const seen: string[] = [];
-		for (let i = 0; i < 3; i++) {
-			clock.now += 2 * 3_600_000;
-			seen.push((await dm('back')).system);
+	it("describes the relationship by the persona's own levels, set once per conversation", async () => {
+		const levels = [
+			{ from: 0, text: 'New to {name}.' },
+			{ from: 0.3, text: '{name} is a regular.' },
+			{ from: 0.5, text: '{name} is close.' },
+		];
+		// Each kept turn adds a fifth of what is left; a conversation starts after an hour of silence
+		const { dm, clock, store } = withPersona({ settings: { memory: { conversationGapHours: 1 }, relationship: { familiarity: { growth: 0.2, levels } } } });
+		await dm('hey');
+		const shown: string[] = [];
+		for (const gap of [2, 2, 0.1, 0.1, 2]) {
+			clock.now += gap * 3_600_000;
+			shown.push(/(New to|is a regular|is close)/.exec((await dm('back')).system)?.[1] ?? 'none');
 		}
-		expect(seen[0]).toContain('You and Sam have talked a few times and are getting to know each other.');
-		expect(seen[0]).toContain('this is conversation 2 with them.');
-		expect(seen[1]).toContain('Sam is one of your regulars');
-		expect(seen[2]).toContain('You and Sam are close');
-		expect(seen[2]).toContain('this is conversation 4 with them.');
+		// 0.2, then 0.36: a regular from the third conversation, which stays one though it passes 0.5 meanwhile; close from the fourth
+		expect(shown).toEqual(['New to', 'is a regular', 'is a regular', 'is a regular', 'is close']);
+		expect(store.personById(1).familiarity).toBeGreaterThan(0.6);
+	});
+
+	it('says they grew closer lately, or apart after a long while, and fades familiarity while they are apart', async () => {
+		const { dm, clock, store } = withPersona({ settings: { relationship: { familiarity: { growth: 0.2, fadeHalfLifeDays: 30 } } } });
+		await dm('hey');
+		clock.now += 8 * 3_600_000;
+		expect((await dm('back')).system).toContain("You've grown closer lately.");
+		const before = store.personById(1).familiarity;
+		// Two months apart: a quarter of it is left
+		clock.now += 60 * 86_400_000;
+		const { system, person } = await dm('long time no see');
+		expect(system).toContain("It's been a while, and things feel a little more distant than they were.");
+		// What was left, and one more turn
+		expect(person.familiarity).toBeCloseTo(before / 4 + (1 - before / 4) * 0.2, 6);
+	});
+
+	it('moves affinity one step a turn as the model answers, never past -1 or 1, and asks nothing of it when it is off', async () => {
+		const warmer = turn('aw', { affinity: 1 });
+		const { dm, store } = withPersona({ settings: { relationship: { affinity: { step: 0.4 } } } }, warmer);
+		for (let i = 0; i < 3; i++) await dm('you are lovely');
+		expect(store.personById(1).affinity).toBe(1);
+		const off = withPersona({ settings: { relationship: { affinity: { enabled: false } } } }, warmer);
+		const { system, person } = await off.dm('you are lovely');
+		expect(person.affinity).toBe(0);
+		expect(system).not.toContain('affinity');
+		expect(system).toContain('"importance": 1, "action": "none"');
+	});
+
+	it("grows familiarity by the importance the model gave the turn, and keeps that importance for the queue", async () => {
+		const grown = async (importance: number) => {
+			const { dm } = withPersona({}, turn('ok', { importance }));
+			return (await dm('so…')).person;
+		};
+		const [small, big] = [await grown(0), await grown(3)];
+		expect(small.familiarity).toBeCloseTo(0.012 * 0.25, 9);
+		expect(big.familiarity).toBeCloseTo(0.012 * 5, 9);
+		expect([small.importance, big.importance]).toEqual([0, 3]);
+		expect(big.importanceAt).toBe(NOW);
+	});
+
+	it('describes the affinity level after the familiarity one, and says nothing at neutral', async () => {
+		const { dm, clock, store } = withPersona({ settings: { memory: { conversationGapHours: 1 } } });
+		await dm('hey');
+		store.updatePerson(1, { affinity: 0.7 });
+		clock.now += 2 * 3_600_000;
+		expect((await dm('back')).system).toContain("You're still getting to know Sam. You're really fond of Sam. You first talked 2 hours ago");
+		store.updatePerson(1, { affinity: 0 });
+		clock.now += 2 * 3_600_000;
+		expect((await dm('back')).system).toContain("You're still getting to know Sam. You first talked 4 hours ago");
 	});
 
 	it('leaves out exactly the text settings.context turns off, in DMs and group chats', async () => {
@@ -714,7 +843,7 @@ describe('persona settings, character and relationship', () => {
 			await brain.composeGroupChatLine(groupChannel('Trip planning'), [{ name: 'Sam', text: 'hi Robin', mine: false, at: clock.now - 4 * 60_000 }], false, false);
 			return { dm: system, chat: seen.at(-1)![0]!.content };
 		};
-		const relationship = '\n\nYou and Sam have talked a few times and are getting to know each other. You first talked 7 hours ago; this is conversation 2 with them.';
+		const relationship = "\n\nYou're still getting to know Sam. You first talked 7 hours ago; this is conversation 2 with them.";
 		const gaps = ' Their last message was just now. You last wrote to them 7 hours ago.';
 		const silence = ' The last line in the chat was 4 minutes ago.';
 		const on = await prompts();
@@ -751,9 +880,39 @@ describe('persona settings, character and relationship', () => {
 		expect(await post('  ')).toBeNull();
 	});
 
-	it('reads the relationship from the counts', () => {
-		const after = [2, 5, 12] as const;
-		expect([0, 1, 2, 4, 5, 11, 12, 40].map((count) => relationshipOf(count, after))).toEqual(['new', 'new', 'acquainted', 'acquainted', 'regular', 'regular', 'close', 'close']);
+	it('obeys its rule for any run of values: up at once, down only past the margin, and always a level that exists', () => {
+		const levels = Array.from({ length: 7 }, (_, i) => ({ from: [0, 0.08, 0.18, 0.32, 0.48, 0.65, 0.82][i]!, text: `l${i}` }));
+		const margin = 0.05;
+		const luck = seededRng('levels');
+		for (let run = 0; run < 200; run++) {
+			let shown = -1;
+			let value = luck();
+			for (let step = 0; step < 40; step++) {
+				value = Math.min(1, Math.max(0, value + (luck() - 0.5) * 0.3));
+				const pure = levels.reduce((best, level, i) => (value >= level.from ? i : best), 0);
+				const next = levelIndex(levels, value, shown, margin);
+				expect(next).toBeGreaterThanOrEqual(pure);
+				expect(next).toBeLessThan(levels.length);
+				// Higher than the value deserves only by holding the level shown, which the value is within the margin of
+				if (next > pure) {
+					expect(next).toBe(shown);
+					expect(value).toBeGreaterThanOrEqual(levels[shown]!.from - margin);
+				}
+				// Never up by more than the value reaches
+				expect(next).toBeLessThanOrEqual(Math.max(pure, shown));
+				shown = next;
+			}
+		}
+	});
+
+	it('reads the level of a value, going down only past the margin', () => {
+		const levels = [{ from: 0, text: 'a' }, { from: 0.3, text: 'b' }, { from: 0.6, text: 'c' }];
+		expect([0, 0.29, 0.3, 0.59, 0.6, 1].map((value) => levelIndex(levels, value, -1, 0.05))).toEqual([0, 0, 1, 1, 2, 2]);
+		// Shown as b before: it stays b down to 0.25, then a; and goes up at once
+		expect([0.26, 0.25, 0.24].map((value) => levelIndex(levels, value, 1, 0.05))).toEqual([1, 1, 0]);
+		expect(levelIndex(levels, 0.6, 1, 0.05)).toBe(2);
+		// A level shown before that the levels no longer have
+		expect(levelIndex(levels, 0.1, 7, 0.05)).toBe(0);
 	});
 });
 
@@ -815,7 +974,7 @@ describe('the day, from its agenda', () => {
 	const AWAY = " These messages came in while you were at work (from 12:16 PM); you're only seeing them now.";
 	const NOW = " Right now you're at work, on a short break until about 12:55 PM, so you only have a few minutes.";
 	const UPCOMING = " After that you're back at work until about 5:30 PM. You'll be online again today around 8:00 PM.";
-	const RELATIONSHIP = '\n\nYou and Sam have talked a few times and are getting to know each other. You first talked 2 days ago; this is conversation 2 with them.';
+	const RELATIONSHIP = "\n\nYou're still getting to know Sam. You first talked 2 days ago; this is conversation 2 with them.";
 	/** How the wrap-up near the end of a break, or of an online span, starts. */
 	const [BREAK_ENDING, LOGGING_OFF] = ['Your break is nearly over', "You're logging off around"];
 
@@ -903,7 +1062,8 @@ describe('the 18+ safeguard (Channel.adult) and no policy', () => {
 		const decision = brain.incoming(OPEN_DM, 'd1', 'Sam', 'hi there');
 		if (decision.kind !== 'reply') throw new Error('expected a reply');
 		expect((await brain.compose(decision.person.id, OPEN_DM)).messages).toEqual(['hey you']);
-		expect(decisions.calls.map((call) => call.names)).toEqual([['wants_no_contact']]);
+		// Not about age; how much the messages matter rides along (settings.decisions.importance)
+		expect(decisions.calls.map((call) => call.names)).toEqual([['wants_no_contact', 'conversation_importance']]);
 		expect(store.isDenied('chat', 'd1')).toBe(false);
 		// Flagged by an 18+ conversation elsewhere: the caution still stays out of this one
 		store.cautionMinor('chat', 'd1', 0.6);

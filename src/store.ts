@@ -28,6 +28,13 @@ export interface Person {
 	handledAt: number;
 	/** When they were first seen (ms); never changed. */
 	firstSeenAt: number;
+	/** How well the persona knows them, 0 to 1: counted by the code from the turns it kept, fading while they are apart (settings.relationship). */
+	familiarity: number;
+	/** How the persona feels about them, -1 to 1 (0 neutral): a small step per turn, as the model answers (settings.relationship.affinity). */
+	affinity: number;
+	/** How much their conversation mattered at their last turn, 0 (small talk) to 3 (something big), and when it was rated (ms, 0 never). */
+	importance: number;
+	importanceAt: number;
 }
 
 export interface StoredMessage {
@@ -48,6 +55,10 @@ CREATE TABLE IF NOT EXISTS people (
 	conversations INTEGER NOT NULL DEFAULT 0,
 	last_in_at INTEGER NOT NULL DEFAULT 0,
 	handled_at INTEGER NOT NULL DEFAULT 0,
+	familiarity REAL NOT NULL DEFAULT 0,
+	affinity REAL NOT NULL DEFAULT 0,
+	importance REAL NOT NULL DEFAULT 1,
+	importance_at INTEGER NOT NULL DEFAULT 0,
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL
 );
@@ -108,6 +119,10 @@ interface PersonRow {
 	conversations: number;
 	last_in_at: number;
 	handled_at: number;
+	familiarity: number;
+	affinity: number;
+	importance: number;
+	importance_at: number;
 	created_at: number;
 }
 
@@ -123,6 +138,10 @@ const toPerson = (row: PersonRow): Person => ({
 	lastInAt: row.last_in_at,
 	handledAt: row.handled_at,
 	firstSeenAt: row.created_at,
+	familiarity: row.familiarity,
+	affinity: row.affinity,
+	importance: row.importance,
+	importanceAt: row.importance_at,
 });
 
 const COLUMNS: Record<keyof Omit<Person, 'id' | 'persona' | 'ids' | 'firstSeenAt'>, string> = {
@@ -133,7 +152,23 @@ const COLUMNS: Record<keyof Omit<Person, 'id' | 'persona' | 'ids' | 'firstSeenAt
 	conversations: 'conversations',
 	lastInAt: 'last_in_at',
 	handledAt: 'handled_at',
+	familiarity: 'familiarity',
+	affinity: 'affinity',
+	importance: 'importance',
+	importanceAt: 'importance_at',
 };
+
+/**
+ * Columns added to `people` since the first beta, each added on open to a database made before it. Familiarity starts
+ * from their conversations so far (1 - 0.9^n: 2 of them make them at ease, 5 a regular, 12 close, as the conversation
+ * counts did), so nobody who was close becomes a stranger.
+ */
+const ADDED_PEOPLE_COLUMNS: { name: string; definition: string; fill?: string }[] = [
+	{ name: 'familiarity', definition: 'REAL NOT NULL DEFAULT 0', fill: 'conversations' },
+	{ name: 'affinity', definition: 'REAL NOT NULL DEFAULT 0' },
+	{ name: 'importance', definition: 'REAL NOT NULL DEFAULT 1' },
+	{ name: 'importance_at', definition: 'INTEGER NOT NULL DEFAULT 0' },
+];
 
 /** The key of the flag on someone possibly under 18 (settings.decisions.minor.cautionAt), in the kv of every persona ('*'). */
 const minorCautionKey = (channel: ChannelId, externalId: string) => `minorCaution:${channel}:${externalId}`;
@@ -170,6 +205,19 @@ export type Store = ReturnType<typeof createStore>;
  */
 export function createStore(db: Database, now: () => number = Date.now) {
 	db.exec(SCHEMA);
+	const columns = new Set((db.prepare('PRAGMA table_info(people)').all() as unknown as { name: string }[]).map((column) => column.name));
+	const missing = ADDED_PEOPLE_COLUMNS.filter((column) => !columns.has(column.name));
+	if (missing.length) {
+		inTransaction(db, () => {
+			for (const { name, definition, fill } of missing) {
+				db.exec(`ALTER TABLE people ADD COLUMN ${name} ${definition}`);
+				if (fill !== 'conversations') continue;
+				const rows = db.prepare('SELECT id, conversations FROM people').all() as unknown as { id: number; conversations: number }[];
+				const update = db.prepare(`UPDATE people SET ${name} = ? WHERE id = ?`);
+				for (const row of rows) update.run(1 - 0.9 ** row.conversations, row.id);
+			}
+		});
+	}
 
 	const byId = (id: number) => {
 		const row = db.prepare(`${PERSON_SELECT} WHERE p.id = ?`).get(id) as unknown as PersonRow | undefined;
@@ -276,6 +324,100 @@ export function createStore(db: Database, now: () => number = Date.now) {
 		sweep(before: number) {
 			db.prepare('DELETE FROM messages WHERE at < ?').run(before);
 			db.prepare('DELETE FROM audit WHERE at < ?').run(before);
+		},
+		/**
+		 * By hand, an operator's: the persona stops answering this person and ignores what they write (`blocked`, audited
+		 * with `source: 'manual'`). Only the store: nothing is done on the platform (the app's `act` blocks there). A
+		 * reply under way to them is cut. Answers whether it changed anything (false: no such person, or already ended).
+		 */
+		block(personId: number): boolean {
+			const row = db.prepare('SELECT persona, state FROM people WHERE id = ?').get(personId) as unknown as { persona: string; state: PersonState } | undefined;
+			if (!row || row.state !== 'active') return false;
+			db.prepare("UPDATE people SET state = 'blocked', updated_at = ? WHERE id = ?").run(now(), personId);
+			db.prepare('INSERT INTO audit (at, persona, kind, detail) VALUES (?, ?, ?, ?)').run(now(), row.persona, 'blocked', JSON.stringify({ personId, source: 'manual' }));
+			return true;
+		},
+		/**
+		 * By hand: a person who asked to stop (`stopped`) or was blocked (`blocked`) is `active` again, audited with
+		 * `source: 'manual'`. Someone deny-listed is not: `undeny` lifts that. Answers whether it changed anything.
+		 */
+		unblock(personId: number): boolean {
+			const row = db.prepare('SELECT persona, state FROM people WHERE id = ?').get(personId) as unknown as { persona: string; state: PersonState } | undefined;
+			if (!row || (row.state !== 'stopped' && row.state !== 'blocked')) return false;
+			db.prepare("UPDATE people SET state = 'active', updated_at = ? WHERE id = ?").run(now(), personId);
+			db.prepare('INSERT INTO audit (at, persona, kind, detail) VALUES (?, ?, ?, ?)').run(now(), row.persona, 'unblocked', JSON.stringify({ personId, from: row.state, source: 'manual' }));
+			return true;
+		},
+		/**
+		 * By hand: takes an account off the deny list, shared by every persona. Each person with that account who was
+		 * `denied` is `active` again unless another of their accounts is still on the list. Audited for each persona with
+		 * `source: 'manual'`. Answers whether the account was on the list.
+		 */
+		undeny(channel: ChannelId, externalId: string): boolean {
+			return inTransaction(db, () => {
+				if (db.prepare('DELETE FROM deny WHERE channel = ? AND external_id = ?').run(channel, externalId).changes === 0) return false;
+				const people = db
+					.prepare(`SELECT p.id, p.persona FROM people p JOIN identities i ON i.person_id = p.id WHERE i.channel = ? AND i.external_id = ? AND p.state = 'denied'`)
+					.all(channel, externalId) as unknown as { id: number; persona: string }[];
+				for (const { id, persona } of people) {
+					const stillDenied = db
+						.prepare('SELECT 1 FROM identities i JOIN deny d ON d.channel = i.channel AND d.external_id = i.external_id WHERE i.person_id = ?')
+						.get(id);
+					if (stillDenied) continue;
+					db.prepare("UPDATE people SET state = 'active', updated_at = ? WHERE id = ?").run(now(), id);
+					db.prepare('INSERT INTO audit (at, persona, kind, detail) VALUES (?, ?, ?, ?)').run(now(), persona, 'undenied', JSON.stringify({ personId: id, platform: channel, source: 'manual' }));
+				}
+				return true;
+			});
+		},
+		/** By hand: takes the minor-caution flag off an account (the flag is otherwise never cleared by the code). Answers whether it was set. */
+		clearMinorCaution(channel: ChannelId, externalId: string): boolean {
+			return db.prepare("DELETE FROM kv WHERE persona = '*' AND key = ?").run(minorCautionKey(channel, externalId)).changes > 0;
+		},
+		/**
+		 * Forgets one person: their messages, notes, familiarity and affinity, accounts, the relationship levels shown to
+		 * them and the audit lines about them. The deny list and minor flags (keyed by account, shared by every persona) are
+		 * kept, so a forgotten account that was deny-listed stays so. Someone who asked to stop, was blocked or denied
+		 * (`state` not `active`) is kept too, since forgetting them would let the persona answer them again, unless
+		 * `includeEnded`. Answers whether anyone was forgotten (false: no such person, or they were kept).
+		 */
+		forgetPerson(personId: number, { includeEnded = false }: { includeEnded?: boolean } = {}): boolean {
+			const row = db.prepare('SELECT persona, state FROM people WHERE id = ?').get(personId) as unknown as { persona: string; state: PersonState } | undefined;
+			if (!row || (row.state !== 'active' && !includeEnded)) return false;
+			inTransaction(db, () => {
+				db.prepare('DELETE FROM messages WHERE person_id = ?').run(personId);
+				db.prepare('DELETE FROM identities WHERE person_id = ?').run(personId);
+				db.prepare('DELETE FROM kv WHERE persona = ? AND key = ?').run(row.persona, `relationship:${personId}`);
+				db.prepare("DELETE FROM audit WHERE persona = ? AND json_extract(detail, '$.personId') = ?").run(row.persona, personId);
+				db.prepare('DELETE FROM people WHERE id = ?').run(personId);
+			});
+			return true;
+		},
+		/**
+		 * Forgets everything one persona knows: all its people (as `forgetPerson`, so those who asked to stop, were blocked
+		 * or denied are kept unless `includeEnded`), with their messages, and its own kv (self notes, when it was last
+		 * online, the levels shown) and audit lines. Another persona's data, the deny list and the minor flags are untouched.
+		 * Answers how many people and messages were deleted. A persona with ended people kept keeps their audit lines too.
+		 */
+		resetPersona(persona: string, { includeEnded = false }: { includeEnded?: boolean } = {}): { people: number; messages: number } {
+			return inTransaction(db, () => {
+				const ids = (db.prepare(`SELECT id FROM people WHERE persona = ?${includeEnded ? '' : " AND state = 'active'"}`).all(persona) as unknown as { id: number }[]).map((p) => p.id);
+				const kept = (db.prepare("SELECT COUNT(*) AS n FROM people WHERE persona = ? AND state != 'active'").get(persona) as unknown as { n: number }).n;
+				let messages = 0;
+				for (const id of ids) {
+					messages += Number(db.prepare('DELETE FROM messages WHERE person_id = ?').run(id).changes);
+					db.prepare('DELETE FROM identities WHERE person_id = ?').run(id);
+					db.prepare('DELETE FROM people WHERE id = ?').run(id);
+				}
+				db.prepare('DELETE FROM kv WHERE persona = ?').run(persona);
+				if (includeEnded || kept === 0) db.prepare('DELETE FROM audit WHERE persona = ?').run(persona);
+				else {
+					// Those about people kept stay; so do none about anyone forgotten
+					const keep = (db.prepare("SELECT id FROM people WHERE persona = ? AND state != 'active'").all(persona) as unknown as { id: number }[]).map((p) => p.id);
+					db.prepare(`DELETE FROM audit WHERE persona = ? AND (json_extract(detail, '$.personId') IS NULL OR json_extract(detail, '$.personId') NOT IN (${keep.map(() => '?').join(', ')}))`).run(persona, ...keep);
+				}
+				return { people: ids.length, messages };
+			});
 		},
 	};
 }

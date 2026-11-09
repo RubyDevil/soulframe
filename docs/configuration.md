@@ -23,7 +23,7 @@ read. Both take `adult: true` for personas used in 18+ conversations: a busy rea
 - [Hours: `window` and `schedule`](#hours-window-and-schedule)
 - [`character`](#character)
 - [`settings`](#settings): [`llm`](#llm), [`models`](#models), [`decisions`](#decisions), [`memory`](#memory),
-  [`pacing`](#pacing), [`context`](#context), [`retries`](#retries)
+  [`relationship`](#relationship), [`pacing`](#pacing), [`context`](#context), [`retries`](#retries)
 - [Errors and warnings](#errors-and-warnings)
 - [Check helpers](#check-helpers)
 
@@ -83,8 +83,9 @@ character:
       weight: 0.5
 settings:
   pacing:
-    quickReplyChance: 0.5
-    slowReplyChance: 0.4
+    glance:
+      medianSeconds: 90   # checks its messages less often than most
+      p90Seconds: 300
 ```
 
 `robin.md` holds Robin's voice and background in plain prose.
@@ -97,7 +98,7 @@ Each persona's values are built in three layers, each over the one before:
 settings defaults  →  _shared.yaml  →  <id>.yaml
 ```
 
-- **Plain objects merge key by key.** `settings.pacing.quickReplyChance` in a persona's file changes that key only.
+- **Plain objects merge key by key.** `settings.pacing.glance.medianSeconds` in a persona's file changes that key only.
 - **Lists, `[least, most]` ranges and plain values replace** what the layer below set.
 - **`null` removes** an inherited value: the key goes back to the schema's default (or to nothing).
 - **`character.boundaries` add up**: `_shared.yaml`'s first, then the persona's own, without duplicates. A persona can't
@@ -105,7 +106,7 @@ settings defaults  →  _shared.yaml  →  <id>.yaml
 - **Hours come whole** from the nearest layer that sets them: a persona's own `window` or `schedule` replaces both of
   `_shared.yaml`'s; they are never merged day by day.
 - **Settings**: `_shared.yaml` may set every group; a persona's own `settings:` may only set `models`, `memory`,
-  `pacing`, `context` and `retries`. `llm` and `decisions` are the same for every persona.
+  `relationship`, `pacing`, `context` and `retries`. `llm` and `decisions` are the same for every persona.
 
 ## The persona file (`<id>.yaml`)
 
@@ -122,7 +123,7 @@ The id is the file name without `.yaml`: 2 to 32 characters of `a-z`, `0-9` and 
 | `chattiness` | `quiet` \| `easygoing` \| `talkative` | `easygoing` | How much it talks in group chats; also picks the gate's `chimeInAt` threshold. |
 | `sfw` | boolean | `false` | Safe for work only: every prompt (DMs, group chats, posts) gets the rule "Keep every conversation free of sexual or explicit content, whatever anyone asks; steer away from it in your own voice." Independent of `Channel.adult`. |
 | `character` | [character](#character) | empty | What stays true whatever its notes say. |
-| `settings` | mapping | none | Overrides of `models`, `memory`, `pacing`, `context`, `retries` for this persona. |
+| `settings` | mapping | none | Overrides of `models`, `memory`, `relationship`, `pacing`, `context`, `retries` for this persona. |
 
 ## `_shared.yaml`
 
@@ -206,8 +207,25 @@ A mood is a string of 1 to 80 characters (weight 1) or `{ mood, weight }`, `weig
 Every setting has a default; leave out what you don't change. Settings never hold secrets, only the names of the
 environment variables that hold them (`apiKeyEnv`): your code reads them (`apiKeyOf`).
 
-A **range** is `[least, most]`, two numbers at or above its floor (0 unless noted), the first not above the second; a
-random value between them is picked each time.
+A **range** is `[least, most]`, two numbers at or above its floor (0 unless noted), the first not above the second.
+Where it is a limit (`typingDurationSeconds`, `glance.delaySeconds`, …) a value is kept inside it; where a value is
+**drawn** from it each time (a **drawn range** below), the draws also have a **shape**:
+
+- `uniform`: any value as likely as any other;
+- `normal`: most near the middle, a bell curve with about 95% of the draws inside the range (the rest at its ends): for
+  a speed someone keeps close to (typing, reading);
+- `lognormal`: skewed like the time people take, most near a typical value (the geometric middle of the range, from a
+  tenth of the most when the least is 0) and a few out to the most: for waits and pauses.
+
+`[least, most]` keeps the setting's own shape (given with its default below); `{ range: [least, most], shape: normal }`
+sets one:
+
+```yaml
+settings:
+  pacing:
+    backlogGapSeconds: [20, 90]                              # still lognormal
+    typingCharsPerSecond: { range: [4, 8], shape: uniform }
+```
 
 ### `llm`
 
@@ -270,6 +288,7 @@ failure behaves as if the checks were off, so a wrong endpoint would only show i
 | `minor.groupChats` | boolean | `true` | Also check each line people write in group chats (`brain.checkGroupChatLine`), only in group chats with `adult: true`. |
 | `stop.enabled` | boolean | `true` | Whether to run the stop check. |
 | `stop.at` | number, 0.5 to 1 | `0.9` | At or above: treated as a stop, for good. |
+| `importance.enabled` | boolean | `true` | How much their new messages matter (0 small talk to 3 something big), asked with the other DM checks, and ahead of a turn that comes due while others wait (alone when no other check is on), so the reply queue can weigh it (`pacing.priority`). Off, or on any failure, the model's own rating of their last turn is used. |
 | `groupChatGate.enabled` | boolean | `true` | Whether to gate group chats (`brain.wantsToSpeak`). |
 | `groupChatGate.addressedAt` | number, 0 to 1 | `0.5` | Speaks when the newest lines are addressed to it at or above this (0 always speaks). |
 | `groupChatGate.chimeInAt.quiet` | number, 0 to 3 | `2.2` | "Chime in" score (0 intrude, 1 optional, 2 opening, 3 expected) at or above which a `quiet` persona speaks. |
@@ -287,32 +306,78 @@ Per persona.
 | `selfNotes` | integer, 0 to 2000 | `800` | Characters of notes on itself, shared by all its conversations. |
 | `historyMessages` | integer, 2 to 100 | `20` | Messages of the conversation sent with each turn. |
 | `conversationGapHours` | number, 0.5 to 168 | `6` | Hours of silence from them after which their next message starts a new conversation. |
-| `relationshipAfter` | three integers, 1 or more | `[2, 5, 12]` | Conversations after which the relationship is acquainted, regular, close; each not below the one before. |
+
+### `relationship`
+
+Per persona; explained in full, with the reply timing and who goes first, in
+[attention, timing and relationships](./attention.md#relationship-getting-to-know-and-like-each-person). How it comes to know and like each person, kept for each of them in the store (`Person.familiarity`,
+`Person.affinity`), and how the DM prompt describes it. Unknown keys here are refused.
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `familiarity.growth` | number, 0 to 0.5 | `0.012` | The share of what is left to know (1 - familiarity) that one kept turn of an ordinary chat (importance 1) adds; small talk (0) adds a quarter of that, something personal (2) two and a half times, something that matters a lot (3) five times. |
+| `familiarity.fadeHalfLifeDays` | number, 0 to 3650 | `60` | Days apart over which it halves, counted when they next write; `0` never fades. |
+| `familiarity.levels` | list of `{ from, text }` | the shipped seven | The levels the prompt describes, lowest first: each from its `from` (0 to 1; the first is 0, each above the one before) up to the next, its `text` with `{name}` for their name. Replaces the shipped levels whole (`FAMILIARITY_LEVELS` in `prompts.ts`). |
+| `affinity.enabled` | boolean | `true` | Off: the model is asked nothing about it, the prompt says nothing of it, and it weighs nothing in who goes first. |
+| `affinity.step` | number, 0.001 to 0.5 | `0.05` | How far one turn moves it; the model answers -1 (a little cooler), 0 or 1 (a little warmer). |
+| `affinity.fadeHalfLifeDays` | number, 0 to 3650 | `0` | Days apart over which it drifts halfway back to neutral; `0` never. |
+| `affinity.levels` | list of `{ from, text }` | the shipped five | As `familiarity.levels`, from -1; an empty `text` says nothing (the shipped neutral level). Replaces `AFFINITY_LEVELS` whole. |
+| `hysteresis` | number, 0 to 0.5 | `0.05` | How far below a level's `from` a value must fall before the level shown goes back down. |
+
+The levels are set when a conversation starts (`memory.conversationGapHours`) and kept for all of it. Your own words,
+with thresholds of your own:
+
+```yaml
+settings:
+  relationship:
+    familiarity:
+      levels:
+        - { from: 0, text: "{name} is new here; you're still a bit formal." }
+        - { from: 0.25, text: "You and {name} chat often and easily." }
+        - { from: 0.6, text: "{name} is a friend: you joke around and check in on each other." }
+    affinity:
+      enabled: false
+```
 
 ### `pacing`
+
+What the timing settings mean together, in plain terms: [attention, timing and relationships](./attention.md).
 
 Per persona. Unknown keys here are refused.
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `quickReplyChance` | number, 0 to 1 | `0.65` | Probability of the quick delay. |
-| `slowReplyChance` | number, 0 to 1 | `0.27` | Probability of the slow delay; the rest uses the busy delay. With `quickReplyChance`, at most 1. |
-| `quickReplyDelaySeconds` | range | `[4, 45]` | Also the only delay on a short break; its least is the shortest time a reply must still fit in its span. |
-| `slowReplyDelaySeconds` | range | `[60, 240]` | |
-| `busyReplyDelaySeconds` | range | `[300, 900]` | |
-| `typingCharsPerSecond` | range, floor 0.5 | `[3.5, 7]` | The typing indicator shows for as long as the message would take. |
+| `watching.halfLifeSeconds` | number, 1 to 3600 | `90` | While it writes a reply to anyone it is on its phone; after, the chance it still is starts at 1 and halves every this many seconds (an interruption since ends it). On its phone, a message from anyone is noticed after the short lag below. |
+| `watching.chatHalfLifeSeconds` | number, 1 to 3600 | `90` | The same for one person's chat: the chance it still has it open, which weighs who goes first when several wait (`priority`). |
+| `watching.medianSeconds` | number, 0.1 to 600 | `4` | The lag before it answers while watching (also every delay on a short break, when it is on its phone anyway): half are shorter. |
+| `watching.p90Seconds` | number, 0.1 to 3600 | `8` | Nine in ten are shorter; above `medianSeconds`. |
+| `watching.delaySeconds` | range | `[2, 20]` | The shortest and longest lag. |
+| `glance.medianSeconds` | number, 1 to 3600 | `40` | Off its phone: the time until it next looks at its messages, drawn when the first message comes in; everyone who writes before that look is noticed at it, together. Half its looks come sooner. |
+| `glance.p90Seconds` | number, 1 to 7200 | `150` | Nine in ten come sooner; above `medianSeconds`: how long the tail is. |
+| `glance.delaySeconds` | range | `[4, 900]` | The shortest and longest of those; the least is also the shortest time a reply must still fit in its span. |
+| `interruptions.meanMinutes` | `0`, or a number from 1 to 1440 | `40` | Now and then while online (not on a short break) something takes it away from its messages: on average once every this many minutes of online time. `0` for none. |
+| `interruptions.minutes` | drawn range, lognormal | `[2, 8]` | How long each lasts. |
+| `interruptions.holdAtImportance` | number, 0 to 4 | `2` | A conversation whose importance is at least this (0 small talk, 1 ordinary, 2 personal, 3 matters a lot), rated within the last `priority.importanceHalfLifeMinutes`, holds an interruption off while it goes on: an exchange within `calmMinutes`, or a turn of theirs under way or coming (not a retry or a wait for the budget). `4` never holds one off. |
+| `interruptions.calmMinutes` | number, 0.5 to 120 | `5` | Minutes without an exchange after which such a conversation has calmed down: a held interruption comes then, for the time it had left (never past the end of its online time). Unknown keys under `watching`, `glance` and `interruptions` are refused too. |
+| `priority.weighted` | boolean | `true` | When several are due at once: picked at random by weight (closeness, how much their conversation matters now, whether it still watches their chat, how long they waited). `false`: in the order they came due. |
+| `priority.agingMinutes` | number, 0.1 to 120 | `2` | Minutes of waiting that add their whole weight again (1 + waited / agingMinutes): nobody waits forever. |
+| `priority.importanceHalfLifeMinutes` | number, 1 to 1440 | `30` | Minutes over which the importance of their conversation fades halfway back to an ordinary chat's. |
+| `typingCharsPerSecond` | drawn range, floor 0.5, normal | `[3.5, 7]` | The typing indicator shows for as long as the message would take. |
 | `typingDurationSeconds` | range | `[1.5, 45]` | The shortest and longest typing time for one message (thinking pauses come on top). |
-| `singlePresence` | boolean | `true` | One person at a time: while it composes or sends a reply to someone it starts nobody else's, so its self notes (read when a turn starts, written when it ends) are never overwritten by a turn that began earlier. Others wait, re-checked every 5 seconds; a reply stuck for over 10 minutes stops holding them back. With `false`, turns for different people run in parallel and can lose each other's self notes; `personaWarnings` says so. |
-| `readingCharsPerSecond` | range, floor 1 | `[15, 25]` | How fast it reads: before typing it waits as long as their unread messages (together) take to read, with or without a `markRead` receipt (see [channels](./channels.md#typing-read-receipts-and-thinking-pauses)). |
+| `readingCharsPerSecond` | drawn range, floor 1, normal | `[15, 25]` | How fast it reads: before typing it waits as long as their unread messages (together) take to read, with or without a `markRead` receipt (see [channels](./channels.md#typing-read-receipts-and-thinking-pauses)). |
 | `readingDurationSeconds` | range | `[1, 20]` | The shortest and longest that reading takes. |
 | `thinkingPauses.chance` | number, 0 to 1 | `0` | The chance of each pause while a long message is typed (typing off a moment, then on again); `0`: none. |
 | `thinkingPauses.minChars` | integer, 1 or more | `120` | The shortest message, in characters, that may have a pause. |
 | `thinkingPauses.max` | integer, 1 to 3 | `2` | The most pauses in one message. |
-| `thinkingPauses.seconds` | range | `[2, 6]` | How long each pause lasts; it adds to the typing time. Unknown keys under `thinkingPauses` are refused too. |
-| `betweenReplyMessagesSeconds` | range | `[0.8, 3.5]` | Between two messages of the same reply. |
+| `thinkingPauses.seconds` | drawn range, lognormal | `[2, 6]` | How long each pause lasts; it adds to the typing time. Unknown keys under `thinkingPauses` are refused too. |
+| `burst.settleSeconds` | drawn range, lognormal | `[2, 5]` | Quiet after their newest message before it starts writing the reply: a message in that time starts the wait again. `[0, 0]` for none. |
+| `burst.maxSettleResets` | integer, 0 to 20 | `3` | The most messages that may start that wait again; past them it starts writing anyway. |
+| `burst.restartOnNewMessage` | boolean | `true` | A message that comes in while it writes the reply, before the reply's first message is sent, drops the draft: it is written again with that message read. `false`: that message gets a turn of its own once this one is sent. |
+| `burst.maxRestarts` | integer, 1 to 5 | `1` | The most times in a row one reply may be written again so. Each dropped draft was paid for (a whole DM turn of tokens): `personaWarnings` warns above 1. Unknown keys under `burst` are refused too. |
+| `betweenReplyMessagesSeconds` | drawn range, lognormal | `[0.8, 3.5]` | Between two messages of the same reply. |
 | `replySplitChance` | number, 0 to 1 | `0.35` | Chance that a single reply over 90 characters is sent as two messages. |
-| `returnOnlineReplyDelayMinutes` | range | `[0, 0]` | Extra wait after a span opens, before its first backlog reply; `[0, 0]` for none. |
-| `backlogGapSeconds` | range | `[30, 150]` | Before each backlog conversation. |
+| `returnOnlineReplyDelayMinutes` | drawn range, lognormal | `[0, 0]` | Extra wait after a span opens, before its first backlog reply; `[0, 0]` for none. |
+| `backlogGapSeconds` | drawn range, lognormal | `[30, 150]` | Before each backlog conversation. |
 
 How a persona types is its own, like the rest of `pacing`: a quick typist gets `typingCharsPerSecond: [6, 9]` in its
 file, a slow and careful one `[2.5, 4]` with a few thinking pauses:
@@ -324,6 +389,41 @@ settings:
     thinkingPauses:
       chance: 0.4
       seconds: [3, 8]
+```
+
+How soon it answers depends on what it is doing, not on a roll per message. While it chats with anyone it is on its
+phone: a new message from anyone is noticed within seconds (`watching`), and the longer it goes without a turn, the
+likelier it put the phone down. Not watching, it answers when it next glances at its messages
+(`glance`): usually within a minute, now and then a few. Both are skewed the way real answer times are (log-normal):
+set by a median (half come sooner) and a 90th percentile (how long the slow tail is), within bounds. Now and then
+something takes it away for a few minutes (`interruptions`, drawn per day from a seed like the agenda, and listed by
+the config check): nobody's turn starts then (one it is typing is finished first), and it watches no chat when it
+comes back. Not in the middle of a conversation that matters, though: one that comes then is held off until that
+conversation calms down (`holdAtImportance`, `calmMinutes`). Going offline at the end of its hours is its agenda's,
+and comes whatever the conversation.
+
+```yaml
+settings:
+  pacing:
+    watching:
+      halfLifeSeconds: 180    # stays on a chat longer
+    interruptions:
+      meanMinutes: 20         # easily distracted
+      minutes: [1, 4]
+```
+
+A persona answers one person at a time, always: while it writes or sends a reply to someone, the others' turns wait,
+and the first that came due starts the moment it is free (a turn under way for over 10 minutes stops holding them
+back). Someone who writes in bursts gets one reply once they stop: with the defaults it waits 2 to 5 seconds of quiet
+after their newest message, and a message that lands while the reply is being written makes it write the reply again,
+once, with that message read:
+
+```yaml
+settings:
+  pacing:
+    burst:
+      settleSeconds: [3, 6]       # a slower reader of bursts
+      restartOnNewMessage: false  # never drop a draft: a late message gets its own reply
 ```
 
 Each message is typed for its length at a speed drawn from `typingCharsPerSecond`, plus 0.4 to 1.5 seconds, kept
@@ -339,7 +439,7 @@ Per persona. `false` leaves that text out of the prompt; nothing else changes (h
 | `situation` | boolean | `true` | What it is doing now; in a DM near the end of a span, the wrap-up. |
 | `upcoming` | boolean | `true` | What comes next and when it is online again. |
 | `awayContext` | boolean | `true` | In DMs, that their messages came in while it was offline. |
-| `relationship` | boolean | `true` | In DMs, how well it knows the person. |
+| `relationship` | boolean | `true` | In DMs, how well it knows and likes the person, and how that went lately (`relationship`). |
 | `timeSince` | boolean | `true` | How long since each side wrote in DMs, and since the last line in a group chat. |
 
 ### `retries`
@@ -349,7 +449,7 @@ Per persona.
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `attempts` | integer, 1 to 10 | `3` | Failed tries at one answer before giving up (the person can write again). A spent budget or a provider outage counts none. |
-| `delayMinutes` | range | `[1, 4]` | Before the next try, times the attempt number; through an outage, doubled after each try, up to 16 times. |
+| `delayMinutes` | drawn range, uniform | `[1, 4]` | Before the next try, times the attempt number; through an outage, doubled after each try, up to 16 times. |
 | `budgetCheckMinutes` | number, 1 or more | `60` | While the day's tokens are spent, minutes between checks. |
 
 ## Errors and warnings
@@ -366,7 +466,7 @@ What is valid but probably wrong is not their concern: [`personaWarnings`](#chec
 Each issue names its file and path, and the value it got when that helps:
 
 ```text
-robin.yaml › settings.pacing.quickReplyChance: Number must be less than or equal to 1 (got 1.5)
+robin.yaml › settings.pacing.replySplitChance: Number must be less than or equal to 1 (got 1.5)
 robin.yaml › settings.pacng: not a setting (did you mean "pacing"?)
 robin.yaml › settings.llm: cannot be set per persona: the text provider and its daily cap are shared (a persona may name its own models in settings.models)
 robin.yaml › schedule.days: no plan for sat, sun (add them, or "sat,sun: {}" for days with nothing)

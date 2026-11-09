@@ -16,7 +16,7 @@ export function deepMerge(base: unknown, over: unknown): unknown {
 	return out;
 }
 
-/** Dotted paths where `b` differs from `a` (leaves and arrays compared whole), e.g. 'pacing.quickReplyChance'. */
+/** Dotted paths where `b` differs from `a` (leaves and arrays compared whole), e.g. 'pacing.watching.halfLifeSeconds'. */
 export function diffPaths(a: unknown, b: unknown, prefix = ''): string[] {
 	if (isPlainObject(a) && isPlainObject(b)) {
 		const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])];
