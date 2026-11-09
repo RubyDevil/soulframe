@@ -172,6 +172,31 @@ or affinity are thrown away with it.
 
 It is set once for every persona, with the rest of `decisions`, in `_shared.yaml`.
 
+## `perception`: photos and links
+
+The persona knows what someone sees on their phone without tapping: a photo, and a link's preview card, never the page
+behind it. So it can't discuss an article two seconds after it was sent.
+
+**A photo** is described once, by `models.vision`, when its turn comes, and the description is stored with the message
+in place of the URL. The chat model only ever reads that description, so it needs no vision of its own, and the photo
+costs once, however long it stays in the history. Looking takes `pacing.looking` per photo on top of the reading; it
+overlaps the model's call, as reading does, so the visible wait is the longer of the two. A description that fails, is
+refused or takes over `perception.timeoutSeconds` doesn't stop the reply: the persona goes by the photo's `alt` if the app gave one, else
+the photo "wouldn't load" and it says so in its own way. It stays that way: there is no second try. Each failed call is audited (`image_unseen`).
+
+**A link** shows as its card if the app has one (`IncomingMessage.links`, or `createBrain`'s `previewLink`), else as
+its site's name. The URL takes no reading time; the words on a card the app passed in do (a `previewLink` card comes too late for that read). The prompt says it has not opened the link
+and won't in this chat: it can react to the headline, ask what's in it, or say it can't look right now, in its own
+words and fitting what it is doing. If they ask later, it still hasn't got round to it, so nothing it promised goes
+unkept.
+
+The code's stop and age checks read only the person's own words: a headline or a sign in a photo is not them saying
+it. The typed checks (`decisions`) also read what a photo shows, never a card, which is someone else's words. With
+`decisions` off, a photo gets no age or stop check, the same limit as an unusual way of putting something. No image
+moderation is built in: what a vision model accepts is its provider's to decide.
+
+Group chats and posts are out of scope: `GroupChatLine.text` is yours to write.
+
 ## Drawn ranges and their shapes
 
 Some settings are a range a value is drawn from each time. Each has a shape, the way its values spread between the
@@ -187,6 +212,7 @@ least and the most:
 | --- | --- | --- |
 | `pacing.typingCharsPerSecond` | typing speed | `[3.5, 7]`, normal |
 | `pacing.readingCharsPerSecond` | reading speed | `[15, 25]`, normal |
+| `pacing.looking` | the time spent on each photo | `[1.5, 5]`, lognormal |
 | `pacing.thinkingPauses.seconds` | a pause while typing a long message | `[2, 6]`, lognormal |
 | `pacing.burst.settleSeconds` | the quiet waited for after their newest message | `[2, 5]`, lognormal |
 | `pacing.betweenReplyMessagesSeconds` | the pause between two messages of one reply | `[0.8, 3.5]`, lognormal |

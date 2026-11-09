@@ -71,8 +71,8 @@ without `adult` runs no age check, and a brain without a `policy` adds no rules 
 
 ### The canned model
 
-`createCannedLlm(rng)` answers one of a few fixed lines for DMs and group chats (as the JSON the brain expects) and a
-fixed post. It never touches the network: good for flows where the text doesn't matter.
+`createCannedLlm(rng)` answers one of a few fixed lines for DMs and group chats (as the JSON the brain expects), a
+fixed post and, once `models.vision.model` is set, a fixed photo description. It never touches the network: good for flows where the text doesn't matter.
 
 ### A scripted or recording model
 
@@ -87,6 +87,7 @@ const llm: Llm = {
 		sent.push(messages);
 		if (task === 'directMessage') return JSON.stringify({ reply: 'hey you!', notes: 'likes hiking', self: null, action: 'none' });
 		if (task === 'groupChat') return '{"reply": null}';
+		if (task === 'vision') return '{"seen": "a grey cat asleep on a laptop"}';
 		return 'evenings are for slow chats, say hi';
 	},
 };
@@ -136,7 +137,7 @@ tests fast:
 
 - **Zero the pacing** in the test persona: `settings: { pacing: { glance: { delaySeconds: [0, 0] },
   watching: { delaySeconds: [0, 0] }, interruptions: { meanMinutes: 0 }, typingDurationSeconds: [0, 0],
-  betweenReplyMessagesSeconds: [0, 0] } }` (and `readingDurationSeconds: [0, 0]`, `burst: { settleSeconds: [0, 0] }`),
+  betweenReplyMessagesSeconds: [0, 0] } }` (and `readingDurationSeconds: [0, 0]`, `looking: [0, 0]`, `burst: { settleSeconds: [0, 0] }`),
   then wait
   for the `reply_sent` event (wrap `runtime.log`) or poll the store. A code goodbye (`final`) still waits 2 to 10
   seconds.

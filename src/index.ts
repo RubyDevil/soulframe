@@ -14,6 +14,7 @@ export type { Channel, ChannelAction, ChannelId } from './channel.js';
 export { createBrain, type Brain, type Decision, type GroupChatLine, type PersonAction, type Policy } from './brain.js';
 export { createReplyQueue, createRuntime, watchSpans, UnreachableError, type Conversation, type ReplyQueue, type Runtime } from './runtime.js';
 export { spanAt, fullyOnline, type Span } from './schedule.js';
+export type { IncomingImage, IncomingMessage, LinkPreview, PreviewLink } from './perception.js';
 
 // Memory: one SQLite file; the app opens it, and its own tables (and their migrations) live beside the package's
 export { openDatabase, createStore, inTransaction, type Database, type Store, type Person, type PersonState } from './store.js';

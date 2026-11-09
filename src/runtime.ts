@@ -4,7 +4,8 @@ import { unhandled, type Brain, type Decision, type PersonAction, type Turn } fr
 import type { Channel, ChannelId } from './channel.js';
 import { LlmBudgetError, ModelNotConfiguredError, ProviderUnavailableError } from './llm.js';
 import type { PersonaConfig } from './config/personas.js';
-import { betweenMessagesMs, drawIn, fitDelay, glanceMs, interruptionAt, quietMs, readingMs, typingPlan, watchingChance, watchingMs, type Interruption } from './pacing.js';
+import { betweenMessagesMs, drawIn, fitDelay, glanceMs, interruptionAt, lookingMs, quietMs, readingMs, typingPlan, watchingChance, watchingMs, type Interruption } from './pacing.js';
+import { readableChars } from './perception.js';
 import { between, sleep, weightedPick, type Rng } from './rng.js';
 import { nextSpan, spanAt, type Hours, type Span } from './schedule.js';
 import { MINUTE, SECOND } from './settings.js';
@@ -387,16 +388,17 @@ export function createReplyQueue({
 	};
 
 	/**
-	 * What a turn does while the model writes: shows their messages read (`markRead`), then reads `chars` characters for
-	 * as long as that takes. Answers as `deliver`'s waits, or 'failed' / 'unreachable' when the read receipt was refused.
+	 * What a turn does while the model writes: shows their messages read (`markRead`), then reads `chars` characters and
+	 * looks at `images` photos for as long as that takes. Answers as `deliver`'s waits, or 'failed' / 'unreachable' when
+	 * the read receipt was refused.
 	 */
-	const read = async (conversation: Conversation, personId: number, chars: number, cut: () => Stop): Promise<Stop> => {
+	const read = async (conversation: Conversation, personId: number, chars: number, images: number, cut: () => Stop): Promise<Stop> => {
 		try {
 			await conversation.markRead?.();
 		} catch (error) {
 			return failedDelivery(error, personId, conversation.channel.id, 0);
 		}
-		await sleep(readingMs(chars, runtime.rng, pacing));
+		await sleep(readingMs(chars, runtime.rng, pacing) + lookingMs(images, runtime.rng, pacing));
 		return cut();
 	};
 
@@ -624,11 +626,13 @@ export function createReplyQueue({
 			state.through = through;
 			state.writing = true;
 			/** What there is to read: their messages this turn answers, together, but for those an earlier draft read. */
-			const readChars = unhandled(runtime.store.history(personId, persona.settings.memory.historyMessages), Math.max(handledAt, readUpTo)).reduce((sum, m) => sum + m.text.length, 0);
+			const toRead = unhandled(runtime.store.history(personId, persona.settings.memory.historyMessages), Math.max(handledAt, readUpTo));
+			const readChars = toRead.reduce((sum, m) => sum + readableChars(m), 0);
+			const photos = toRead.reduce((sum, m) => sum + (m.media?.images.length ?? 0), 0);
 			readUpTo = through;
 			runtime.log(persona.id, 'reply_processing', { personId, platform: channel });
 			// It reads them while the model writes
-			const reading = read(conversation, personId, readChars, cut);
+			const reading = read(conversation, personId, readChars, photos, cut);
 			let composed: Turn;
 			try {
 				composed = await brain.compose(personId, conversation.channel, { invitation: invitation?.name, extraLines: conversation.extraLines });

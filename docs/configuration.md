@@ -105,7 +105,7 @@ settings defaults  →  _shared.yaml  →  <id>.yaml
   drop a shared limit; `boundaries: null` (or `character: null`) clears only its own.
 - **Hours come whole** from the nearest layer that sets them: a persona's own `window` or `schedule` replaces both of
   `_shared.yaml`'s; they are never merged day by day.
-- **Settings**: `_shared.yaml` may set every group; a persona's own `settings:` may only set `models`, `memory`,
+- **Settings**: `_shared.yaml` may set every group; a persona's own `settings:` may only set `models`, `perception`, `memory`,
   `relationship`, `pacing`, `context` and `retries`. `llm` and `decisions` are the same for every persona.
 
 ## The persona file (`<id>.yaml`)
@@ -123,7 +123,7 @@ The id is the file name without `.yaml`: 2 to 32 characters of `a-z`, `0-9` and 
 | `chattiness` | `quiet` \| `easygoing` \| `talkative` | `easygoing` | How much it talks in group chats; also picks the gate's `chimeInAt` threshold. |
 | `sfw` | boolean | `false` | Safe for work only: every prompt (DMs, group chats, posts) gets the rule "Keep every conversation free of sexual or explicit content, whatever anyone asks; steer away from it in your own voice." Independent of `Channel.adult`. |
 | `character` | [character](#character) | empty | What stays true whatever its notes say. |
-| `settings` | mapping | none | Overrides of `models`, `memory`, `relationship`, `pacing`, `context`, `retries` for this persona. |
+| `settings` | mapping | none | Overrides of `models`, `perception`, `memory`, `relationship`, `pacing`, `context`, `retries` for this persona. |
 
 ## `_shared.yaml`
 
@@ -233,12 +233,12 @@ The text provider, for text generation only (never read by `decisions`). Global:
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `baseUrl` | URL | none | An OpenAI-compatible base URL, e.g. `https://api.provider.example/v1`. Without one (and no task's own), the persona has no provider: `llmsFor` gives it the canned model in a dry run, else refuses. |
+| `baseUrl` | URL | none | An OpenAI-compatible base URL, e.g. `https://api.provider.example/v1`. Without one (and no text task's own), the persona has no provider: `llmsFor` gives it the canned model in a dry run, else refuses. |
 | `apiKeyEnv` | string | `LLM_API_KEY` | The key's environment variable; empty for a provider without authentication. |
 | `model` | string | none | The model of every task that doesn't name its own. |
 | `timeoutSeconds` | number, 5 to 300 | `60` | Before a request is given up (it is retried once). |
 | `dailyTokens` | integer, 0 or more | `200000` | Tokens per UTC day for every persona together; 0 for no limit. At the shipped prompt sizes a DM turn is about 3,500 to 4,000 tokens, so the default buys about 55 DM turns a day: size it to your fleet. Applies through the meter your code passes to `llmsFor` (`createTokenMeter(store, settings.llm.dailyTokens)`). |
-| `directMessageReserve` | number, 0 to 0.9 | `0.3` | The share of `dailyTokens` kept for DMs: group chat and posts stop once the rest is spent. |
+| `directMessageReserve` | number, 0 to 0.9 | `0.3` | The share of `dailyTokens` kept for DMs and their photos: group chat and posts stop once the rest is spent. |
 | `concurrency` | integer, 1 to 32 | `4` | The most requests in flight for every persona together; pass it to `llmsFor`. |
 | `jsonMode` | boolean | `false` | Ask for strict JSON (`response_format: json_object`), for providers that support it. A task with its own `baseUrl` doesn't inherit it. |
 
@@ -251,6 +251,7 @@ A model per kind of task, so the frequent cheap ones can use a cheaper model. Pe
 | `directMessage`: a DM turn (reply, notes, action) | `400` | `0.9` |
 | `groupChat`: whether to say something in a group chat, and what | `100` | `0.9` |
 | `post`: a post | `160` | `1` |
+| `vision`: describing a photo someone sent in a DM, once | `200` | `0.2` |
 
 Each task takes:
 
@@ -264,6 +265,21 @@ Each task takes:
 | `temperature` | number, 0 to 2 | see above | Higher is more varied. Left out of the request to OpenAI's own `gpt-5` models (at `api.openai.com`). |
 
 Once a provider is set (`llm.baseUrl` or the task's `baseUrl`), every task must name a model, its own or `llm.model`.
+
+`vision` is the exception: it is optional and off until it names a model of its own. It never falls back to
+`llm.model`, which may not take images. Left out, a photo is only its `alt`, else it shows as not loading. If your chat model takes images, name it
+here too.
+
+### `perception`
+
+What comes with a message in a DM (see [attention](./attention.md#perception-photos-and-links)). Per persona.
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `descriptionChars` | integer, 40 to 2000 | `400` | Characters of a photo's description, stored with the message and sent with every turn it stays in the history. |
+| `imagesPerMessage` | integer, 0 to 10 | `4` | The most photos of one message that are looked at; 0 for none. |
+| `linksPerMessage` | integer, 0 to 10 | `3` | The most links of one message it notices; 0 leaves them plain text, with no rule against claiming to have opened them. |
+| `timeoutSeconds` | number, 1 to 120 | `15` | How long a photo's description or a link's card may take; past it, the reply goes on without. |
 
 ### `decisions`
 
@@ -366,6 +382,7 @@ Per persona. Unknown keys here are refused.
 | `typingDurationSeconds` | range | `[1.5, 45]` | The shortest and longest typing time for one message (thinking pauses come on top). |
 | `readingCharsPerSecond` | drawn range, floor 1, normal | `[15, 25]` | How fast it reads: before typing it waits as long as their unread messages (together) take to read, with or without a `markRead` receipt (see [channels](./channels.md#typing-read-receipts-and-thinking-pauses)). |
 | `readingDurationSeconds` | range | `[1, 20]` | The shortest and longest that reading takes. |
+| `looking` | drawn | `[1.5, 5]`, lognormal | Seconds it spends on each photo, on top of the reading. |
 | `thinkingPauses.chance` | number, 0 to 1 | `0` | The chance of each pause while a long message is typed (typing off a moment, then on again); `0`: none. |
 | `thinkingPauses.minChars` | integer, 1 or more | `120` | The shortest message, in characters, that may have a pause. |
 | `thinkingPauses.max` | integer, 1 to 3 | `2` | The most pauses in one message. |

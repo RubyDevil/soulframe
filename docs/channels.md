@@ -21,11 +21,11 @@ The pieces an adapter uses:
 The client below is a stand-in for whatever SDK your platform has.
 
 ```ts
-import { UnreachableError, watchSpans, type Brain, type Channel, type Conversation, type PersonaConfig, type ReplyQueue, type Runtime } from 'soulframe';
+import { UnreachableError, watchSpans, type Brain, type Channel, type Conversation, type LinkPreview, type PersonaConfig, type ReplyQueue, type Runtime } from 'soulframe';
 
 /** A stand-in for your platform's SDK. */
 interface ChatClient {
-	onDirectMessage(handler: (message: { from: { id: string; displayName: string }; text: string }) => void): void;
+	onDirectMessage(handler: (message: { from: { id: string; displayName: string }; text: string; images: { url: string }[]; cards: LinkPreview[] }) => void): void;
 	sendTyping(userId: string): Promise<void>;
 	markRead(userId: string): Promise<void>;
 	sendMessage(userId: string, text: string): Promise<void>;
@@ -55,9 +55,9 @@ export function createChatAdapter({ persona, brain, queue, runtime, client }: { 
 		},
 	});
 
-	client.onDirectMessage(({ from, text }) => {
-		if (!text.trim()) return;
-		const decision = brain.incoming(CHAT_DM, from.id, from.displayName, text);
+	client.onDirectMessage(({ from, text, images, cards }) => {
+		if (!text.trim() && !images.length) return;
+		const decision = brain.incoming(CHAT_DM, from.id, from.displayName, { text, images, links: cards });
 		void queue.handle(decision, conversationWith(from.id), text).catch((error) => runtime.log(persona.id, 'dm_failed', { error: String(error) }));
 	});
 
@@ -77,6 +77,14 @@ export function createChatAdapter({ persona, brain, queue, runtime, client }: { 
 
 declare function isBlockedError(error: unknown): boolean;
 ```
+
+**Photos and links.** Pass what came with a message as an `IncomingMessage`. An image's `url` must be one the vision
+model can reach, or a `data:` URI (for a platform whose files need a login, download it and pass one). For links, pass
+the preview cards your platform already gives you. Where it attaches them a moment late, or not at all, give
+`createBrain` a `previewLink` function instead: it runs while the persona reads. soulframe never fetches a URL a
+stranger sent, so if `previewLink` does, guard it the way you would guard any server fetching a stranger's URL
+(no private addresses, a size and time limit). URLs in the text are found for you; with no card, the persona knows
+only the site's name. In DMs only: for group chats, write what you want the persona to know into `GroupChatLine.text`.
 
 And the wiring, once per persona:
 
@@ -168,7 +176,7 @@ described above: one `typing(true)` per message, the typing time, the send, one 
   cut short stops typing then, not at the end of the typing time.
 - **`markRead()`**: shows the person their messages were read (a read receipt). The queue calls it as it starts
   writing a reply (again for a draft written again with a newer message), and reads what they wrote while the model
-  writes, as long as that takes (15 to 25 characters a second by default, 1 to 20 seconds): typing starts once both
+  writes, as long as that takes (15 to 25 characters a second by default, 1 to 20 seconds, plus `pacing.looking` per photo): typing starts once both
   are done. That reading happens without `markRead` too. A reply halted or cancelled before then types nothing. A
   rejection counts as a failed delivery, as for `typing`: swallow it if a missing receipt doesn't matter. A turn the
   persona leaves on read shows their messages read too, as a person who read them and chose not to answer.

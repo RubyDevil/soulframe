@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { betweenMessagesMs, drawIn, fitDelay, glanceMs, interruptionAt, interruptionsOn, normalQuantile, quietMs, readingMs, replyDelay, skewedMs, splitReply, typingMs, typingPlan, watchingChance, watchingMs } from '../src/pacing.js';
+import { betweenMessagesMs, drawIn, fitDelay, glanceMs, interruptionAt, interruptionsOn, lookingMs, normalQuantile, quietMs, readingMs, replyDelay, skewedMs, splitReply, typingMs, typingPlan, watchingChance, watchingMs } from '../src/pacing.js';
 import { seededRng } from '../src/rng.js';
 import { ScheduleSchema } from '../src/config/hours.js';
 import { DEFAULT_SETTINGS, SettingsSchema, type Settings } from '../src/settings.js';
@@ -76,6 +76,19 @@ describe('typingPlan', () => {
 		expect(typingPlan('x'.repeat(149), () => 0, pacing).pauses).toEqual([]);
 		expect(typingPlan(long, () => 0.4, pacing).pauses).toHaveLength(3);
 		expect(typingPlan(long, () => 0.6, pacing).pauses).toEqual([]);
+	});
+});
+
+describe('lookingMs', () => {
+	it('adds pacing.looking for each photo, in whole milliseconds', () => {
+		expect(lookingMs(1, () => 0)).toBe(1_500);
+		expect(lookingMs(2, () => 0)).toBe(3_000);
+		expect(Number.isInteger(lookingMs(3, seededRng('looking')))).toBe(true);
+	});
+	it('is nothing, without a draw, with no photo', () => {
+		const rng = vi.fn(() => 0.5);
+		expect(lookingMs(0, rng)).toBe(0);
+		expect(rng).not.toHaveBeenCalled();
 	});
 });
 

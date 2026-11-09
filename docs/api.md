@@ -221,7 +221,8 @@ The value to show with a zod issue: the one at its path in `raw`, or `undefined`
 ```ts
 type Settings = {
 	llm: { /* ... */ };
-	models: { directMessage: { /* ... */ }; groupChat: { /* ... */ }; post: { /* ... */ } };
+	models: { directMessage: { /* ... */ }; groupChat: { /* ... */ }; post: { /* ... */ }; vision: { /* ... */ } };
+	perception: { /* ... */ };
 	decisions: { /* ... */ };
 	memory: { /* ... */ };
 	relationship: { /* ... */ };
@@ -381,6 +382,7 @@ function createBrain(options: {
 	llm: Llm;
 	decisions?: Decisions; // default DISABLED_DECISIONS
 	policy?: Policy;       // default {}: no rules, no link filtering
+	previewLink?: PreviewLink;  // gets the card of a link that came without one; none by default
 }): Brain;
 ```
 
@@ -415,7 +417,7 @@ The application's content policy: soulframe applies none of its own beyond `Chan
 
 ```ts
 interface Brain {
-	incoming(channel: Channel, externalId: string, name: string, text: string, at?: number): Decision;
+	incoming(channel: Channel, externalId: string, name: string, message: string | IncomingMessage, at?: number): Decision;
 	compose(personId: number, channel: Channel, options?: {
 		invitation?: string;
 		extraLines?: (person: Person) => readonly string[];
@@ -432,7 +434,8 @@ interface Brain {
   Synchronous, so a catch-up keeps its order. Records the message (creating the person on a first one; on a newer
   message under another name, the person takes that name), counts a new conversation after
   `memory.conversationGapHours` of silence, and runs the code's stop check (and, where `channel.adult`, its under-18
-  check). Answers a `Decision`.
+  check), on their own words only. Answers a `Decision`. `message` may carry photos and link cards
+  (`IncomingMessage`): they are looked at in the turn, by `compose` or `assess`, once.
 - **`compose`**: the DM turn for the person, now. Runs the typed checks when enabled, builds the prompt and calls the
   model with `task: 'directMessage'`. It stores nothing it says (the reply queue records each message once sent), nor,
   until the turn's `keep()` is called, what it wrote and decided: the rewritten notes on the person and on itself, a
@@ -500,6 +503,50 @@ interface GroupChatLine {
 	at?: number;       // when it was written
 }
 ```
+
+### `IncomingMessage`
+
+```ts
+interface IncomingMessage {
+	text: string;                        // their words: empty for a photo sent alone
+	images?: readonly IncomingImage[];
+	links?: readonly LinkPreview[];      // the cards the app has; URLs in `text` are found by the code
+}
+```
+
+What `brain.incoming` takes in place of plain words, in a DM. See [attention](./attention.md#perception-photos-and-links).
+
+### `IncomingImage`
+
+```ts
+interface IncomingImage {
+	url: string;    // https, reachable by the vision model, or a data: URI
+	alt?: string;   // the platform's own description, used when the photo can't be looked at
+}
+```
+
+### `LinkPreview`
+
+```ts
+interface LinkPreview {
+	url: string;
+	site?: string;         // its host when left out
+	title?: string;
+	description?: string;
+}
+```
+
+A link's preview card, all the persona ever knows of the page.
+
+### `PreviewLink`
+
+```ts
+type PreviewLink = (url: string) => Promise<LinkPreview | null>;
+```
+
+Your way to get a card for a link that came without one (`createBrain`'s `previewLink`). Called while the persona reads,
+at most `perception.timeoutSeconds`; a rejection or `null` leaves the site's name. It fetches a stranger's URL if you
+make it do so: refuse private addresses and limit size and time.
 
 ## The reply queue and runtime
 
@@ -592,7 +639,7 @@ interface Conversation {
 Where a reply goes, implemented by a channel adapter: see [channels](./channels.md). Each stretch of typing is one
 `typing(true)` (repeated every `typingRefreshMs` ms when given, while the message is typed) and one `typing(false)`;
 a thinking pause (`pacing.thinkingPauses`) ends one stretch and starts the next. While the model writes a reply, the
-unread messages are read for as long as they take (`pacing.readingCharsPerSecond`), and `markRead()`, when given, is
+unread messages are read for as long as they take (`pacing.readingCharsPerSecond`, plus `pacing.looking` per photo), and `markRead()`, when given, is
 called as that starts (again for a draft written again: a turn left on read shows them read too); a rejection from it,
 as from `typing`, counts as a failed delivery. Without either, the calls are one `typing(true)`, the
 typing time, `send`, one `typing(false)` per message. `delivered(text)`, when given, is called after each message of
@@ -680,7 +727,7 @@ function createStore(db: Database, now?: () => number): Store;
 Creates the package's tables in `db` if missing, then answers the store. `now` (default `Date.now`) stamps what it
 records. A database made by an earlier beta gets the columns added since (`familiarity`, `affinity`, `importance`,
 `importanceAt`), in one transaction; familiarity then starts from each person's conversations so far (1 - 0.9^n), so
-someone who was close stays close. Data the application kept in a layout of its own is its own to migrate before this
+someone who was close stays close. Its `messages` get a `media` column too, outside that transaction. Data the application kept in a layout of its own is its own to migrate before this
 (`inTransaction`).
 
 ### `inTransaction`
@@ -701,8 +748,9 @@ interface Store {
 	createPerson(persona: string, channel: ChannelId, externalId: string, name: string): Person;
 	link(personId: number, channel: ChannelId, externalId: string): Person;
 	updatePerson(id: number, patch: Partial<Omit<Person, 'id' | 'persona' | 'ids' | 'firstSeenAt'>>): Person;
-	addMessage(personId: number, channel: ChannelId, direction: 'in' | 'out', text: string, at?: number): void;
-	history(personId: number, limit?: number): { channel: ChannelId; direction: 'in' | 'out'; text: string; at: number }[];
+	addMessage(personId: number, channel: ChannelId, direction: 'in' | 'out', text: string, at?: number, media?: Media): void;
+	setMedia(messageId: number, media: Media): void;
+	history(personId: number, limit?: number): { id: number; channel: ChannelId; direction: 'in' | 'out'; text: string; at: number; media?: Media }[];
 	unanswered(persona: string, since: number): { person: Person; channel: ChannelId }[];
 	isDenied(channel: ChannelId, externalId: string): boolean;
 	deny(channel: ChannelId, externalId: string, reason: string): void;
@@ -722,13 +770,17 @@ interface Store {
 }
 ```
 
+`Media` is what is stored with a message that had photos or links: `{ images: { url?: string; alt?: string; seen?: string;
+failed?: true }[]; links: (LinkPreview & { looked?: true })[] }`. A photo keeps its `url` until it was looked at, then
+`seen` (the description) or `failed`; **`setMedia`** stores that.
+
 - **`person`**: the persona's person with that account, if any. **`personById`**: by id.
 - **`createPerson`**: a new person of `persona` with one account. `brain.incoming` calls it on a first message.
 - **`link`**: gives the person their account on another channel. Throws when they already have one there, or when
   another of the persona's people has this account: check with `person` first.
 - **`updatePerson`**: changes the given fields and answers the person.
 - **`addMessage`**: records a message (`in` counts in `incoming`). **`history`**: the last `limit` (default 40), oldest
-  first.
+  first, each with what came with it. **`setMedia`**: what is known of a message's photos and links, once looked at.
 - **`unanswered`**: active people of `persona` still owed a turn who last wrote at `since` or later, oldest first,
   with the channel they last wrote on (what `requeue` reads).
 - **`isDenied`**, **`deny`**: the deny list, shared by every persona. `deny` also marks every person with that account
@@ -797,12 +849,12 @@ type PersonState = 'active' | 'stopped' | 'blocked' | 'denied';
 
 ```ts
 interface Llm {
-	complete(messages: LlmMessage[], options: { task: 'directMessage' | 'groupChat' | 'post'; json?: boolean }): Promise<string>;
+	complete(messages: LlmMessage[], options: { task: 'directMessage' | 'groupChat' | 'post' | 'vision'; json?: boolean }): Promise<string>;
 }
 ```
 
 The model behind the personas. `json`: the answer must be a JSON object. Implement it to use any client; a rejection
-is retried by the reply queue as a failed attempt.
+is retried by the reply queue as a failed attempt, except on a `vision` call, where the photo just doesn't load.
 
 ### `LlmMessage`
 
@@ -810,6 +862,7 @@ is retried by the reply queue as a failed attempt.
 interface LlmMessage {
 	role: 'system' | 'user' | 'assistant';
 	content: string;
+	images?: readonly string[];  // only the 'vision' task sends any: an Llm for it must pass them to the model
 }
 ```
 
@@ -833,7 +886,7 @@ One model client per persona id, each using its own `settings.models` over `sett
 OpenAI-compatible `/chat/completions` endpoint; the `meter` and the `concurrency` limit are shared by all. A persona in
 `keyless`, and in a dry run one without a provider, gets the canned model; without a provider outside a dry run it
 throws, naming every such persona. Requests time out after `llm.timeoutSeconds` and are retried once; past
-`1 - llm.directMessageReserve` of the meter's limit only DMs are generated. A task left without a provider or a
+`1 - llm.directMessageReserve` of the meter's limit only DMs and their photos are generated. A task left without a provider or a
 model rejects at once with a configuration error that the reply queue never retries: the person stays owed, for a
 start with the settings fixed (`reply_given_up` is audited with `reason: 'model_not_configured'`).
 
@@ -862,7 +915,7 @@ At most `size` calls in progress at once; the others wait their turn, in order.
 function createCannedLlm(rng: Rng): Llm;
 ```
 
-A model that answers one of a few fixed lines (picked with `rng`) for DMs and group chats and a fixed post, without
+A model that answers one of a few fixed lines (picked with `rng`) for DMs and group chats, a fixed post and a fixed photo description, without
 any network: for dry runs, demos and tests.
 
 ### `modelKeys`
@@ -872,7 +925,7 @@ function modelKeys(settings: Settings): Map<string, string>;
 ```
 
 The environment variables a persona's text model reads, each with the setting that names it (for example
-`LLM_API_KEY → 'settings.llm.apiKeyEnv'`): one per task with a provider, none for an empty key. For checking at start
+`LLM_API_KEY → 'settings.llm.apiKeyEnv'`): one per task with a provider (`vision` only once it names a model), none for an empty key. For checking at start
 that every key is set.
 
 ## Decisions

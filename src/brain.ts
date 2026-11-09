@@ -4,9 +4,10 @@ import { DISABLED_DECISIONS, probabilityOf, scoreOf, type Decisions, type Decisi
 import type { Llm, LlmMessage } from './llm.js';
 import { moodOf } from './mood.js';
 import { splitReply } from './pacing.js';
+import { clip, lookedCard, mediaOf, seenIn, timeLimited, unseen, type IncomingMessage, type MessageMedia, type PreviewLink, type SeenImage, type SeenLink } from './perception.js';
 import { hostOf, isStopRequest, MINOR_EXIT, minorSignal, STOP_ACK, stripForeignLinks } from './safety.js';
 import { busyAt, fullyOnline, situationAt } from './schedule.js';
-import { DAY, HOUR, MINUTE } from './settings.js';
+import { DAY, HOUR, MINUTE, SECOND } from './settings.js';
 import {
 	ADDRESSED_QUESTION,
 	ADULTS_ONLY_RULE,
@@ -25,8 +26,11 @@ import {
 	groupChatTask,
 	groupChatTimePrompt,
 	groupChatTranscript,
+	imagePrompt,
 	IMPORTANCE_QUESTION,
 	importanceQuestion,
+	judgedMessage,
+	messageWithMedia,
 	MINOR_QUESTION,
 	POST_REQUEST,
 	postTask,
@@ -38,7 +42,7 @@ import {
 	type Trend,
 } from './prompts.js';
 import type { Runtime } from './runtime.js';
-import type { Person } from './store.js';
+import type { Person, StoredMessage } from './store.js';
 
 export type Decision =
 	| { kind: 'ignore'; reason: string }
@@ -172,9 +176,10 @@ export interface GroupChatLine {
 export interface Brain {
 	/**
 	 * A message they wrote on `channel` as `name` (the name they go by there: the person keeps the one of their newest
-	 * message), now unless `at` says when (one read late). Synchronous: a catch-up keeps its order.
+	 * message), now unless `at` says when (one read late). `message` is their words, or those with the photos and link
+	 * cards that came with them. Synchronous: a catch-up keeps its order; the looking is done in its turn.
 	 */
-	incoming(channel: Channel, externalId: string, name: string, text: string, at?: number): Decision;
+	incoming(channel: Channel, externalId: string, name: string, message: string | IncomingMessage, at?: number): Decision;
 	/**
 	 * What to do now in the conversation with the person on `channel`. Stores nothing it says (the reply queue records
 	 * each message once sent), nor what it wrote and decided until the turn's `keep` is called. `invitation`: a pending
@@ -262,6 +267,7 @@ export function createBrain({
 	llm,
 	decisions = DISABLED_DECISIONS,
 	policy = {},
+	previewLink,
 }: {
 	persona: PersonaConfig;
 	/** The app's phrase on what the persona is, after its name in the identity line ("You are Robin, <identity>, chatting by text in …"); none for the name alone. */
@@ -278,6 +284,8 @@ export function createBrain({
 	decisions?: Decisions;
 	/** The app's rules and allowed links; none by default. */
 	policy?: Policy;
+	/** Gets the card of a link that came without one, while it reads; none by default: such a link is only its site's name. */
+	previewLink?: PreviewLink;
 }): Brain {
 	const { store } = runtime;
 	// Read at each use: a clock swapped on the runtime is the brain's too
@@ -303,7 +311,61 @@ export function createBrain({
 	const system = (channel: Channel, rules: readonly string[], task: string) =>
 		systemPrompt({ personaPrompt: persona.promptText, character: persona.character, name: persona.name, identity, style, channel, rules, task });
 
-	const clip = (text: string, max: number) => (text.length <= max ? text : `${text.slice(0, max - 1).replace(/\s+\S*$/, '')}…`);
+	const lookLimit = settings.perception.timeoutSeconds * SECOND;
+
+	/** Asks for a photo's description. No vision model, a failure, a refusal or too long a wait: its `alt`, else it didn't load. */
+	const lookAtImage = async (personId: number, image: SeenImage): Promise<SeenImage> => {
+		const { url, alt } = image;
+		if (url === undefined) return image;
+		let seen: string | null = null;
+		if (settings.models.vision.model !== undefined) {
+			try {
+				const prompt = imagePrompt(settings.perception.descriptionChars);
+				seen = seenIn(await timeLimited(() => llm.complete([{ role: 'user', content: prompt, images: [url] }], { task: 'vision', json: true }), lookLimit));
+				if (seen === null) store.audit(persona.id, 'image_unseen', { personId, reason: 'no description' });
+			} catch (error) {
+				store.audit(persona.id, 'image_unseen', { personId, reason: error instanceof Error ? error.message : String(error) });
+			}
+		}
+		const known = seen ?? alt;
+		return known ? { seen: clip(known, settings.perception.descriptionChars) } : { failed: true };
+	};
+
+	/** Asks the app for the card of a link that has none; without one, it stays its site's name. */
+	const lookAtLink = async (link: SeenLink): Promise<SeenLink> => {
+		if (link.looked || link.title) return link;
+		try {
+			const card = previewLink && (await timeLimited(() => previewLink(link.url), lookLimit));
+			if (card) return lookedCard({ ...card, url: link.url });
+		} catch {
+			// As with no card at all
+		}
+		return { ...link, looked: true };
+	};
+
+	/** What is being looked at now, by message: a turn and its early checks share one look. */
+	const looks = new Map<number, Promise<MessageMedia>>();
+
+	/** `history` with every photo and link in it looked at, once, and stored: what the model and the checks read. */
+	const perceive = (personId: number, history: StoredMessage[]) =>
+		Promise.all(
+			history.map(async (message) => {
+				if (!unseen(message.media)) return message;
+				let look = looks.get(message.id);
+				if (!look) {
+					const { images, links } = message.media!;
+					look = Promise.all([Promise.all(images.map((image) => lookAtImage(personId, image))), Promise.all(links.map(lookAtLink))])
+						.then(([seenImages, seenLinks]) => {
+							const media = { images: seenImages, links: seenLinks };
+							store.setMedia(message.id, media);
+							return media;
+						})
+						.finally(() => looks.delete(message.id));
+					looks.set(message.id, look);
+				}
+				return { ...message, media: await look };
+			}),
+		);
 
 	/** Ends it for good with someone under 18: every persona deny-lists each of their accounts (this person denied with them). */
 	const denyMinor = (person: Person, on: ChannelId, detail: Record<string, unknown>) => {
@@ -334,14 +396,14 @@ export function createBrain({
 	 * much the messages matter (`decisions.importance`): `alone` asks it even when no other check is on. The persona's
 	 * last reply is context only.
 	 */
-	const checkIncoming = async (channel: Channel, theirNew: { text: string }[], yourLast: { text: string } | undefined, alone = false) => {
+	const checkIncoming = async (channel: Channel, theirNew: Pick<StoredMessage, 'text' | 'media'>[], yourLast: { text: string } | undefined, alone = false) => {
 		if (!decisions.enabled) return null;
 		const checksOn: Question[] = [
 			...(channel.adult && checks.minor.enabled ? [dmMinorQuestion] : []),
 			...(checks.stop.enabled ? [stopQuestion] : []),
 		];
 		const questions = checks.importance.enabled && (alone || checksOn.length) ? [...checksOn, importanceQuestion] : checksOn;
-		const judged = theirNew.slice(-checks.dmMessages).map((m) => clip(m.text, 500));
+		const judged = theirNew.slice(-checks.dmMessages).map((m) => clip(judgedMessage(m), 500)).filter(Boolean);
 		if (!questions.length || !judged.length) return null;
 		return decisions.ask(dmCheckInput({ personaName: persona.name, yourLast: yourLast ? clip(yourLast.text, 300) : null, theirNew: judged }), questions, ctx('dmCheck'));
 	};
@@ -425,7 +487,10 @@ export function createBrain({
 	};
 
 	return {
-		incoming({ id: channel, adult }, externalId, name, text, at = now()) {
+		incoming({ id: channel, adult }, externalId, name, message, at = now()) {
+			const sent = typeof message === 'string' ? { text: message } : message;
+			// The code's own checks below read only their words: a headline or a sign in a photo is not them saying it
+			const { text } = sent;
 			if (store.isDenied(channel, externalId)) return { kind: 'ignore', reason: 'denied' };
 			let person = store.person(persona.id, channel, externalId) ?? store.createPerson(persona.id, channel, externalId, name);
 			if (person.state !== 'active') return { kind: 'ignore', reason: person.state };
@@ -442,7 +507,7 @@ export function createBrain({
 			});
 			// What they were apart fades, and how things stand is set for this conversation
 			if (newConversation) person = startConversation(person, apart).person;
-			store.addMessage(person.id, channel, 'in', text, at);
+			store.addMessage(person.id, channel, 'in', text, at, mediaOf(sent, settings.perception));
 
 			// The code's own checks, first and at once (the age one on an 18+ channel); the typed checks (settings.decisions) only add to them in `compose`
 			if (adult && minorSignal(text)) {
@@ -459,8 +524,9 @@ export function createBrain({
 		async compose(personId, channel, options = {}) {
 			let person = store.personById(personId);
 			if (person.state !== 'active') return { messages: [], action: 'none' };
-			// The notes carry what matters from older messages, so a short window keeps each call cheap
-			const history = store.history(person.id, settings.memory.historyMessages);
+			// The notes carry what matters from older messages, so a short window keeps each call cheap. A photo or link that
+			// came since is looked at here, while the reply queue shows it being read
+			const history = await perceive(person.id, store.history(person.id, settings.memory.historyMessages));
 			const theirLast = history.findLast((m) => m.direction === 'in');
 			const yourLast = history.findLast((m) => m.direction === 'out');
 			// What they wrote since their last turn: one that comes in while this one is composed has a turn of its own
@@ -493,6 +559,8 @@ export function createBrain({
 			const joinNow = fullyOnline(persona, channel.id, now());
 			const invitation = channel.invitations ? options.invitation : undefined;
 			const rules = rulesOn(channel);
+			const photos = history.some((m) => m.media?.images.length);
+			const links = history.some((m) => m.media?.links.length);
 
 			const task = directMessageTask({
 				selfNotes: selfNotes(),
@@ -516,10 +584,11 @@ export function createBrain({
 				// Counted by the code, never by the model; it changes nothing in the rules or the checks
 				relationship: settings.context.relationship ? relationshipNow(person) : undefined,
 				affinity: relationship.affinity.enabled,
+				...(photos || links ? { media: { photos, links } } : {}),
 			});
 			const messages: LlmMessage[] = [
 				{ role: 'system', content: system(channel, rules, task) },
-				...history.map((m): LlmMessage => ({ role: m.direction === 'in' ? 'user' : 'assistant', content: m.text })),
+				...history.map((m): LlmMessage => ({ role: m.direction === 'in' ? 'user' : 'assistant', content: messageWithMedia(m) })),
 			];
 			const turn = parseTurn(await llm.complete(messages, { task: 'directMessage', json: true }), channel.actions?.map(({ name }) => name));
 			// Ended by the code while the model wrote (a newer message): nothing is stored or sent
@@ -561,11 +630,14 @@ export function createBrain({
 			if (!decisions.enabled || !checks.importance.enabled) return;
 			const person = store.personById(personId);
 			if (person.state !== 'active') return;
-			const history = store.history(person.id, settings.memory.historyMessages);
-			const asking = checkIncoming(channel, unhandled(history, person.handledAt), history.findLast((m) => m.direction === 'out'), true).then((answers) => {
-				rateImportance(person.id, answers);
-				return { incoming: person.incoming, answers };
-			});
+			const found = store.history(person.id, settings.memory.historyMessages);
+			const check = (history: StoredMessage[]) =>
+				checkIncoming(channel, unhandled(history, person.handledAt), history.findLast((m) => m.direction === 'out'), true).then((answers) => {
+					rateImportance(person.id, answers);
+					return { incoming: person.incoming, answers };
+				});
+			// Set before its first wait, so `compose` finds it; a photo is looked at once, for the two of them
+			const asking = found.some((m) => unseen(m.media)) ? perceive(person.id, found).then(check) : check(found);
 			assessed.set(person.id, asking);
 			await asking;
 		},

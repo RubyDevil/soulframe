@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createConfiguredLlm, createTokenMeter, keyEnvFor, LlmBudgetError, llmsFor, ModelNotConfiguredError, ProviderUnavailableError } from '../src/llm.js';
+import { createCannedLlm, createConfiguredLlm, createTokenMeter, keyEnvFor, LlmBudgetError, llmsFor, ModelNotConfiguredError, modelKeys, providerSet, ProviderUnavailableError } from '../src/llm.js';
 import { DEFAULT_SETTINGS, SettingsSchema } from '../src/settings.js';
 import { memoryStore } from './fixtures.js';
 
@@ -29,6 +29,49 @@ const sent = (fetch: { mock: { calls: unknown[][] } }, index = 0) => {
 afterEach(() => {
 	vi.restoreAllMocks();
 	vi.useRealTimers();
+});
+
+describe('images (models.vision)', () => {
+	const look = { role: 'user' as const, content: 'what is this?', images: ['https://cdn.example/p.jpg'] };
+
+	it('sends them as content parts after the text, and plain messages as they were', async () => {
+		const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(answer('{"seen":"a cat"}', 10));
+		const { llm } = setUp(0);
+		await llm.complete([look, { role: 'user', content: 'plain' }], { task: 'vision', json: true });
+		expect(sent(fetch).body.messages).toEqual([
+			{ role: 'user', content: [{ type: 'text', text: 'what is this?' }, { type: 'image_url', image_url: { url: 'https://cdn.example/p.jpg' } }] },
+			{ role: 'user', content: 'plain' },
+		]);
+		expect(sent(fetch).body).toMatchObject({ max_tokens: 200, temperature: 0.2 });
+	});
+
+	it("doesn't count an image's bytes as tokens at a provider that reports no usage", async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue(answer('{"seen":"a cat"}'));
+		const { llm, meter } = setUp(0);
+		await llm.complete([{ ...look, images: [`data:image/png;base64,${'A'.repeat(4_000_000)}`] }], { task: 'vision', json: true });
+		expect(meter.spent()).toBeLessThan(1_000);
+		expect(meter.spent()).toBeGreaterThan(800);
+	});
+
+	it("spends what is kept for DMs, where the other tasks can't", async () => {
+		vi.spyOn(globalThis, 'fetch').mockImplementation(async () => answer('ok', 1));
+		const { llm, meter } = setUp(100);
+		meter.add(80);
+		await expect(llm.complete([look], { task: 'vision' })).resolves.toBe('ok');
+		await expect(llm.complete([{ role: 'user', content: 'x' }], { task: 'post' })).rejects.toBeInstanceOf(LlmBudgetError);
+	});
+
+	it('is no text provider and needs no key while off', () => {
+		const onlyVision = SettingsSchema.parse({ models: { vision: { baseUrl: 'https://eyes.example/v1', apiKeyEnv: 'EYES_KEY' } } });
+		expect(providerSet(onlyVision)).toBe(false);
+		expect(modelKeys(onlyVision).has('EYES_KEY')).toBe(false);
+		expect(modelKeys(SettingsSchema.parse({ models: { vision: { model: 'eyes', baseUrl: 'https://eyes.example/v1', apiKeyEnv: 'EYES_KEY' } } })).get('EYES_KEY')).toBe('settings.models.vision.apiKeyEnv');
+	});
+
+	it('is answered by the canned model too, as a description', async () => {
+		const raw = await createCannedLlm(() => 0).complete([look], { task: 'vision', json: true });
+		expect(JSON.parse(raw)).toHaveProperty('seen');
+	});
 });
 
 describe('createConfiguredLlm', () => {
@@ -289,7 +332,7 @@ describe('SettingsSchema', () => {
 	});
 	it('refuses a Decisions baseUrl that is not a URL, and has no Decisions entry among the text models', () => {
 		expect(SettingsSchema.safeParse({ decisions: { baseUrl: 'not a URL' } }).success).toBe(false);
-		expect(Object.keys(DEFAULT_SETTINGS.models)).toEqual(['directMessage', 'groupChat', 'post']);
+		expect(Object.keys(DEFAULT_SETTINGS.models)).toEqual(['directMessage', 'groupChat', 'post', 'vision']);
 	});
 });
 

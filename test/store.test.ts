@@ -150,6 +150,31 @@ describe('minor caution', () => {
 	});
 });
 
+describe('what came with a message', () => {
+	it('is stored with it, and replaced once looked at', () => {
+		const store = memoryStore();
+		const { id: sam } = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		store.addMessage(sam, 'chat', 'in', 'plain', 1);
+		store.addMessage(sam, 'chat', 'in', '', 2, { images: [{ url: 'https://cdn.example/p.jpg' }], links: [] });
+		const [plain, photo] = store.history(sam);
+		expect(plain).not.toHaveProperty('media');
+		expect(photo!.media).toEqual({ images: [{ url: 'https://cdn.example/p.jpg' }], links: [] });
+		store.setMedia(photo!.id, { images: [{ seen: 'a cat' }], links: [] });
+		expect(store.history(sam)[1]!.media).toEqual({ images: [{ seen: 'a cat' }], links: [] });
+	});
+
+	it('gets its column on a database made before it, keeping the messages', () => {
+		const db = openDatabase(':memory:');
+		db.exec('CREATE TABLE messages (id INTEGER PRIMARY KEY, person_id INTEGER NOT NULL, channel TEXT NOT NULL, direction TEXT NOT NULL, text TEXT NOT NULL, at INTEGER NOT NULL)');
+		db.prepare("INSERT INTO messages (person_id, channel, direction, text, at) VALUES (1, 'chat', 'in', 'old', 5)").run();
+		const store = createStore(db, () => 0);
+		expect(store.history(1)).toEqual([{ id: 1, channel: 'chat', direction: 'in', text: 'old', at: 5 }]);
+		// Opening it again changes nothing
+		expect(createStore(db, () => 0).history(1)).toHaveLength(1);
+		db.close();
+	});
+});
+
 describe('a database made by the first beta', () => {
 	it('gets the columns added since, familiarity starting from the conversations so far', () => {
 		const db = openDatabase(':memory:');

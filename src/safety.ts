@@ -30,7 +30,7 @@ export const minorSignal = (text: string) => {
 	return AGE_STATED.test(t) || AGE_YEARS.test(t) || MINOR_WORDS.test(t);
 };
 
-const LINK = /\bhttps?:\/\/[^\s<>()]+|\b(?:www\.)[^\s<>()]+/gi;
+export const LINK = /\bhttps?:\/\/[^\s<>()]+|\b(?:www\.)[^\s<>()]+/gi;
 
 /** A URL's host without its `www.`. */
 export const hostOf = (url: string) => new URL(url).hostname.replace(/^www\./, '');
