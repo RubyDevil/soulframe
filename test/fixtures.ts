@@ -1,7 +1,7 @@
 import type { Policy } from '../src/brain.js';
 import type { Channel, ChannelAction, ChannelId } from '../src/channel.js';
 import { parsePersona } from '../src/config/personas.js';
-import { parseSettings } from '../src/settings.js';
+import { parseSettings, type Settings } from '../src/settings.js';
 import { createStore, openDatabase } from '../src/store.js';
 
 /** A store on its own in-memory database, gone with it: nothing to close. */
@@ -46,8 +46,10 @@ export const testPersona = (fields: Record<string, unknown> = {}) => ({
 });
 
 /** parsePersona on this config with `prompt`, on `channels` (both test channels unless given), for 18+ conversations with `adult`. */
-export const parsedOf = (config: unknown, { prompt = 'A voice.', channels = ['forum', 'chat'], adult, source }: { prompt?: string; channels?: ChannelId[]; adult?: boolean; source?: string } = {}) =>
-	parsePersona({ config, prompt, channels, adult, source });
+export const parsedOf = (
+	config: unknown,
+	{ prompt = 'A voice.', channels = ['forum', 'chat'], adult, settings, source }: { prompt?: string; channels?: ChannelId[]; adult?: boolean; settings?: Settings; source?: string } = {},
+) => parsePersona({ config, prompt, channels, adult, settings, source });
 
 /** The persona of parsedOf, which must have no problem. */
 export const personaOf = (config: unknown, options?: Parameters<typeof parsedOf>[1]) => {

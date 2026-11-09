@@ -42,10 +42,12 @@ frontmatter, is optional (`loadPersonas`, `parsePersonaMarkdown`). A loaded pers
 | `name` | The name it goes by, 1 to 32 characters. |
 | `timezone` | An IANA time zone; its hours are local to it. |
 | `schedule` | Its hours by weekday. |
+| `pacing`, `relationship` | Optional: its own, over its brain's settings (only the keys it changes). |
 | `prompt` | Its voice and background, trimmed. |
 
 Nothing else: what it says is its prompt's, and how its brain runs (models, limits, memory, pacing, the typed checks)
-is the brain's **settings** (`createBrain({ persona, settings })`, read with `parseSettings`), never the persona's.
+is the brain's **settings** (`createBrain({ persona, settings })`, read with `parseSettings`), but for its own pacing and
+relationship.
 One settings object may serve every persona, or a persona's brain may get its own.
 
 The **system prompt** of every task is assembled in this order, so what comes later wins:

@@ -16,6 +16,10 @@ Where the beta stands and what is planned before 1.0.
 
 ## Before 1.0
 
+- **How readily it speaks in group chats, per persona.** A persona's config sets its own `pacing` and
+  `relationship`; `decisions.groupChatGate.chimeInAt` may join them, so a quiet persona and a talkative one can share
+  their settings.
+
 - Export the test helpers (a scripted Decisions client, a seeded random source) and the error classes a custom model
   client needs to signal a spent budget or an outage.
 - Freeze the public API and the database layout; document the migration policy.

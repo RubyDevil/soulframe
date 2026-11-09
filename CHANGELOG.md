@@ -37,6 +37,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `models.default`: the provider and model of every task that names none (`baseUrl`, `apiKeyEnv`, `model`,
   `jsonMode`, `timeoutSeconds`), and a `timeoutSeconds` of each task's own. `personaReport` names the host of a task on
   a provider of its own.
+- **A persona's own `pacing` and `relationship`**: only the keys it changes, in its config, merged over its brain's
+  settings by `createBrain` (`brain.settings`; a `ConfigError` if they don't fit). `parsePersona` and the loaders check
+  them over their new `settings` option.
 
 ### Changed
 
@@ -54,7 +57,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `{ issues, personas }`, without `shared`.
 - **BREAKING: `personaReport(persona, { settings, now, status? })`** takes the settings its brain runs with in place
   of `shared`: no `overrides` lines; `prompt:` gives the prompt's length; no `character:` line.
-- `personaWarnings` warns only about the persona (its time zone, hours and channels); `samplePrompt` takes `settings`.
+- `personaWarnings` warns only about the persona (its time zone, hours, channels and own `pacing.burst.maxRestarts`);
+  `samplePrompt` takes `settings`.
 - **BREAKING: the Decisions client's settings are the service settings'.** `decisions.enabled`, `baseUrl`,
   `apiKeyEnv`, `model`, `timeoutSeconds` and `dailyTokens` moved there (each refused in a brain's settings with where
   it went), and `createConfiguredDecisions` takes the service settings' `decisions`, giving `DISABLED_DECISIONS` while

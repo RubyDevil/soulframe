@@ -1,8 +1,21 @@
 /**
- * Small helpers on plain config values (parsed YAML or JSON): telling a mapping from the rest, reading the value at a
- * path, and the paths where two values differ.
+ * Merging config values (a persona's own settings over its brain's): plain objects merge key by key; arrays
+ * ([least, most] ranges, lists) and scalars replace; `null` for a key removes what was set there, back to the schema's
+ * default (or none).
  */
 export const isPlainObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/** `over` on top of `base`, neither changed. `undefined` keeps the base; a key set to `null` is removed. */
+export function deepMerge(base: unknown, over: unknown): unknown {
+	if (over === undefined) return base;
+	if (!isPlainObject(over)) return over;
+	const out: Record<string, unknown> = isPlainObject(base) ? { ...base } : {};
+	for (const [key, value] of Object.entries(over)) {
+		if (value === null) delete out[key];
+		else out[key] = deepMerge(out[key], value);
+	}
+	return out;
+}
 
 /** Dotted paths where `b` differs from `a` (leaves and arrays compared whole), e.g. 'pacing.watching.halfLifeSeconds'. */
 export function diffPaths(a: unknown, b: unknown, prefix = ''): string[] {

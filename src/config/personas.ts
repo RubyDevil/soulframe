@@ -6,9 +6,9 @@
  * of them).
  *
  * The config holds only what the code computes with: who it is to the code (its id and name), its hours and their
- * time zone. Everything it says is its prompt's; how its brain runs (models, limits, pacing) is the brain's settings
- * (settings.ts), never a persona's. The app says which channels each persona is on: the names
- * its hours' `on:` may use.
+ * time zone, and optionally its own pacing and relationship over its brain's settings (settings.ts), which hold
+ * everything else about how its brain runs. Everything it says is its prompt's. The app says which channels each
+ * persona is on: the names its hours' `on:` may use.
  *
  * Every problem is returned, never thrown, each with its path (after its source, when given); a key the schema
  * doesn't know is an error, with the nearest known one, and a key that earlier versions read says where it went.
@@ -20,6 +20,7 @@ import { parse } from 'yaml';
 import { z } from 'zod';
 import type { ChannelId } from '../channel.js';
 import { isPlainObject } from '../merge.js';
+import { DEFAULT_SETTINGS, mergedSettings, type PersonaSettings, type Settings } from '../settings.js';
 import { refuseSchool, ScheduleSchema, type ScheduleConfig } from './hours.js';
 import { schemaProblems, sourced, suggest, unknownKeyProblems, unknownKeys, type Problem } from './issues.js';
 
@@ -35,6 +36,9 @@ const isTimeZone = (timeZone: string) => {
 	}
 };
 
+/** Its own pacing or relationship: only the keys it changes, merged over its brain's settings and checked with them (mergedSettings). */
+const ownOf = <Key extends keyof PersonaSettings>() => z.record(z.string(), z.unknown()).transform((value) => value as NonNullable<PersonaSettings[Key]>).optional();
+
 /** A persona's config: only what the code computes with. */
 const PersonaConfigSchema = z.object({
 	/** The key of everything stored about it and the seed of its days (`PERSONA_ID`); a persona file's name gives it. */
@@ -45,6 +49,10 @@ const PersonaConfigSchema = z.object({
 	timezone: z.string().refine(isTimeZone, (zone) => ({ message: `not an IANA time zone${suggest(zone, Intl.supportedValuesOf('timeZone'))}` })),
 	/** Its hours by weekday: online time, breaks and busy blocks (config/hours.ts). */
 	schedule: ScheduleSchema,
+	/** How it texts, over its brain's `pacing`: only the keys it changes (how fast it types, how long it takes to look…). */
+	pacing: ownOf<'pacing'>(),
+	/** How it bonds, over its brain's `relationship`: only the keys it changes (how fast familiarity grows and fades…). */
+	relationship: ownOf<'relationship'>(),
 });
 
 /** With `adult`, refusing busy reasons about school too (config/hours.ts refuseSchool). */
@@ -66,7 +74,7 @@ const MOVED: Readonly<Record<string, string>> = {
 	chattiness: "no longer read: say how much it talks in group chats in its prompt (with the group-chat gate on, how readily it speaks is its brain's decisions.groupChatGate.chimeInAt)",
 	sfw: "is the brain's policy now: createBrain({ policy: { sfw: true } })",
 	character: 'no longer read: write its facts, interests and boundaries in its prompt (moods are gone)',
-	settings: 'are its brain\'s now, never part of a persona: createBrain({ settings }), read with parseSettings',
+	settings: "no longer read: its own pacing and relationship are keys of its config now; any other setting is its brain's: createBrain({ settings })",
 };
 
 /** The `on:` names of these hours that are none of `channels`, each with its path. */
@@ -83,14 +91,16 @@ type Parsed = { persona?: Persona; issues: string[] };
 /**
  * A persona from its config and its prompt, checked, from wherever the app keeps them (its own loader, a database,
  * values in code). `channels` are the channels the app puts it on: the names its hours' `on:` may use. With `adult`
- * (personas used in 18+ conversations), a busy reason about school is refused too. `source` names where it came from
- * in the problems (a file, say). Never throws: with any problem there is no persona, and `issues` say what is wrong.
+ * (personas used in 18+ conversations), a busy reason about school is refused too. Its own pacing and relationship
+ * are checked over `settings` (the defaults unless given). `source` names where it came from in the problems (a file,
+ * say). Never throws: with any problem there is no persona, and `issues` say what is wrong.
  */
 export function parsePersona({
 	config,
 	prompt,
 	channels,
 	adult,
+	settings = DEFAULT_SETTINGS,
 	source,
 }: {
 	config: unknown;
@@ -98,6 +108,8 @@ export function parsePersona({
 	channels: readonly ChannelId[];
 	/** For 18+ conversations: busy reasons about school are refused. */
 	adult?: boolean;
+	/** The settings its brain will run with: its own pacing and relationship are checked over them. */
+	settings?: Settings;
 	/** Where it came from, before each problem ("robin.md › schedule: Required"). */
 	source?: string;
 }): Parsed {
@@ -112,6 +124,7 @@ export function parsePersona({
 	for (const { path, name } of parsed.success ? unknownChannels(parsed.data.schedule, channels) : []) {
 		problems.push({ path, message: `"${name}" is not one of this persona's channels (${channels.join(', ') || 'none'})${suggest(name, channels)}` });
 	}
+	if (parsed.success) problems.push(...mergedSettings(parsed.data, settings).problems);
 	if (!parsed.success || problems.length) return issues(problems);
 	return { persona: { ...parsed.data, prompt: prompt.trim() }, issues: [] };
 }
@@ -133,7 +146,7 @@ const splitFrontmatter = (text: string): { yaml: string; body: string } | string
  */
 export function parsePersonaMarkdown(
 	text: string,
-	{ id, channels, adult, source }: { id: string; channels: readonly ChannelId[]; adult?: boolean; source?: string },
+	{ id, channels, adult, settings, source }: { id: string; channels: readonly ChannelId[]; adult?: boolean; settings?: Settings; source?: string },
 ): Parsed {
 	const whole = (message: string) => ({ issues: [sourced(source, { path: [], message })] });
 	const split = splitFrontmatter(text);
@@ -146,8 +159,10 @@ export function parsePersonaMarkdown(
 		return whole(error instanceof Error ? error.message : String(error));
 	}
 	if (!isPlainObject(config)) return whole("its frontmatter must be a mapping (the persona's config: name, timezone, schedule…)");
-	if (config.id !== undefined && config.id !== id) return { issues: [sourced(source, { path: ['id'], message: `${JSON.stringify(config.id)} but its id is "${id}" (its file's name without .md)` })] };
-	return parsePersona({ config: { ...config, id }, prompt: split.body, channels, adult, source });
+	const parsed = parsePersona({ config: { ...config, id }, prompt: split.body, channels, adult, settings, source });
+	if (config.id === undefined || config.id === id) return parsed;
+	// Another id is one problem among the others: every one shows at once
+	return { issues: [sourced(source, { path: ['id'], message: `${JSON.stringify(config.id)} but its id is "${id}" (its file's name without .md)` }), ...parsed.issues] };
 }
 
 /** Reads files for loadPersonas (injected so tests stay off the disk). */
@@ -179,12 +194,15 @@ export function loadPersonas({
 	channels,
 	files = nodeFiles,
 	adult,
+	settings,
 }: {
 	dir: string;
 	channels: Readonly<Record<string, readonly ChannelId[]>>;
 	files?: ConfigFiles;
 	/** For 18+ conversations: busy reasons about school are refused. */
 	adult?: boolean;
+	/** As parsePersona's. */
+	settings?: Settings;
 }): LoadedPersonas {
 	const issues: string[] = [];
 	const personas: Persona[] = [];
@@ -214,7 +232,7 @@ export function loadPersonas({
 			issues.push(sourced(file, { path: [], message: `can't read it (${(error as { code?: string }).code ?? String(error)})` }));
 			continue;
 		}
-		const loaded = parsePersonaMarkdown(text, { id, channels: own, adult, source: file });
+		const loaded = parsePersonaMarkdown(text, { id, channels: own, adult, settings, source: file });
 		issues.push(...loaded.issues);
 		if (loaded.persona) personas.push(loaded.persona);
 	}

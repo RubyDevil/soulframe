@@ -4,7 +4,7 @@ import { stringify } from 'yaml';
 import { describe, expect, it } from 'vitest';
 import { ScheduleSchema } from '../src/config/hours.js';
 import { loadPersonas, parsePersonaMarkdown, type ConfigFiles } from '../src/config/personas.js';
-import { everyDay, parsedOf, personaOf, testPersona } from './fixtures.js';
+import { everyDay, parsedOf, personaOf, settingsOf, testPersona } from './fixtures.js';
 
 /** The problems of this config (the test persona's unless given), with parsedOf's options. */
 const issuesOf = (config: unknown, options?: Parameters<typeof parsedOf>[1]) => parsedOf(config, options).issues;
@@ -23,6 +23,19 @@ describe('a persona config', () => {
 
 	it('holds only what the code computes with: no settings, no character, no moods, no file path', () => {
 		expect(Object.keys(test()).sort()).toEqual(['id', 'name', 'prompt', 'schedule', 'timezone']);
+	});
+
+	it('keeps its own pacing and relationship as written, checked as settings over the ones given (the defaults unless given)', () => {
+		const own = { pacing: { glance: { medianSeconds: 90 }, typingCharsPerSecond: [2, 3] }, relationship: { familiarity: { growth: 0.02 } } };
+		expect(test(own)).toMatchObject(own);
+		expect(issuesOf(testPersona({ pacing: { glanse: { medianSeconds: 30 }, replySplitChance: 1.5 } }), { source: 'test.md' })).toEqual([
+			'test.md › pacing.replySplitChance: Number must be less than or equal to 1 (got 1.5)',
+			'test.md › pacing.glanse: unknown key (did you mean "glance"?)',
+		]);
+		// A rule across keys holds over the settings its brain will run with
+		const slow = testPersona({ pacing: { glance: { medianSeconds: 400 } } });
+		expect(issuesOf(slow)).toEqual(['pacing.glance: p90Seconds must be above medianSeconds (got {"medianSeconds":400,"p90Seconds":150,"…)']);
+		expect(issuesOf(slow, { settings: settingsOf({ pacing: { glance: { p90Seconds: 900 } } }) })).toEqual([]);
 	});
 
 	it('refuses a config that is not a mapping, and a prompt that is not text', () => {
@@ -64,7 +77,7 @@ describe('a persona config', () => {
 			"chattiness: no longer read: say how much it talks in group chats in its prompt (with the group-chat gate on, how readily it speaks is its brain's decisions.groupChatGate.chimeInAt)",
 			"sfw: is the brain's policy now: createBrain({ policy: { sfw: true } })",
 			'character: no longer read: write its facts, interests and boundaries in its prompt (moods are gone)',
-			"settings: are its brain's now, never part of a persona: createBrain({ settings }), read with parseSettings",
+			"settings: no longer read: its own pacing and relationship are keys of its config now; any other setting is its brain's: createBrain({ settings })",
 		]);
 		// A window in place of a schedule: the schedule is missing, and the window says how to write it
 		expect(issuesOf(testPersona({ schedule: undefined, window: old.window }))).toEqual(['schedule: Required', expect.stringMatching(/^window: no longer read/)]);
@@ -88,6 +101,11 @@ describe('a persona file (parsePersonaMarkdown)', () => {
 	it('takes an id in the frontmatter only when it is its own', () => {
 		expect(parse(markdown(fileConfig({ id: 'test' }))).persona?.id).toBe('test');
 		expect(parse(markdown(fileConfig({ id: 'other' })), 'test.md').issues).toEqual(['test.md › id: "other" but its id is "test" (its file\'s name without .md)']);
+		// With the file's other problems, all at once
+		expect(parse(markdown(fileConfig({ id: 'other', nmae: 'Test' })), 'test.md').issues).toEqual([
+			'test.md › id: "other" but its id is "test" (its file\'s name without .md)',
+			'test.md › nmae: unknown key (did you mean "name"?)',
+		]);
 	});
 
 	it('reads Windows line endings and a byte order mark, and a file with no prompt after its frontmatter', () => {

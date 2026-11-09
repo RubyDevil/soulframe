@@ -13,7 +13,8 @@
  */
 
 import { z } from 'zod';
-import { schemaProblems, sourced, unknownKeyProblems, unknownKeys, type Problem } from './config/issues.js';
+import { ConfigError, schemaProblems, sourced, unknownKeyProblems, unknownKeys, type Problem } from './config/issues.js';
+import { deepMerge, isPlainObject } from './merge.js';
 
 /** [least, most]: the bounds a value is kept within, or drawn from evenly (soulframe's own drawn ranges are `drawn`, with a shape). */
 export const range = (min: number, max: number, floor = 0) =>
@@ -535,10 +536,16 @@ const MOVED_SETTINGS: Readonly<Record<string, string>> = {
  * nearest known key. Never throws.
  */
 const parseWith = <S extends z.ZodTypeAny>(schema: S, raw: unknown, source: string | undefined, moved: Readonly<Record<string, string>>, check: (value: z.output<S>) => Problem[]) => {
+	const { value, problems } = readWith(schema, raw, moved, check);
+	return { value, issues: problems.map((problem) => sourced(source, problem)) };
+};
+
+/** parseWith's work, its problems not yet worded. */
+const readWith = <S extends z.ZodTypeAny>(schema: S, raw: unknown, moved: Readonly<Record<string, string>>, check: (value: z.output<S>) => Problem[]) => {
 	const value = raw === null ? undefined : raw;
 	const parsed = schema.safeParse(value);
-	const issues = [...schemaProblems(parsed.error, value), ...unknownKeyProblems(unknownKeys(schema, value), moved), ...(parsed.success ? check(parsed.data) : [])].map((problem) => sourced(source, problem));
-	return { value: parsed.success && !issues.length ? (parsed.data as z.output<S>) : undefined, issues };
+	const problems = [...schemaProblems(parsed.error, value), ...unknownKeyProblems(unknownKeys(schema, value), moved), ...(parsed.success ? check(parsed.data) : [])];
+	return { value: parsed.success && !problems.length ? (parsed.data as z.output<S>) : undefined, problems };
 };
 
 /**
@@ -611,6 +618,33 @@ export const DEFAULT_SERVICE_SETTINGS: ServiceSettings = ServiceSettingsSchema.p
 export function parseServiceSettings(raw: unknown, { source }: { source?: string } = {}): { service?: ServiceSettings; issues: string[] } {
 	const { value, issues } = parseWith(ServiceSettingsSchema, raw, source, {}, () => []);
 	return value ? { service: value, issues } : { issues };
+}
+
+type SettingsInput = NonNullable<z.input<typeof SettingsSchema>>;
+/** A persona's own pacing and relationship, as its config writes them: only the keys it changes. */
+export type PersonaSettings = { pacing?: NonNullable<SettingsInput['pacing']>; relationship?: NonNullable<SettingsInput['relationship']> };
+
+/** `own` with each bare `[least, most]` written over a drawn range of `base` given that range's shape. */
+const keepShapes = (own: unknown, base: unknown): unknown => {
+	if (Array.isArray(own) && isPlainObject(base) && 'shape' in base) return { range: own, shape: base.shape };
+	return isPlainObject(own) && isPlainObject(base) ? Object.fromEntries(Object.entries(own).map(([key, value]) => [key, keepShapes(value, base[key])])) : own;
+};
+
+/**
+ * `settings` with a persona's own pacing and relationship merged over them (deepMerge: key by key, a list or a range
+ * replacing, `null` back to the default; a bare `[least, most]` keeps the shape `settings` give it), checked again: a
+ * rule across keys may depend on both.
+ */
+export function mergedSettings({ pacing, relationship }: PersonaSettings, settings: Settings): { value?: Settings; problems: Problem[] } {
+	if (pacing === undefined && relationship === undefined) return { value: settings, problems: [] };
+	return readWith(SettingsSchema, deepMerge(settings, keepShapes({ pacing, relationship }, settings)), {}, checkSettings);
+}
+
+/** mergedSettings' value, else a ConfigError naming the persona: what createBrain and personaReport run with. */
+export function ownSettings(persona: PersonaSettings & { id: string }, settings: Settings): Settings {
+	const { value, problems } = mergedSettings(persona, settings);
+	if (!value) throw new ConfigError(`the settings of persona "${persona.id}"`, problems.map((problem) => sourced(undefined, problem)));
+	return value;
 }
 
 /** Milliseconds from seconds, minutes, hours or days, for the ranges above. */

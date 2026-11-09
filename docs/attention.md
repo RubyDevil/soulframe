@@ -4,7 +4,8 @@ How a persona decides **when** it answers, **who** it answers first, and **how w
 with every setting that changes it explained in plain terms. The [configuration reference](./configuration.md#settings)
 lists the same keys in tables, with their types and ranges; this page says what each one does, and what to expect when
 you change it. All of them are settings of a persona's brain (`createBrain({ settings })`): one object for every
-persona, or one of their own for a persona that should answer differently.
+persona, with [its own](./configuration.md#its-own-pacing-and-relationship) over them for one that should answer
+differently.
 
 - [The model in one minute](#the-model-in-one-minute)
 - [`relationship`: getting to know and like each person](#relationship-getting-to-know-and-like-each-person)
@@ -66,15 +67,14 @@ put together, are in [system prompts](./prompts.md) (`FAMILIARITY_LEVELS`, `AFFI
 Your own levels, with thresholds of your own:
 
 ```yaml
-settings:
-  relationship:
-    familiarity:
-      levels:
-        - { from: 0, text: "{name} is new here; you're still a bit formal." }
-        - { from: 0.25, text: "You and {name} chat often and easily." }
-        - { from: 0.6, text: "{name} is a friend: you joke around and check in on each other." }
-    affinity:
-      enabled: false
+relationship:
+  familiarity:
+    levels:
+      - { from: 0, text: "{name} is new here; you're still a bit formal." }
+      - { from: 0.25, text: "You and {name} chat often and easily." }
+      - { from: 0.6, text: "{name} is a friend: you joke around and check in on each other." }
+  affinity:
+    enabled: false
 ```
 
 A database made by `0.1.0-beta.0` is upgraded when the store opens: familiarity starts from each person's

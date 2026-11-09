@@ -984,6 +984,27 @@ describe('settings and relationship', () => {
 		expect(system).toContain('"importance": 1, "action": "none"');
 	});
 
+	it("runs with the persona's own pacing and relationship over the settings it is given, and says so in brain.settings", async () => {
+		const warmer = turn('aw', { affinity: 1 });
+		// The app's settings say a small step; this persona bonds faster, and types slower than the rest
+		const { dm, store, brain } = withPersona({ relationship: { affinity: { step: 0.4 } }, pacing: { typingCharsPerSecond: [2, 3] }, settings: { relationship: { affinity: { step: 0.05, fadeHalfLifeDays: 10 } } } }, warmer);
+		await dm('you are lovely');
+		expect(store.personById(1).affinity).toBeCloseTo(0.4, 9);
+		expect(brain.settings.relationship.affinity).toEqual({ ...DEFAULT_SETTINGS.relationship.affinity, step: 0.4, fadeHalfLifeDays: 10 });
+		expect(brain.settings.pacing.typingCharsPerSecond).toEqual({ ...DEFAULT_SETTINGS.pacing.typingCharsPerSecond, range: [2, 3] });
+		expect(brain.settings.memory).toEqual(DEFAULT_SETTINGS.memory);
+	});
+
+	it("refuses to start with own settings that don't fit the ones it is given, naming the persona", () => {
+		// A typical glance of two minutes: fine over the defaults' p90 of 150 seconds, not over one of 100
+		const own = personaOf(robin({ pacing: { glance: { medianSeconds: 120 } } }));
+		const start = (settings: Settings) => () => createBrain({ persona: own, settings, runtime: { store: memoryStore(), rng: () => 0.5, now: () => NOW }, llm: { complete: async () => '' } });
+		expect(start(DEFAULT_SETTINGS)).not.toThrow();
+		expect(start(settingsOf({ pacing: { glance: { medianSeconds: 30, p90Seconds: 100 } } }))).toThrow(
+			'the settings of persona "robin" has 1 problem:\n  - pacing.glance: p90Seconds must be above medianSeconds (got {"medianSeconds":120,"p90Seconds":100,"…)',
+		);
+	});
+
 	it("grows familiarity by the importance the model gave the turn, and keeps that importance for the queue", async () => {
 		const grown = async (importance: number) => {
 			const { dm } = withPersona({}, turn('ok', { importance }));

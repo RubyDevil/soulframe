@@ -6,7 +6,7 @@ import { splitReply } from './pacing.js';
 import { clip, lookedCard, mediaOf, seenIn, timeLimited, unseen, type IncomingMessage, type MessageMedia, type PreviewLink, type SeenImage, type SeenLink } from './perception.js';
 import { hostOf, isStopRequest, MINOR_EXIT, minorSignal, STOP_ACK, stripForeignLinks } from './safety.js';
 import { busyAt, fullyOnline, situationAt } from './schedule.js';
-import { DAY, HOUR, MINUTE, SECOND, type Settings } from './settings.js';
+import { DAY, HOUR, MINUTE, ownSettings, SECOND, type Settings } from './settings.js';
 import {
 	ADDRESSED_QUESTION,
 	ADULTS_ONLY_RULE,
@@ -175,7 +175,7 @@ export interface GroupChatLine {
 export interface Brain {
 	/** The persona it is the brain of, as `createBrain` was given it. */
 	readonly persona: Persona;
-	/** The settings it runs with, as `createBrain` was given them: its reply queue reads them here. */
+	/** The settings it runs with, the persona's own pacing and relationship over `createBrain`'s: its reply queue reads them here. */
 	readonly settings: Settings;
 	/**
 	 * A message they wrote on `channel` as `name` (the name they go by there: the person keeps the one of their newest
@@ -277,7 +277,7 @@ export interface Policy {
 
 export function createBrain({
 	persona,
-	settings,
+	settings: given,
 	identity,
 	style,
 	runtime,
@@ -290,7 +290,8 @@ export function createBrain({
 	persona: Persona;
 	/**
 	 * What it runs with: models, limits, memory, pacing, the typed checks (`parseSettings`; `parseSettings({})` for every
-	 * default). Its reply queue reads them from the brain; make its model client with the same (`llmsFor`).
+	 * default), the persona's own pacing and relationship over them (a ConfigError if they don't fit). Its reply queue
+	 * reads them from the brain; make its model client with the same (`llmsFor`).
 	 */
 	settings: Settings;
 	/** The app's phrase on what the persona is, after its name in the identity line ("You are Robin, <identity>, chatting by text in …"); none for the name alone. */
@@ -310,6 +311,7 @@ export function createBrain({
 	/** Gets the card of a link that came without one, while it reads; none by default: such a link is only its site's name. */
 	previewLink?: PreviewLink;
 }): Brain {
+	const settings = ownSettings(persona, given);
 	const { store } = runtime;
 	// Read at each use: a clock swapped on the runtime is the brain's too
 	const now = () => runtime.now();

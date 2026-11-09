@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SERVICE_SETTINGS, DEFAULT_SETTINGS, parseServiceSettings, parseSettings, SettingsSchema, taskModel } from '../src/settings.js';
+import { DEFAULT_SERVICE_SETTINGS, DEFAULT_SETTINGS, mergedSettings, parseServiceSettings, parseSettings, SettingsSchema, taskModel } from '../src/settings.js';
+import { settingsOf } from './fixtures.js';
 
 describe('parseSettings', () => {
 	it('fills in every default: nothing at all, null (an empty YAML file) and {} are the defaults', () => {
@@ -81,6 +82,21 @@ describe('parseSettings', () => {
 	it('refuses settings that are not a mapping, "<source>:" before it as before any problem of the whole', () => {
 		expect(parseSettings(['a list']).issues).toEqual(['Expected object, received array (got ["a list"])']);
 		expect(parseSettings('oops', { source: 'settings.yaml' }).issues).toEqual(['settings.yaml: Expected object, received string (got "oops")']);
+	});
+});
+
+describe('mergedSettings', () => {
+	const app = settingsOf({ pacing: { glance: { medianSeconds: 40, p90Seconds: 600 }, typingCharsPerSecond: { range: [4, 8], shape: 'uniform' } } });
+
+	it("merges a persona's own pacing and relationship over the settings key by key; a bare range keeps the shape they give it", () => {
+		expect(mergedSettings({}, app).value).toBe(app);
+		const { value } = mergedSettings({ pacing: { glance: { medianSeconds: 90 }, typingCharsPerSecond: [2, 3] }, relationship: { affinity: { enabled: false } } }, app);
+		expect(value?.pacing.glance).toEqual({ ...app.pacing.glance, medianSeconds: 90 });
+		expect(value?.pacing.typingCharsPerSecond).toEqual({ range: [2, 3], shape: 'uniform' });
+		expect(value?.relationship.affinity).toEqual({ ...app.relationship.affinity, enabled: false });
+		// A shape of its own, and null for the default
+		expect(mergedSettings({ pacing: { typingCharsPerSecond: { range: [2, 3], shape: 'normal' } } }, app).value?.pacing.typingCharsPerSecond.shape).toBe('normal');
+		expect(mergedSettings({ pacing: { glance: null } as never }, app).value?.pacing.glance).toEqual(DEFAULT_SETTINGS.pacing.glance);
 	});
 });
 

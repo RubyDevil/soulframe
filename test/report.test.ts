@@ -27,6 +27,8 @@ describe('the report on a persona', () => {
 		expect(today.length).toBeGreaterThan(0);
 		expect(lineOf()).toBe(`  interruptions today: ${today.map((away) => `${clockText(away.start, 'UTC')} to ${clockText(away.end, 'UTC')}`).join(', ')}`);
 		expect(lineOf(settingsOf({ pacing: { interruptions: { meanMinutes: 0 } } }))).toBe('  interruptions today: none');
+		// Its own pacing, over the settings given
+		expect(reportOf({ schedule: daily(evening), pacing: { interruptions: { meanMinutes: 0 } } }).find((line) => line.startsWith('  interruptions today: '))).toBe('  interruptions today: none');
 	});
 
 	it("shows today's and tomorrow's agenda", () => {
@@ -76,6 +78,13 @@ describe('the warnings on a persona', () => {
 		expect(warningsOf({ schedule: daily({ start: ['19:00', '19:00'], end: ['19:30', '19:30'] }) })).toEqual(['"test" is online about 0.5 hours a day on average']);
 		expect(warningsOf({ schedule: daily(evening, 0.6) })).toEqual(['"test" takes more than every other day off (skipDayChance 0.6)']);
 		expect(warningsOf({ schedule: daily(evening) })).toEqual([]);
+	});
+
+	it('warns about its own pacing.burst.maxRestarts above 1, unless it never starts over', () => {
+		expect(warningsOf({ schedule: WINDOW, pacing: { burst: { maxRestarts: 3 } } })).toEqual([
+			'"test" has its own pacing.burst.maxRestarts 3: each restart drops a draft already paid for, so one reply may cost up to 4 DM turns of tokens',
+		]);
+		expect(warningsOf({ schedule: WINDOW, pacing: { burst: { maxRestarts: 3, restartOnNewMessage: false } } })).toEqual([]);
 	});
 
 	it('warns about one of its channels that no span includes', () => {
