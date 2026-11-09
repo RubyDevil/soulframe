@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createConfiguredDecisions, DISABLED_DECISIONS, parseAnswers, probabilityOf, scoreOf, DecisionsParseError, type Question } from '../src/decisions.js';
 import { createTokenMeter } from '../src/llm.js';
-import { ServiceSettingsSchema } from '../src/settings.js';
+import { DEFAULT_SERVICE_SETTINGS, ServiceSettingsSchema } from '../src/settings.js';
 import { memoryStore } from './fixtures.js';
 
 const predicate: Question = { type: 'predicate', name: 'p', instructions: 'P?' };
@@ -100,7 +100,7 @@ describe('createConfiguredDecisions', () => {
 
 	it('is the disabled client while the service settings turn it off: nothing is ever sent', async () => {
 		const fetch = vi.spyOn(globalThis, 'fetch');
-		const off = createConfiguredDecisions({ settings: ServiceSettingsSchema.parse({}).decisions, apiKeyOf: () => 'key' });
+		const off = createConfiguredDecisions({ settings: DEFAULT_SERVICE_SETTINGS.decisions, apiKeyOf: () => 'key' });
 		expect(off).toBe(DISABLED_DECISIONS);
 		expect(await off.ask('a', QUESTIONS, context)).toBeNull();
 		expect(fetch).not.toHaveBeenCalled();

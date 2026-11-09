@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createCannedLlm, createConfiguredLlm, createTokenMeter, keyEnvFor, LlmBudgetError, llmsFor, ModelNotConfiguredError, modelKeys, providerSet, ProviderUnavailableError } from '../src/llm.js';
+import { createCannedLlm, createConfiguredLlm, createTokenMeter, LlmBudgetError, llmsFor, ModelNotConfiguredError, modelKeys, providerSet, ProviderUnavailableError } from '../src/llm.js';
 import { DEFAULT_SERVICE_SETTINGS, DEFAULT_SETTINGS, ServiceSettingsSchema, SettingsSchema } from '../src/settings.js';
 import { memoryStore } from './fixtures.js';
 
@@ -301,15 +301,6 @@ describe('createConfiguredLlm', () => {
 		const chatOnly = SettingsSchema.parse({ models: { default: { baseUrl: 'https://llm.example/v1', model: 'chat-model' } } });
 		await expect(createConfiguredLlm({ settings: chatOnly, apiKeyOf: () => 'key' }).complete([], { task: 'vision' })).rejects.toBeInstanceOf(ModelNotConfiguredError);
 		expect(fetch).not.toHaveBeenCalled();
-	});
-});
-
-describe('keyEnvFor', () => {
-	it("is the task's own apiKeyEnv, else default.apiKeyEnv on the default provider, never on its own; '' for none", () => {
-		expect(keyEnvFor(settings, 'directMessage')).toBe('LLM_API_KEY');
-		expect(keyEnvFor(settings, 'post')).toBe('OTHER_KEY');
-		expect(keyEnvFor(SettingsSchema.parse({ models: { groupChat: { apiKeyEnv: '' } } }), 'groupChat')).toBe('');
-		expect(keyEnvFor(SettingsSchema.parse({ models: { groupChat: { baseUrl: 'https://other.example/v1' } } }), 'groupChat')).toBeUndefined();
 	});
 });
 

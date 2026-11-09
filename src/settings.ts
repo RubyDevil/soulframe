@@ -13,7 +13,7 @@
  */
 
 import { z } from 'zod';
-import { ConfigError, schemaProblems, sourced, unknownKeyProblems, unknownKeys, type Problem } from './config/issues.js';
+import { ConfigError, readConfig, sourced, type Problem } from './config/issues.js';
 import { deepMerge, isPlainObject } from './merge.js';
 
 /** [least, most]: the bounds a value is kept within, or drawn from evenly (soulframe's own drawn ranges are `drawn`, with a shape). */
@@ -475,6 +475,8 @@ export interface TaskModel {
 	temperature: number;
 	/** It names a `baseUrl` of its own: nothing of the default provider (key, model, jsonMode) is used for it. */
 	ownProvider: boolean;
+	/** Off: `vision` without a model of its own (it never takes the default one), so nothing calls it. */
+	off: boolean;
 }
 
 /**
@@ -486,15 +488,17 @@ export function taskModel(settings: Settings, task: Task): TaskModel {
 	const { default: base } = settings.models;
 	const own = settings.models[task];
 	const ownProvider = own.baseUrl !== undefined;
+	const model = own.model ?? (ownProvider || task === 'vision' ? undefined : base.model);
 	return {
 		baseUrl: own.baseUrl ?? base.baseUrl,
 		apiKeyEnv: own.apiKeyEnv ?? (ownProvider ? undefined : base.apiKeyEnv),
-		model: own.model ?? (ownProvider || task === 'vision' ? undefined : base.model),
+		model,
 		jsonMode: own.jsonMode ?? (ownProvider ? false : base.jsonMode),
 		timeoutSeconds: own.timeoutSeconds ?? base.timeoutSeconds,
 		maxTokens: own.maxTokens,
 		temperature: own.temperature,
 		ownProvider,
+		off: task === 'vision' && model === undefined,
 	};
 }
 
@@ -502,17 +506,15 @@ export function taskModel(settings: Settings, task: Task): TaskModel {
  * Rules across settings that the schema can't express: a task on a provider of its own names its own key and model
  * (the default provider's never reach another host), and once a provider is set every text task has a model.
  */
-export function checkSettings(settings: Settings): Problem[] {
+function checkSettings(settings: Settings): Problem[] {
 	const issues: Problem[] = [];
 	for (const task of TASKS) {
 		const at = ['models', task];
-		const own = settings.models[task];
 		const used = taskModel(settings, task);
 		if (used.ownProvider) {
-			if (own.apiKeyEnv === undefined) issues.push({ path: [...at, 'apiKeyEnv'], message: "on a provider of its own (its baseUrl), it names its own key variable ('' for none): the default one is never sent to another host" });
-			if (own.model === undefined) issues.push({ path: [...at, 'model'], message: 'on a provider of its own (its baseUrl), it names its own model' });
-		} else if (task !== 'vision' && used.baseUrl !== undefined && used.model === undefined) {
-			// vision is optional: off without a model of its own
+			if (used.apiKeyEnv === undefined) issues.push({ path: [...at, 'apiKeyEnv'], message: "on a provider of its own (its baseUrl), it names its own key variable ('' for none): the default one is never sent to another host" });
+			if (used.model === undefined) issues.push({ path: [...at, 'model'], message: 'on a provider of its own (its baseUrl), it names its own model' });
+		} else if (!used.off && used.baseUrl !== undefined && used.model === undefined) {
 			issues.push({ path: at, message: 'no model named (set it, or models.default.model)' });
 		}
 	}
@@ -530,33 +532,14 @@ const MOVED_SETTINGS: Readonly<Record<string, string>> = {
 };
 
 /**
- * `raw` read with `schema`: every value it leaves out at its default (nothing at all, or `null` as an empty YAML file
- * reads, is every default), or else every problem, each with its path, after `source` when given. A key the schema
- * doesn't know is a problem too: one an earlier version read says where it went (`moved`), any other gets the
- * nearest known key. Never throws.
- */
-const parseWith = <S extends z.ZodTypeAny>(schema: S, raw: unknown, source: string | undefined, moved: Readonly<Record<string, string>>, check: (value: z.output<S>) => Problem[]) => {
-	const { value, problems } = readWith(schema, raw, moved, check);
-	return { value, issues: problems.map((problem) => sourced(source, problem)) };
-};
-
-/** parseWith's work, its problems not yet worded. */
-const readWith = <S extends z.ZodTypeAny>(schema: S, raw: unknown, moved: Readonly<Record<string, string>>, check: (value: z.output<S>) => Problem[]) => {
-	const value = raw === null ? undefined : raw;
-	const parsed = schema.safeParse(value);
-	const problems = [...schemaProblems(parsed.error, value), ...unknownKeyProblems(unknownKeys(schema, value), moved), ...(parsed.success ? check(parsed.data) : [])];
-	return { value: parsed.success && !problems.length ? (parsed.data as z.output<S>) : undefined, problems };
-};
-
-/**
  * `raw` read as a brain's settings: every setting it leaves out at its default (nothing at all, or `null` as an empty
  * YAML file reads, is every default), or else every problem, each with its path, after `source › ` when given. A key
  * the schema doesn't know is a problem too, with the nearest known one, or where it went for a key of the 0.1 betas.
  * Never throws.
  */
 export function parseSettings(raw: unknown, { source }: { source?: string } = {}): { settings?: Settings; issues: string[] } {
-	const { value, issues } = parseWith(SettingsSchema, raw, source, MOVED_SETTINGS, checkSettings);
-	return value ? { settings: value, issues } : { issues };
+	const { value, problems } = readConfig(SettingsSchema, raw, { moved: MOVED_SETTINGS, check: checkSettings });
+	return value ? { settings: value, issues: [] } : { issues: problems.map((problem) => sourced(source, problem)) };
 }
 
 /**
@@ -616,8 +599,8 @@ export const DEFAULT_SERVICE_SETTINGS: ServiceSettings = ServiceSettingsSchema.p
 
 /** `raw` read as the service settings, as `parseSettings` reads a brain's. Never throws. */
 export function parseServiceSettings(raw: unknown, { source }: { source?: string } = {}): { service?: ServiceSettings; issues: string[] } {
-	const { value, issues } = parseWith(ServiceSettingsSchema, raw, source, {}, () => []);
-	return value ? { service: value, issues } : { issues };
+	const { value, problems } = readConfig(ServiceSettingsSchema, raw);
+	return value ? { service: value, issues: [] } : { issues: problems.map((problem) => sourced(source, problem)) };
 }
 
 type SettingsInput = NonNullable<z.input<typeof SettingsSchema>>;
@@ -637,7 +620,7 @@ const keepShapes = (own: unknown, base: unknown): unknown => {
  */
 export function mergedSettings({ pacing, relationship }: PersonaSettings, settings: Settings): { value?: Settings; problems: Problem[] } {
 	if (pacing === undefined && relationship === undefined) return { value: settings, problems: [] };
-	return readWith(SettingsSchema, deepMerge(settings, keepShapes({ pacing, relationship }, settings)), {}, checkSettings);
+	return readConfig(SettingsSchema, deepMerge(settings, keepShapes({ pacing, relationship }, settings)), { check: checkSettings });
 }
 
 /** mergedSettings' value, else a ConfigError naming the persona: what createBrain and personaReport run with. */

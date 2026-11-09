@@ -124,19 +124,20 @@ describe('taskModel', () => {
 	});
 
 	it("takes what a task names, else the default provider's", () => {
-		expect(taskModel(settings, 'directMessage')).toEqual({ baseUrl: 'https://llm.example/v1', apiKeyEnv: 'MAIN_KEY', model: 'chat', jsonMode: true, timeoutSeconds: 90, maxTokens: 400, temperature: 0.9, ownProvider: false });
+		expect(taskModel(settings, 'directMessage')).toEqual({ baseUrl: 'https://llm.example/v1', apiKeyEnv: 'MAIN_KEY', model: 'chat', jsonMode: true, timeoutSeconds: 90, maxTokens: 400, temperature: 0.9, ownProvider: false, off: false });
 		expect(taskModel(settings, 'groupChat')).toMatchObject({ model: 'small', maxTokens: 60, apiKeyEnv: 'MAIN_KEY' });
 	});
 
 	it("on a provider of its own takes nothing of the default provider but its timeout", () => {
-		expect(taskModel(settings, 'post')).toEqual({ baseUrl: 'https://other.example/v1', apiKeyEnv: 'OTHER_KEY', model: 'poster', jsonMode: false, timeoutSeconds: 90, maxTokens: 160, temperature: 1, ownProvider: true });
+		expect(taskModel(settings, 'post')).toEqual({ baseUrl: 'https://other.example/v1', apiKeyEnv: 'OTHER_KEY', model: 'poster', jsonMode: false, timeoutSeconds: 90, maxTokens: 160, temperature: 1, ownProvider: true, off: false });
 		const bare = SettingsSchema.parse({ models: { ...settings.models, post: { baseUrl: 'https://other.example/v1' } } });
 		expect(taskModel(bare, 'post')).toMatchObject({ apiKeyEnv: undefined, model: undefined, jsonMode: false });
 	});
 
 	it('never gives vision the default model, which may not take images', () => {
 		expect(taskModel(settings, 'vision')).toMatchObject({ model: 'eyes', baseUrl: 'https://llm.example/v1', apiKeyEnv: 'MAIN_KEY' });
-		expect(taskModel(SettingsSchema.parse({ models: { default: settings.models.default } }), 'vision').model).toBeUndefined();
+		expect(taskModel(SettingsSchema.parse({ models: { default: settings.models.default } }), 'vision')).toMatchObject({ model: undefined, off: true });
+		expect(taskModel(settings, 'vision').off).toBe(false);
 	});
 });
 

@@ -11,11 +11,9 @@ export interface LlmMessage {
 	images?: readonly string[];
 }
 
-/** The kinds of task, each with its own model settings (`settings.models.<task>`; `default` is none). */
-export type LlmTask = Task;
-
 interface LlmOptions {
-	task: LlmTask;
+	/** The kind of task, each with its own model settings (`settings.models.<task>`; `default` is none). */
+	task: Task;
 	/** The answer must be a JSON object (asked of the provider too when the task's jsonMode is on, see settings.ts). */
 	json?: boolean;
 }
@@ -126,17 +124,13 @@ export function createLimiter(size: number) {
 
 type Limiter = ReturnType<typeof createLimiter>;
 
-/** The variable holding a task's key (settings.ts taskModel); '' for none, undefined on a provider of its own that names none. */
-export const keyEnvFor = (settings: Settings, task: LlmTask) => taskModel(settings, task).apiKeyEnv;
-
 /** The key variables a persona's text model reads, each with the setting naming it: one per task with a provider, none for an empty key. */
 export function modelKeys(settings: Settings): Map<string, string> {
 	const keys = new Map<string, string>();
 	for (const task of TASKS) {
-		const { baseUrl, apiKeyEnv, model } = taskModel(settings, task);
+		const { baseUrl, apiKeyEnv, off } = taskModel(settings, task);
 		// A task that is off needs no key
-		if (task === 'vision' && !model) continue;
-		if (!apiKeyEnv || keys.has(apiKeyEnv) || !baseUrl) continue;
+		if (off || !apiKeyEnv || keys.has(apiKeyEnv) || !baseUrl) continue;
 		keys.set(apiKeyEnv, settings.models[task].apiKeyEnv === undefined ? 'models.default.apiKeyEnv' : `models.${task}.apiKeyEnv`);
 	}
 	return keys;

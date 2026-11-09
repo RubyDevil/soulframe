@@ -6,7 +6,7 @@ import { splitReply } from './pacing.js';
 import { clip, lookedCard, mediaOf, seenIn, timeLimited, unseen, type IncomingMessage, type MessageMedia, type PreviewLink, type SeenImage, type SeenLink } from './perception.js';
 import { hostOf, isStopRequest, MINOR_EXIT, minorSignal, STOP_ACK, stripForeignLinks } from './safety.js';
 import { busyAt, fullyOnline, situationAt } from './schedule.js';
-import { DAY, HOUR, MINUTE, ownSettings, SECOND, type Settings } from './settings.js';
+import { DAY, HOUR, MINUTE, ownSettings, SECOND, taskModel, type Settings } from './settings.js';
 import {
 	ADDRESSED_QUESTION,
 	ADULTS_ONLY_RULE,
@@ -330,17 +330,18 @@ export function createBrain({
 	const rulesOn = (channel: Channel) => [...(channel.adult ? [ADULTS_ONLY_RULE] : []), ...(policy.sfw ? [SFW_RULE] : []), ...(policy.rules ?? [])];
 
 	// Every prompt's text is in prompts.ts (and the channel's, in the app's Channel); this only fills in the persona
-	const system = (channel: Channel, rules: readonly string[], task: string) =>
-		systemPrompt({ personaPrompt: persona.prompt, name: persona.name, identity, style, channel, rules, task });
+	const system = (channel: Channel, task: string) =>
+		systemPrompt({ personaPrompt: persona.prompt, name: persona.name, identity, style, channel, rules: rulesOn(channel), task });
 
 	const lookLimit = settings.perception.timeoutSeconds * SECOND;
+	const seesImages = !taskModel(settings, 'vision').off;
 
 	/** Asks for a photo's description. No vision model, a failure, a refusal or too long a wait: its `alt`, else it didn't load. */
 	const lookAtImage = async (personId: number, image: SeenImage): Promise<SeenImage> => {
 		const { url, alt } = image;
 		if (url === undefined) return image;
 		let seen: string | null = null;
-		if (settings.models.vision.model !== undefined) {
+		if (seesImages) {
 			try {
 				const prompt = imagePrompt(settings.perception.descriptionChars);
 				seen = seenIn(await timeLimited(() => llm.complete([{ role: 'user', content: prompt, images: [url] }], { task: 'vision', json: true }), lookLimit));
@@ -590,7 +591,6 @@ export function createBrain({
 			// Group chats only in full online time: on a short break an invitation waits (inviteWaits)
 			const joinNow = fullyOnline(persona, channel.id, now());
 			const invitation = channel.invitations ? options.invitation : undefined;
-			const rules = rulesOn(channel);
 			const photos = history.some((m) => m.media?.images.length);
 			const links = history.some((m) => m.media?.links.length);
 
@@ -617,7 +617,7 @@ export function createBrain({
 				...(photos || links ? { media: { photos, links } } : {}),
 			});
 			const messages: LlmMessage[] = [
-				{ role: 'system', content: system(channel, rules, task) },
+				{ role: 'system', content: system(channel, task) },
 				...history.map((m): LlmMessage => ({ role: m.direction === 'in' ? 'user' : 'assistant', content: messageWithMedia(m) })),
 			];
 			const turn = parseTurn(await llm.complete(messages, { task: 'directMessage', json: true }), channel.actions?.map(({ name }) => name));
@@ -676,7 +676,7 @@ export function createBrain({
 			const task = postTask({ selfNotes: selfNotes(), notes: channel.notes ?? [], rules, examples, recentPosts: recent, noLinks: !!allowedHosts });
 			const raw = await llm.complete(
 				[
-					{ role: 'system', content: system(channel, rulesOn(channel), task) },
+					{ role: 'system', content: system(channel, task) },
 					{ role: 'user', content: POST_REQUEST },
 				],
 				{ task: 'post' },
@@ -693,7 +693,6 @@ export function createBrain({
 			const lastAt = Math.max(0, ...recent.map((line) => line.at ?? 0));
 			// Nothing about timing when no line says when it was written
 			const silentFor = settings.context.timeSince && lastAt ? now() - lastAt : undefined;
-			const rules = rulesOn(chat);
 			const time = groupChatTimePrompt({ localTime: localTime(), silentFor, day: dayLines(chat.id) });
 			const transcript = groupChatTranscript(recent, persona.name);
 			// The group-chat gate, if any, ran before this (wantsToSpeak, settings.decisions.groupChatGate): here the model decides
@@ -707,7 +706,7 @@ export function createBrain({
 			});
 			const raw = await llm.complete(
 				[
-					{ role: 'system', content: system(chat, rules, task) },
+					{ role: 'system', content: system(chat, task) },
 					{ role: 'user', content: transcript },
 				],
 				{ task: 'groupChat', json: true },

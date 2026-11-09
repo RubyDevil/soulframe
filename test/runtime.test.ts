@@ -15,13 +15,13 @@ import { createReplyQueue, createRuntime, UnreachableError, watchSpans, type Con
 import { MINOR_EXIT, STOP_ACK } from '../src/safety.js';
 import { DEFAULT_SETTINGS, MINUTE, parseSettings, type Settings } from '../src/settings.js';
 import type { Person, Store } from '../src/store.js';
-import { memoryStore, NOTED_DM, PLAIN_DM, personaOf, settingsOf, SNOOZE, TEST_IDENTITY, testPersona } from './fixtures.js';
+import { everyDay, memoryStore, NOTED_DM, PLAIN_DM, personaOf, settingsOf, SNOOZE, TEST_IDENTITY, testPersona } from './fixtures.js';
 
 // 23:00 in Toronto: inside every night of the hours below
 const OPEN = Date.UTC(2026, 9, 15, 3);
 
 /** A persona's config, online every evening in Toronto. */
-const configOf = (id: string) => ({ id, name: id, timezone: 'America/Toronto', schedule: { days: { 'mon-sun': { online: [{ start: ['18:00', '20:00'], end: ['00:30', '02:00'] }] } } } });
+const configOf = (id: string) => testPersona({ id, name: id, timezone: 'America/Toronto', schedule: everyDay(['18:00', '20:00'], ['00:30', '02:00']) });
 
 const config = {
 	personas: [personaOf(configOf('robin')), personaOf(configOf('sky'))],
@@ -38,8 +38,8 @@ const setUp = () => {
 	return { store, runtime };
 };
 
-/** The same plan every day, for hours a `window:` can't give (breaks, `on`). */
-const everyDay = (plan: Record<string, unknown>) => ScheduleSchema.parse({ days: { 'mon-sun': plan } });
+/** The same plan every day, with breaks or `on` (fixtures' everyDay gives only an online block). */
+const everyDayPlan = (plan: Record<string, unknown>) => ScheduleSchema.parse({ days: { 'mon-sun': plan } });
 
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -105,7 +105,7 @@ describe('DM lifecycle logs', () => {
 	])('joins only on permitted acceptance: %j', async ({ onBreak, acceptInvite, dryRun, action, joins }) => {
 		vi.useFakeTimers();
 		vi.setSystemTime(Date.UTC(2026, 9, 14, 20));
-		const persona = onBreak ? { ...utc.personas[0]!, schedule: everyDay({ breaks: [{ start: ['19:55', '19:55'], minutes: [10, 10] }] }) } : utc.personas[0]!;
+		const persona = onBreak ? { ...utc.personas[0]!, schedule: everyDayPlan({ breaks: [{ start: ['19:55', '19:55'], minutes: [10, 10] }] }) } : utc.personas[0]!;
 		const store = memoryStore();
 		const runtime = createRuntime({ store, dryRun, haltFile: 'unused', rng: () => 0 });
 		vi.spyOn(runtime, 'log').mockImplementation(() => undefined);
@@ -133,7 +133,7 @@ describe('DM lifecycle logs', () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(Date.UTC(2026, 9, 14, 20));
 		// A break 19:55 to 20:05, then online from 21:00
-		const persona = { ...utc.personas[0]!, schedule: everyDay({ breaks: [{ start: ['19:55', '19:55'], minutes: [10, 10] }], online: [{ start: ['21:00', '21:00'], end: ['23:00', '23:00'] }] }) };
+		const persona = { ...utc.personas[0]!, schedule: everyDayPlan({ breaks: [{ start: ['19:55', '19:55'], minutes: [10, 10] }], online: [{ start: ['21:00', '21:00'], end: ['23:00', '23:00'] }] }) };
 		const store = memoryStore();
 		const runtime = createRuntime({ store, dryRun: false, haltFile: 'unused', rng: () => 0 });
 		vi.spyOn(runtime, 'log').mockImplementation(() => undefined);
@@ -198,6 +198,8 @@ describe('DM lifecycle logs', () => {
 });
 
 const utc = { personas: [personaOf(testPersona(), { prompt: 'A friendly persona.' })] };
+/** A brain that only gives the reply queue its persona and settings: for a queue that never composes. */
+const UTC_BRAIN = { persona: utc.personas[0]!, settings: DEFAULT_SETTINGS } as Brain;
 /** That day (Oct 14) at a UTC time; its hours are 19:00 to 23:00. */
 const at = (hours: number, minutes = 0, seconds = 0) => Date.UTC(2026, 9, 14, hours, minutes, seconds);
 // 20:00, inside its hours
@@ -205,7 +207,7 @@ const EVENING = at(20);
 /** Its hours plus a 10-minute break at 12:30, on `breakOn` only when given. */
 const withBreak = (breakOn?: ChannelId[]): Persona => ({
 	...utc.personas[0]!,
-	schedule: everyDay({
+	schedule: everyDayPlan({
 		breaks: [{ start: ['12:30', '12:30'], minutes: [10, 10], ...(breakOn && { on: breakOn }) }],
 		online: [{ start: ['19:00', '19:00'], end: ['23:00', '23:00'] }],
 	}),
@@ -865,7 +867,7 @@ describe('turns still owed (handled_at)', () => {
 		vi.setSystemTime(EVENING);
 		const runtime = createRuntime({ store, dryRun: false, haltFile: 'unused', rng: () => 0 });
 		const log = vi.spyOn(runtime, 'log').mockImplementation(() => undefined);
-		const queue = createReplyQueue({ brain: { persona: utc.personas[0]!, settings: DEFAULT_SETTINGS } as Brain, runtime, act: async () => undefined });
+		const queue = createReplyQueue({ brain: UTC_BRAIN, runtime, act: async () => undefined });
 		queue.start();
 		// Jo can't be reached any more
 		const conversationOf = vi.fn(async (person: Person) => (person.id === jo ? null : { channel: NOTED_DM, typing: async () => undefined, send: async () => undefined }));
@@ -902,7 +904,7 @@ describe('turns still owed (handled_at)', () => {
 		vi.setSystemTime(Date.UTC(2026, 9, 14, 22, 57, 50));
 		const store = memoryStore();
 		const runtime = createRuntime({ store, dryRun: false, haltFile: 'unused', rng: () => 0 });
-		const queue = createReplyQueue({ brain: { persona: utc.personas[0]!, settings: DEFAULT_SETTINGS } as Brain, runtime, act: async () => undefined });
+		const queue = createReplyQueue({ brain: UTC_BRAIN, runtime, act: async () => undefined });
 		try {
 			// Not before start(), when its platforms are up
 			await vi.advanceTimersByTimeAsync(MINUTE);
@@ -923,7 +925,7 @@ describe('turns still owed (handled_at)', () => {
 	it('starts its tick once, and never again once stopped', () => {
 		vi.useFakeTimers();
 		const { runtime } = setUp();
-		const queue = createReplyQueue({ brain: { persona: utc.personas[0]!, settings: DEFAULT_SETTINGS } as Brain, runtime, act: async () => undefined });
+		const queue = createReplyQueue({ brain: UTC_BRAIN, runtime, act: async () => undefined });
 		queue.start();
 		queue.start();
 		expect(vi.getTimerCount()).toBe(1);

@@ -44,7 +44,7 @@ const gotText = (value: unknown) => {
 export const describe = (path: readonly (string | number)[], message: string, got: unknown) => `${path.length ? `${path.join('.')}: ` : ''}${message}${gotText(got)}`;
 
 /** A problem of another file than the ConfigError's: "<file> › <problem>". */
-export const inFile = (file: string, problem: string) => `${file} › ${problem}`;
+const inFile = (file: string, problem: string) => `${file} › ${problem}`;
 
 /** A problem found at `path` of a value read from somewhere: what is wrong, and the value it got if that helps. */
 export interface Problem {
@@ -130,13 +130,13 @@ export function unknownKeys(schema: z.ZodTypeAny, raw: unknown, path: (string | 
 }
 
 /** An unknown key as a problem, with the nearest known key if any. */
-export const unknownKeyProblem = ({ path, suggestion }: UnknownKey): Problem => ({ path, message: `unknown key${didYouMean(suggestion)}` });
+const unknownKeyProblem = ({ path, suggestion }: UnknownKey): Problem => ({ path, message: `unknown key${didYouMean(suggestion)}` });
 
 /**
  * Unknown keys as problems: a key an earlier version read says where it went (`moved`, by its dotted path), any other
  * gets the nearest known key.
  */
-export const unknownKeyProblems = (found: UnknownKey[], moved: Readonly<Record<string, string>> = {}): Problem[] =>
+export const unknownKeyProblems = (found: UnknownKey[], moved: Readonly<Record<string, string>>): Problem[] =>
 	found.map((key) => {
 		const at = key.path.join('.');
 		return Object.hasOwn(moved, at) ? { path: key.path, message: moved[at]! } : unknownKeyProblem(key);
@@ -144,5 +144,21 @@ export const unknownKeyProblems = (found: UnknownKey[], moved: Readonly<Record<s
 
 /** The unknown keys found under `at`, each an issue: a key the schema doesn't know is never silently ignored. */
 export function unknownKeyIssues(found: UnknownKey[], at: readonly (string | number)[]): string[] {
-	return found.map((key) => unknownKeyProblem(key)).map(({ path, message }) => describe([...at, ...path], message, undefined));
+	return found.map(unknownKeyProblem).map(({ path, message }) => describe([...at, ...path], message, undefined));
+}
+
+/**
+ * `raw` read with `schema` (`null`, as an empty YAML file reads, is nothing at all): its value, or else every problem:
+ * the schema's, each key it doesn't know (one that an earlier version read says where it went: `moved`, by its dotted
+ * path), and once it parses, `check`'s. There is a value only with no problem. Never throws.
+ */
+export function readConfig<S extends z.ZodTypeAny>(
+	schema: S,
+	raw: unknown,
+	{ moved = {}, check = () => [] }: { moved?: Readonly<Record<string, string>>; check?: (value: z.output<S>) => Problem[] } = {},
+): { value?: z.output<S>; problems: Problem[] } {
+	const value = raw === null ? undefined : raw;
+	const parsed = schema.safeParse(value);
+	const problems = [...schemaProblems(parsed.error, value), ...unknownKeyProblems(unknownKeys(schema, value), moved), ...(parsed.success ? check(parsed.data) : [])];
+	return parsed.success && !problems.length ? { value: parsed.data as z.output<S>, problems } : { problems };
 }

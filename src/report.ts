@@ -11,19 +11,17 @@ import { providerSet, type Llm, type LlmMessage } from './llm.js';
 import { interruptionsOn } from './pacing.js';
 import { clockText } from './prompts.js';
 import { addDays, agendaOn, isOn, localDateOf, nextSpan, onlineMinutesByWeekday, spanAt, weekdayOf, WEEKDAYS, type DayAgenda, type LocalDate } from './schedule.js';
-import { DAY, MINUTE, ownSettings, TASKS, taskModel, type Settings } from './settings.js';
+import { DAY, MINUTE, ownSettings, parseSettings, TASKS, taskModel, type Settings } from './settings.js';
 import { createStore, openDatabase, type Person } from './store.js';
 
 /** A city's zone follows its daylight saving; an abbreviation (EST) or a fixed offset (Etc/GMT+5) never does. UTC is meant as it is. */
 const isCityZone = (timeZone: string) => timeZone === 'UTC' || (timeZone.includes('/') && !timeZone.startsWith('Etc/'));
 
 /** The warning on a reply that may be written again more than once, each time paid for (`pacing.burst.maxRestarts` above 1). */
-const restartsWarning = (burst: { maxRestarts?: number; restartOnNewMessage?: boolean } | undefined, before = '') => {
-	const restarts = burst?.maxRestarts ?? 1;
-	return burst?.restartOnNewMessage !== false && restarts > 1
-		? [`${before}pacing.burst.maxRestarts ${restarts}: each restart drops a draft already paid for, so one reply may cost up to ${restarts + 1} DM turns of tokens`]
+const restartsWarning = ({ maxRestarts, restartOnNewMessage }: Settings['pacing']['burst'], before = '') =>
+	restartOnNewMessage && maxRestarts > 1
+		? [`${before}pacing.burst.maxRestarts ${maxRestarts}: each restart drops a draft already paid for, so one reply may cost up to ${maxRestarts + 1} DM turns of tokens`]
 		: [];
-};
 
 /**
  * Warnings about a persona: a time zone that is no city's, a weekday over 20 hours online, under an hour a day on
@@ -37,13 +35,15 @@ export function personaWarnings(persona: PersonaConfig, channels: readonly Chann
 	const average = minutes.reduce((sum, day) => sum + day, 0) / 7 / 60;
 	const skips = [{ where: '', chance: schedule.skipDayChance }, ...Object.entries(schedule.days).map(([key, plan]) => ({ where: ` on ${key}`, chance: plan.skipDayChance ?? 0 }))];
 	const spans = Object.values(schedule.days).flatMap((plan) => [...plan.online, ...plan.breaks]);
+	// Its own burst, read as settings: what it leaves out at its default
+	const ownBurst = persona.pacing?.burst && parseSettings({ pacing: { burst: persona.pacing.burst } }).settings?.pacing.burst;
 	return [
 		...(isCityZone(timezone) ? [] : [`"${id}" has timezone "${timezone}": not a city's zone (an abbreviation or a fixed offset): use the city's own, e.g. America/New_York`]),
 		...(long.length ? [`"${id}" is online over 20 hours a day on ${long.join(', ')}`] : []),
 		...(average < 1 ? [`"${id}" is online about ${average.toFixed(1)} hours a day on average`] : []),
 		...skips.filter(({ chance }) => chance > 0.5).map(({ where, chance }) => `"${id}" takes more than every other day off${where} (skipDayChance ${chance})`),
 		...channels.filter((channel) => !spans.some((span) => isOn(span, channel))).map((channel) => `"${id}" is never online on ${channel}: its DMs there would wait forever`),
-		...restartsWarning(persona.pacing?.burst, `"${id}" has its own `),
+		...(ownBurst ? restartsWarning(ownBurst, `"${id}" has its own `) : []),
 	];
 }
 
@@ -105,7 +105,7 @@ export function personaReport(persona: Persona, { settings: given, now, status }
 		`  tomorrow (${dayKey(tomorrow)}): ${agendaText(agendaOn(persona, tomorrow), persona.timezone)}`,
 		`  interruptions today: ${interruptionsOn(persona, today, settings.pacing).map((away) => `${clockText(away.start, persona.timezone)} to ${clockText(away.end, persona.timezone)}`).join(', ') || 'none'}`,
 		`  models: ${TASKS.map((task) => ({ task, used: taskModel(settings, task) }))
-			.filter(({ task, used }) => task !== 'vision' || used.model)
+			.filter(({ used }) => !used.off)
 			.map(({ task, used }) => `${task} ${(provider && used.model) || '(canned)'}${provider && used.ownProvider && used.baseUrl ? ` (${new URL(used.baseUrl).host})` : ''}`)
 			.join(', ')}`,
 	];

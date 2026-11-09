@@ -22,10 +22,12 @@ import type { ChannelId } from '../channel.js';
 import { isPlainObject } from '../merge.js';
 import { DEFAULT_SETTINGS, mergedSettings, type PersonaSettings, type Settings } from '../settings.js';
 import { refuseSchool, ScheduleSchema, type ScheduleConfig } from './hours.js';
-import { schemaProblems, sourced, suggest, unknownKeyProblems, unknownKeys, type Problem } from './issues.js';
+import { readConfig, sourced, suggest, type Problem } from './issues.js';
 
 /** A persona's id: the key of everything stored about it and the seed of its days; a persona file's name without .md. */
 export const PERSONA_ID = /^[a-z0-9-]{2,32}$/;
+/** What PERSONA_ID asks, in the problems that refuse one. */
+const ID_RULE = 'a persona id: 2 to 32 of a-z, 0-9 and -';
 
 const isTimeZone = (timeZone: string) => {
 	try {
@@ -42,7 +44,7 @@ const ownOf = <Key extends keyof PersonaSettings>() => z.record(z.string(), z.un
 /** A persona's config: only what the code computes with. */
 const PersonaConfigSchema = z.object({
 	/** The key of everything stored about it and the seed of its days (`PERSONA_ID`); a persona file's name gives it. */
-	id: z.string().regex(PERSONA_ID, 'a persona id: 2 to 32 of a-z, 0-9 and -'),
+	id: z.string().regex(PERSONA_ID, ID_RULE),
 	/** The name it goes by: in its identity line, and how group chats and the typed checks name it. */
 	name: z.string().min(1).max(32),
 	/** IANA time zone, e.g. America/Toronto. Intl's list only suggests one: it lacks some valid zones (UTC, Asia/Kolkata). */
@@ -115,18 +117,18 @@ export function parsePersona({
 }): Parsed {
 	const issues = (problems: Problem[]) => ({ issues: problems.map((problem) => sourced(source, problem)) });
 	if (!isPlainObject(config)) return issues([{ path: [], message: "the config must be a mapping (the persona's id, name, timezone, schedule…)" }]);
-	const parsed = (adult ? ADULT_SCHEMA : PersonaConfigSchema).safeParse(config);
-	const problems = schemaProblems(parsed.error, config);
-	// A key the 0.1 betas read says where it went
-	problems.push(...unknownKeyProblems(unknownKeys(PersonaConfigSchema, config), MOVED));
+	const { value, problems } = readConfig(adult ? ADULT_SCHEMA : PersonaConfigSchema, config, {
+		// A key the 0.1 betas read says where it went
+		moved: MOVED,
+		check: (persona) => [
+			// Its hours may only name its own channels
+			...unknownChannels(persona.schedule, channels).map(({ path, name }) => ({ path, message: `"${name}" is not one of this persona's channels (${channels.join(', ') || 'none'})${suggest(name, channels)}` })),
+			...mergedSettings(persona, settings).problems,
+		],
+	});
 	if (typeof prompt !== 'string') problems.push({ path: ['prompt'], message: "must be text: the persona's voice and background, in Markdown" });
-	// Its hours may only name its own channels
-	for (const { path, name } of parsed.success ? unknownChannels(parsed.data.schedule, channels) : []) {
-		problems.push({ path, message: `"${name}" is not one of this persona's channels (${channels.join(', ') || 'none'})${suggest(name, channels)}` });
-	}
-	if (parsed.success) problems.push(...mergedSettings(parsed.data, settings).problems);
-	if (!parsed.success || problems.length) return issues(problems);
-	return { persona: { ...parsed.data, prompt: prompt.trim() }, issues: [] };
+	if (!value || problems.length) return issues(problems);
+	return { persona: { ...value, prompt: prompt.trim() }, issues: [] };
 }
 
 /** The YAML between the `---` line a persona file starts with and the next one, and the text after it; else what is wrong. */
@@ -213,7 +215,7 @@ export function loadPersonas({
 		const file = join(dir, `${id}.md`);
 		const old = join(dir, `${id}.yaml`);
 		if (!PERSONA_ID.test(id)) {
-			issues.push(`"${id}" is not a persona id: 2 to 32 of a-z, 0-9 and - (its file's name without .md)`);
+			issues.push(`"${id}" is not ${ID_RULE} (its file's name without .md)`);
 			continue;
 		}
 		const left = files.exists(old) ? `no longer read: write its config as the frontmatter of ${file}, its prompt after it` : undefined;
