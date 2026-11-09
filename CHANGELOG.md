@@ -123,6 +123,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- A model that takes only its default temperature (OpenAI's reasoning models, among others) failed every request with
+  a 400: the model client now asks again without a `temperature` when a provider refuses one, and sends that model
+  none from then on. OpenAI's `gpt-5` models still get none from the start.
 - A config key named like a built-in member of every object (`constructor`, `toString`, `valueOf`) was taken as known
   and dropped without a word; it is refused as unknown like any other (`unknownKeys` too).
 

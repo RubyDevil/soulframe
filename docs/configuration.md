@@ -293,7 +293,7 @@ Each task takes:
 | `jsonMode` | boolean | `default.jsonMode` on the default provider, off on its own | |
 | `timeoutSeconds` | number, 5 to 300 | `default.timeoutSeconds` | |
 | `maxTokens` | integer, 16 to 4000 | see above | The most tokens the answer may hold. |
-| `temperature` | number, 0 to 2 | see above | Higher is more varied. Left out of the request to OpenAI's own `gpt-5` models (at `api.openai.com`). |
+| `temperature` | number, 0 to 2 | see above | Higher is more varied. Left out of the request to OpenAI's own `gpt-5` models (at `api.openai.com`); a model that refuses it (a 400 naming `temperature`: it takes only its default) is asked again without, and its client sends it none from then on. |
 
 **A task on a provider of its own** (its own `baseUrl`) takes nothing of the default provider but its timeout: no key,
 no model, no `jsonMode`. It names its own `model` and `apiKeyEnv` (empty for none), and `parseSettings` refuses it

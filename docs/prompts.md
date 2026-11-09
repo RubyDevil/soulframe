@@ -21,7 +21,7 @@ source as written, with its `${...}` slots; the `text` blocks are what the model
 
 The task names select the model settings (`settings.models.directMessage`, `.groupChat`, `.post`, `.vision`, `.initiative`, each over
 `models.default`: model, provider, `maxTokens`, `temperature`, `jsonMode`). They change no text. `json: true` asks the
-provider for a JSON object only when that task's `jsonMode` is on (`jsonMode`, llm.ts:181); a post never asks.
+provider for a JSON object only when that task's `jsonMode` is on (`jsonMode`, llm.ts:188); a post never asks.
 
 The typed checks go to the Decisions API (`settings.decisions`), not to the text model. A Decisions request has no
 system prompt and no messages: it is one input text and a list of typed questions (decisions.ts:49), and no text
@@ -876,8 +876,8 @@ No links in the post.
 export const POST_REQUEST = '[post] Write the post.';
 ```
 
-The one `user` message of a post. The canned model (`createCannedLlm`, llm.ts:196-207) answers its fixed post when
-the last message is exactly this text (llm.ts:202); its other answers are fixed DM replies. Neither is prompt text.
+The one `user` message of a post. The canned model (`createCannedLlm`, llm.ts:214-225) answers its fixed post when
+the last message is exactly this text (llm.ts:220); its other answers are fixed DM replies. Neither is prompt text.
 
 ## Typed screening (Decisions)
 
@@ -1317,7 +1317,7 @@ other text.
 - `STOP_ACK` (safety.ts:9): "got it, I won't message you again. take care!" and `MINOR_EXIT` (safety.ts:10): "sorry,
   I only chat with adults, so I'm going to stop here. take care!" are sent to the person by the code, never to the
   model.
-- The canned model's answers (llm.ts:197, :202) are fixed replies, and a fixed photo description, for dry runs.
+- The canned model's answers (llm.ts:215, :220) are fixed replies, and a fixed photo description, for dry runs.
 - `report.ts` (`personaReport`, `personaWarnings`, `settingsWarnings`) writes config-check lines for the operator. Only `samplePrompt`
   shows a prompt, built by the brain itself.
 
