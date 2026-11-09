@@ -278,11 +278,28 @@ If your platform delivers messages that came in while you were disconnected, pas
 channel opens, closes or changes (checked every 30 seconds), and answers a function that stops watching. Use it to
 show the persona online, to join or leave group chats, to start a posting schedule.
 
-The reply queue does not need it: it checks the hours itself. But anything the persona does on its own initiative
-should check them:
+The reply queue does not need it: it checks the hours itself, for openers too ([texting first](#texting-first-allowinitiative)).
+But anything else the persona does on its own initiative should check them:
 
 - **Group chats, posts and joining a group chat** only in full online time: `fullyOnline(persona, channelId, runtime.now())`.
 - **DMs** in any span, breaks included: `spanAt(persona, runtime.now(), channelId)`.
+
+## Texting first: `allowInitiative`
+
+With the brain's `settings.initiative.enabled` on (off by default), the persona may text someone first on the
+channels you allow, each with how to reach a person there, as `requeue` takes it:
+
+```ts
+const withdraw = queue.allowInitiative(CHAT_DM.id, async (person) => (person.ids[CHAT_DM.id] ? conversationWith(person.ids[CHAT_DM.id]!) : null));
+// later, to stop texting first there (the setting stays as it is): withdraw();
+```
+
+Nothing is texted first on a channel you never allow, and `null` drops that opener (they can't be reached there). The
+queue checks at each tick of `start()` whether an opener is due and allowed (see
+[concepts](./concepts.md#texting-first)), and sends it through the conversation like a reply: `typing`, `send`,
+`delivered` and `extraLines`, never `markRead` (there is nothing of theirs to read). Their answer comes in as any
+message does, through `incoming` and `handle`. soulframe never texts first anyone who never wrote to the persona;
+for someone else who should get no opener, `conversationOf` may answer `null` (that opener is dropped).
 
 ## Group chats
 
@@ -338,5 +355,7 @@ backlog, with the next opening), `away` (an interruption, from and until), `inte
 gets a turn of its own once this one ends), `reply_picked` (who went first among several due, with their weight),
 `dm_sent`, `reply_sent`, `reply_skipped` (left on read), `reply_failed`, `reply_waiting_budget`,
 `reply_waiting_provider`, `reply_cancelled`, `reply_paused`, `unreachable`, `delivery_failed`, `invite_accepted`,
-`invite_not_joined`, `action_skipped` (an action not carried out while halted or stopped), `hours_open` and `hours_closed`, and in a dry run `dry_send`, `dry_block` and `dry_<action>` for a channel's own action. Your
+`invite_not_joined`, `action_skipped` (an action not carried out while halted or stopped), `hours_open` and `hours_closed`,
+`openers_planned` (the check-ins and share of a span), `opener_processing`, `opener_<outcome>` (`sent`, `declined`, `dropped`, `failed`, `rehearsed`) and `opener_superseded`
+(they wrote first: the plan stays) for texting first, `opener_superseded_by_message`, and in a dry run `dry_send`, `dry_block` and `dry_<action>` for a channel's own action. Your
 adapter can log its own events through the same function.

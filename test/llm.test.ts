@@ -111,7 +111,7 @@ describe('createConfiguredLlm', () => {
 		expect(sent(fetch, 1).headers.authorization).toBe('Bearer key-of-OTHER_KEY');
 	});
 
-	it.each(['directMessage', 'groupChat', 'post'] as const)('uses a keyless local model for %s, and never the Decisions client', async (task) => {
+	it.each(['directMessage', 'groupChat', 'post', 'initiative'] as const)('uses a keyless local model for %s, and never the Decisions client', async (task) => {
 		const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(answer('local reply', 5));
 		const apiKeyOf = vi.fn(() => 'openai-key');
 		const llm = createConfiguredLlm({ settings: SettingsSchema.parse({ models: { default: { baseUrl: 'http://localhost:11434/v1/', model: 'llama3.2', apiKeyEnv: '' } } }), apiKeyOf });
@@ -360,7 +360,7 @@ describe('SettingsSchema', () => {
 	});
 	it('refuses a Decisions baseUrl that is not a URL, and has no Decisions entry among the text models', () => {
 		expect(ServiceSettingsSchema.safeParse({ decisions: { baseUrl: 'not a URL' } }).success).toBe(false);
-		expect(Object.keys(DEFAULT_SETTINGS.models)).toEqual(['default', 'directMessage', 'groupChat', 'post', 'vision']);
+		expect(Object.keys(DEFAULT_SETTINGS.models)).toEqual(['default', 'directMessage', 'groupChat', 'post', 'vision', 'initiative']);
 	});
 });
 

@@ -38,6 +38,62 @@ export interface Person {
 	importanceAt: number;
 }
 
+/**
+ * What made the persona plan to text someone first (settings.initiative): `followUp`, a DM turn's own plan; `checkIn`,
+ * someone close gone quiet; `share`, its day, as it comes back from a busy block.
+ */
+export type OpenerKind = 'followUp' | 'checkIn' | 'share';
+
+/**
+ * How an opener ended: `sent`; `rehearsed` (a dry run logged it); `declined` (the model chose not to text); `replaced`
+ * by a newer plan, or dropped by a DM turn (`dropped` too); `dropped` (they can't be texted any more, or the plan was given up);
+ * `expired` before a moment came; `failed` (the model or the send failed).
+ */
+export type OpenerOutcome = 'sent' | 'rehearsed' | 'declined' | 'replaced' | 'dropped' | 'expired' | 'failed';
+
+/** A first message the persona plans to send someone (settings.initiative): pending until it is closed with its outcome. */
+export interface Opener {
+	id: number;
+	persona: string;
+	personId: number;
+	kind: OpenerKind;
+	/** Why: a follow-up's note in the model's own words, the busy block a share is about; empty for a check-in. Data in the prompt. */
+	about: string;
+	/** The earliest moment it may go, and the moment it is given up (ms). */
+	dueAt: number;
+	expiresAt: number;
+	createdAt: number;
+	/** When it was closed, and how; null while pending. */
+	closedAt: number | null;
+	outcome: OpenerOutcome | null;
+}
+
+interface OpenerRow {
+	id: number;
+	persona: string;
+	person_id: number;
+	kind: OpenerKind;
+	about: string;
+	due_at: number;
+	expires_at: number;
+	created_at: number;
+	closed_at: number | null;
+	outcome: OpenerOutcome | null;
+}
+
+const toOpener = (row: OpenerRow): Opener => ({
+	id: row.id,
+	persona: row.persona,
+	personId: row.person_id,
+	kind: row.kind,
+	about: row.about,
+	dueAt: row.due_at,
+	expiresAt: row.expires_at,
+	createdAt: row.created_at,
+	closedAt: row.closed_at,
+	outcome: row.outcome,
+});
+
 export interface StoredMessage {
 	id: number;
 	channel: ChannelId;
@@ -107,6 +163,19 @@ CREATE TABLE IF NOT EXISTS audit (
 	detail TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS audit_at ON audit (at);
+CREATE TABLE IF NOT EXISTS openers (
+	id INTEGER PRIMARY KEY,
+	persona TEXT NOT NULL,
+	person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+	kind TEXT NOT NULL,
+	about TEXT NOT NULL,
+	due_at INTEGER NOT NULL,
+	expires_at INTEGER NOT NULL,
+	created_at INTEGER NOT NULL,
+	closed_at INTEGER,
+	outcome TEXT
+);
+CREATE INDEX IF NOT EXISTS openers_person ON openers (person_id, closed_at);
 `;
 
 /** A person's row and, in `ids`, their identities as one JSON object ({"<channel>": "<external id>"}). */
@@ -331,10 +400,79 @@ export function createStore(db: Database, now: () => number = Date.now) {
 			) as unknown as { at: number; persona: string; kind: string; detail: string }[];
 			return rows.map((row) => ({ ...row, detail: JSON.parse(row.detail) as Record<string, unknown> }));
 		},
-		/** Deletes messages and audit lines older than `before` (the app sweeps its own tables). */
+		/** Deletes messages, audit lines and closed openers older than `before` (the app sweeps its own tables). */
 		sweep(before: number) {
 			db.prepare('DELETE FROM messages WHERE at < ?').run(before);
 			db.prepare('DELETE FROM audit WHERE at < ?').run(before);
+			db.prepare('DELETE FROM openers WHERE closed_at IS NOT NULL AND closed_at < ?').run(before);
+		},
+		/** Plans a first message to the person (one pending per person: a pending one is closed as `replaced`). Answers it. */
+		planOpener(persona: string, personId: number, plan: { kind: OpenerKind; about: string; dueAt: number; expiresAt: number }): Opener {
+			const at = now();
+			const id = inTransaction(db, () => {
+				db.prepare("UPDATE openers SET closed_at = ?, outcome = 'replaced' WHERE person_id = ? AND closed_at IS NULL").run(at, personId);
+				return Number(
+					db
+						.prepare('INSERT INTO openers (persona, person_id, kind, about, due_at, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+						.run(persona, personId, plan.kind, plan.about, plan.dueAt, plan.expiresAt, at).lastInsertRowid,
+				);
+			});
+			return toOpener(db.prepare('SELECT * FROM openers WHERE id = ?').get(id) as unknown as OpenerRow);
+		},
+		/** The person's pending opener, if any. */
+		pendingOpener(personId: number): Opener | undefined {
+			const row = db.prepare('SELECT * FROM openers WHERE person_id = ? AND closed_at IS NULL ORDER BY id DESC LIMIT 1').get(personId) as unknown as OpenerRow | undefined;
+			return row && toOpener(row);
+		},
+		/** The persona's pending openers due at `at`, earliest first; those past their expiry are closed as `expired` first. */
+		dueOpeners(persona: string, at: number): Opener[] {
+			db.prepare("UPDATE openers SET closed_at = ?, outcome = 'expired' WHERE persona = ? AND closed_at IS NULL AND expires_at <= ?").run(at, persona, at);
+			const rows = db.prepare('SELECT * FROM openers WHERE persona = ? AND closed_at IS NULL AND due_at <= ? ORDER BY due_at, id').all(persona, at) as unknown as OpenerRow[];
+			return rows.map(toOpener);
+		},
+		/** Closes a pending opener with its outcome (one already closed is left as it was). */
+		closeOpener(id: number, outcome: OpenerOutcome) {
+			db.prepare('UPDATE openers SET closed_at = ?, outcome = ? WHERE id = ? AND closed_at IS NULL').run(now(), outcome, id);
+		},
+		/** The openers sent to the person, newest first (`limit`, default 10). */
+		sentOpeners(personId: number, limit = 10): Opener[] {
+			const rows = db.prepare("SELECT * FROM openers WHERE person_id = ? AND outcome = 'sent' ORDER BY closed_at DESC, id DESC LIMIT ?").all(personId, limit) as unknown as OpenerRow[];
+			return rows.map(toOpener);
+		},
+		/** How many openers the persona sent since `since`. */
+		openersSentSince(persona: string, since: number): number {
+			return (db.prepare("SELECT COUNT(*) AS n FROM openers WHERE persona = ? AND outcome = 'sent' AND closed_at >= ?").get(persona, since) as unknown as { n: number }).n;
+		},
+		/** Whether any persona sent an opener since `since` to one of this person's accounts (every persona's person with it). */
+		accountOpenedSince(personId: number, since: number): boolean {
+			return (
+				db
+					.prepare(
+						`SELECT 1 FROM openers o JOIN identities theirs ON theirs.person_id = o.person_id
+						 JOIN identities mine ON mine.channel = theirs.channel AND mine.external_id = theirs.external_id
+						 WHERE mine.person_id = ? AND o.outcome = 'sent' AND o.closed_at >= ? LIMIT 1`,
+					)
+					.get(personId, since) !== undefined
+			);
+		},
+		/**
+		 * The persona's people it may check in with or share with: active, who wrote to it before and are owed no turn, and
+		 * whose last message either way (`lastAt`) is at `quietSince` or before, closest first.
+		 */
+		quietPeople(persona: string, quietSince: number): { person: Person; lastAt: number }[] {
+			const rows = db
+				.prepare(
+					`SELECT * FROM (SELECT ${PERSON_COLUMNS}, COALESCE((SELECT MAX(at) FROM messages m WHERE m.person_id = p.id), p.last_in_at) AS last_at FROM people p
+					 WHERE p.persona = ? AND p.state = 'active' AND p.incoming > 0 AND p.last_in_at <= p.handled_at)
+					 WHERE last_at <= ? ORDER BY familiarity DESC, id`,
+				)
+				.all(persona, quietSince) as unknown as (PersonRow & { last_at: number })[];
+			return rows.map((row) => ({ person: toPerson(row), lastAt: row.last_at }));
+		},
+		/** When the person first wrote after `after` (ms), or null when they haven't since. */
+		firstInAfter(personId: number, after: number): number | null {
+			const row = db.prepare("SELECT MIN(at) AS at FROM messages WHERE person_id = ? AND direction = 'in' AND at > ?").get(personId, after) as unknown as { at: number | null };
+			return row.at;
 		},
 		/**
 		 * By hand, an operator's: the persona stops answering this person and ignores what they write (`blocked`, audited

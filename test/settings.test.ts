@@ -45,6 +45,10 @@ describe('parseSettings', () => {
 		expect(parseSettings({ models: { default: { baseUrl: 'https://llm.example/v1' } } }).issues).toEqual(
 			['directMessage', 'groupChat', 'post'].map((task) => `models.${task}: no model named (set it, or models.default.model)`),
 		);
+		// The opener's model only once texting first is on
+		expect(parseSettings({ models: { default: { baseUrl: 'https://llm.example/v1' } }, initiative: { enabled: true } }).issues).toContain(
+			'models.initiative: no model named (set it, or models.default.model)',
+		);
 		expect(parseSettings({ models: { default: { baseUrl: 'https://llm.example/v1', model: 'chat' } } }).issues).toEqual([]);
 		expect(parseSettings({ models: { default: { baseUrl: 'https://llm.example/v1' }, directMessage: { model: 'a' }, groupChat: { model: 'b' }, post: { model: 'c' } } }).issues).toEqual([]);
 	});
@@ -110,6 +114,13 @@ describe('mergedSettings', () => {
 		// A shape of its own, and null for the default
 		expect(mergedSettings({ pacing: { typingCharsPerSecond: { range: [2, 3], shape: 'normal' } } }, app).value?.pacing.typingCharsPerSecond.shape).toBe('normal');
 		expect(mergedSettings({ pacing: { glance: null } as never }, app).value?.pacing.glance).toEqual(DEFAULT_SETTINGS.pacing.glance);
+	});
+
+	it("merges a persona's own initiative, and checks it", () => {
+		const on = settingsOf({ initiative: { enabled: true, perDay: 3 } });
+		expect(mergedSettings({ initiative: { enabled: false } }, on).value?.initiative).toEqual({ ...on.initiative, enabled: false });
+		expect(mergedSettings({ initiative: { followUps: { maxDays: 3 } } }, on).value?.initiative.followUps).toEqual({ enabled: true, maxDays: 3 });
+		expect(mergedSettings({ initiative: { perDy: 3 } as never }, on).problems.map((problem) => problem.message)).toEqual(['unknown key (did you mean "perDay"?)']);
 	});
 });
 

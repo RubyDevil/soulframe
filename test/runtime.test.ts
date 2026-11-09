@@ -13,9 +13,9 @@ import { seededRng, sleep, type Rng } from '../src/rng.js';
 import type { IncomingMessage } from '../src/perception.js';
 import { createReplyQueue, createRuntime, UnreachableError, watchSpans, type Conversation } from '../src/runtime.js';
 import { MINOR_EXIT, STOP_ACK } from '../src/safety.js';
-import { DEFAULT_SETTINGS, MINUTE, parseSettings, type Settings } from '../src/settings.js';
+import { DAY, DEFAULT_SETTINGS, MINUTE, parseSettings, type Settings } from '../src/settings.js';
 import type { Person, Store } from '../src/store.js';
-import { everyDay, memoryStore, NOTED_DM, PLAIN_DM, personaOf, settingsOf, SNOOZE, TEST_IDENTITY, testPersona } from './fixtures.js';
+import { everyDay, memoryStore, NOTED_DM, OPEN_DM, PLAIN_DM, personaOf, settingsOf, SNOOZE, TEST_IDENTITY, testPersona } from './fixtures.js';
 
 // 23:00 in Toronto: inside every night of the hours below
 const OPEN = Date.UTC(2026, 9, 15, 3);
@@ -2025,5 +2025,158 @@ describe('people waiting in line', () => {
 		// 0.66 expected, 0.027 a standard deviation
 		expect(bo / trials).toBeGreaterThan(0.57);
 		expect(bo / trials).toBeLessThan(0.75);
+		// 300 runs of a queue: under 2 s on a fast machine, over the default 5 s on a slow, busy CI runner
+	}, 15_000);
+});
+
+describe('texting first (settings.initiative)', () => {
+	// Wednesday 20:00 UTC: inside the test persona's 19:00 to 23:00
+	const AT = Date.UTC(2026, 9, 14, 20);
+	const FAST = { readingDurationSeconds: [0, 0], typingDurationSeconds: [0, 0], burst: { settleSeconds: [0, 0] }, glance: { delaySeconds: [0, 0] }, interruptions: { meanMinutes: 0 } };
+	const ON = settingsOf({ initiative: { enabled: true }, pacing: FAST });
+	const OPENER = '{"reply": "sooo how did it go??"}';
+
+	const setUpOpener = ({
+		settings = ON,
+		dryRun = false,
+		opener = async () => OPENER,
+		reply = async () => '{"reply": "omg congrats!!"}',
+		persona = personaOf(testPersona()),
+		at = AT,
+	}: { settings?: Settings; dryRun?: boolean; opener?: () => Promise<string>; reply?: () => Promise<string>; persona?: Persona; at?: number } = {}) => {
+		vi.useFakeTimers();
+		vi.setSystemTime(at);
+		const store = memoryStore();
+		const runtime = createRuntime({ store, dryRun, haltFile: join(tmpdir(), 'soulframe-no-such-halt-file'), rng: () => 0 });
+		const log = vi.spyOn(runtime, 'log').mockImplementation(() => undefined);
+		const brain = createBrain({
+			settings,
+			persona,
+			runtime,
+			llm: { complete: async (messages) => (messages.at(-1)!.content.startsWith('[nothing new') ? opener() : reply()) },
+		});
+		const queue = createReplyQueue({ brain, runtime, act: async () => undefined });
+		// Sam wrote yesterday at this hour, and was answered
+		const sam = store.createPerson('test', 'chat', 'sam', 'Sam');
+		store.addMessage(sam.id, 'chat', 'in', 'interview tomorrow!', at - DAY);
+		store.addMessage(sam.id, 'chat', 'out', 'good luck!!', at - DAY + MINUTE);
+		store.updatePerson(sam.id, { lastInAt: at - DAY, handledAt: at - DAY });
+		const planned = store.planOpener('test', sam.id, { kind: 'followUp', about: 'ask how the interview went', dueAt: at - MINUTE, expiresAt: at + DAY });
+		const sent: string[] = [];
+		const conversation: Conversation = { channel: OPEN_DM, typing: async () => undefined, send: async (text) => void sent.push(text) };
+		return { store, runtime, log, brain, queue, sam, planned, sent, conversation };
+	};
+	/** The newest opener outcome audited for the person, else whether one is still pending. */
+	const outcomeOf = (store: Store, personId: number) =>
+		store.auditLog('test', 50).find((row) => row.kind.startsWith('opener_') && row.detail.personId === personId)?.kind ?? (store.pendingOpener(personId) ? 'pending' : 'none');
+
+	it('texts first at a tick once nothing else wants it, on a channel allowed for it', async () => {
+		const { store, queue, sam, sent, conversation } = setUpOpener();
+		queue.allowInitiative('chat', async () => conversation);
+		queue.start();
+		try {
+			await vi.advanceTimersByTimeAsync(60_000);
+			expect(sent).toEqual(['sooo how did it go??']);
+			expect(store.sentOpeners(sam.id)).toHaveLength(1);
+			expect(store.history(sam.id).at(-1)).toMatchObject({ direction: 'out', text: 'sooo how did it go??' });
+			expect(outcomeOf(store, sam.id)).toBe('opener_sent');
+			// One unanswered opener at most: nothing more goes, whatever is planned
+			store.planOpener('test', sam.id, { kind: 'followUp', about: 'again', dueAt: AT, expiresAt: AT + DAY });
+			await vi.advanceTimersByTimeAsync(10 * 60_000);
+			expect(sent).toHaveLength(1);
+		} finally {
+			queue.stop();
+		}
+	});
+
+	it('never texts first while off, nor on a channel the app did not allow, nor once withdrawn', async () => {
+		for (const [settings, allow] of [[settingsOf({ pacing: FAST }), true], [ON, false]] as const) {
+			const { queue, sent, conversation } = setUpOpener({ settings });
+			if (allow) queue.allowInitiative('chat', async () => conversation);
+			queue.start();
+			await vi.advanceTimersByTimeAsync(30 * 60_000);
+			expect(sent).toEqual([]);
+			queue.stop();
+		}
+		const { queue, sent, conversation } = setUpOpener();
+		queue.allowInitiative('chat', async () => conversation)();
+		queue.start();
+		await vi.advanceTimersByTimeAsync(30 * 60_000);
+		expect(sent).toEqual([]);
+		queue.stop();
+	});
+
+	it('stops the opener when they write first, answers them as usual, and keeps the plan for that turn to bring up', async () => {
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => (release = resolve));
+		const { store, brain, queue, sam, sent, conversation } = setUpOpener({ opener: async () => (await held, OPENER) });
+		queue.allowInitiative('chat', async () => conversation);
+		queue.start();
+		try {
+			await vi.advanceTimersByTimeAsync(31_000);
+			await queue.handle(brain.incoming(OPEN_DM, 'sam', 'Sam', 'I GOT THE JOB'), conversation, 'I GOT THE JOB');
+			release();
+			await vi.advanceTimersByTimeAsync(60_000);
+			expect(sent).toEqual(['omg congrats!!']);
+			expect(outcomeOf(store, sam.id)).toBe('opener_superseded');
+			expect(store.pendingOpener(sam.id)).toMatchObject({ about: 'ask how the interview went' });
+		} finally {
+			queue.stop();
+		}
+	});
+
+	it('plans check-ins once per span of its online time, and sends one to someone close gone quiet', async () => {
+		const settings = settingsOf({ initiative: { enabled: true, checkIns: { quietDays: 0.5 } }, pacing: FAST });
+		const { store, queue, sam, planned, sent, conversation } = setUpOpener({ settings });
+		// Sam is close, with no plan pending
+		store.closeOpener(planned.id, 'dropped');
+		store.updatePerson(sam.id, { familiarity: 0.6, affinity: 0.3 });
+		queue.allowInitiative('chat', async () => conversation);
+		queue.start();
+		try {
+			await vi.advanceTimersByTimeAsync(60_000);
+			expect(sent).toEqual(['sooo how did it go??']);
+			expect(store.sentOpeners(sam.id).map((opener) => opener.kind)).toEqual(['checkIn']);
+			await vi.advanceTimersByTimeAsync(20 * 60_000);
+			expect(store.auditLog('test', 100).filter((row) => row.kind === 'check_in_planned')).toHaveLength(1);
+		} finally {
+			queue.stop();
+		}
+	});
+
+	it('shares how its day went with someone close as it comes back from a busy block', async () => {
+		const settings = settingsOf({ initiative: { enabled: true, checkIns: { enabled: false }, sharing: { enabled: true, chance: 1 } }, pacing: FAST });
+		const persona = personaOf(testPersona({ schedule: { days: { 'mon-sun': { busy: [{ reason: 'at the gym', start: ['17:30', '17:30'], end: ['18:50', '18:50'] }], online: [{ start: ['19:00', '19:00'], end: ['23:00', '23:00'] }] } } } }));
+		const at = Date.UTC(2026, 9, 14, 19, 2);
+		const { store, queue, sam, planned, sent, conversation } = setUpOpener({ settings, persona, at });
+		store.closeOpener(planned.id, 'dropped');
+		store.updatePerson(sam.id, { familiarity: 0.7, affinity: 0.5 });
+		queue.allowInitiative('chat', async () => conversation);
+		queue.start();
+		try {
+			await vi.advanceTimersByTimeAsync(60_000);
+			expect(sent).toEqual(['sooo how did it go??']);
+			expect(store.sentOpeners(sam.id)).toEqual([expect.objectContaining({ kind: 'share', about: 'at the gym' })]);
+		} finally {
+			queue.stop();
+		}
+	});
+
+	it('sends nothing when the model chooses not to text, and only rehearses in a dry run', async () => {
+		const declined = setUpOpener({ opener: async () => '{"reply": null}' });
+		declined.queue.allowInitiative('chat', async () => declined.conversation);
+		declined.queue.start();
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(declined.sent).toEqual([]);
+		expect(outcomeOf(declined.store, declined.sam.id)).toBe('opener_declined');
+		declined.queue.stop();
+		const rehearsal = setUpOpener({ dryRun: true });
+		rehearsal.queue.allowInitiative('chat', async () => rehearsal.conversation);
+		rehearsal.queue.start();
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(rehearsal.sent).toEqual([]);
+		expect(rehearsal.log).toHaveBeenCalledWith('test', 'dry_send', expect.objectContaining({ text: 'sooo how did it go??' }));
+		expect(outcomeOf(rehearsal.store, rehearsal.sam.id)).toBe('opener_rehearsed');
+		rehearsal.queue.stop();
 	});
 });

@@ -8,7 +8,8 @@ import { readableChars } from './perception.js';
 import { between, sleep, weightedPick, type Rng } from './rng.js';
 import { nextSpan, spanAt, type Hours, type Span } from './schedule.js';
 import { MINUTE, SECOND } from './settings.js';
-import type { Person, PersonState, Store } from './store.js';
+import { openerBlock, planCheckIns, planShare } from './initiative.js';
+import type { Opener, OpenerOutcome, Person, PersonState, Store } from './store.js';
 
 /** What every persona module shares: the clock, randomness, the store, the halt switch and logging (settings are each brain's, `brain.settings`). */
 export interface Runtime {
@@ -92,6 +93,10 @@ const BACKLOG_LOOKBACK = 48 * 60 * MINUTE;
 const SPAN_END_MARGIN = 90 * SECOND;
 /** A turn under way for longer than this no longer holds the others back: a send that never returned must not silence the persona. */
 const PRESENCE_LEASE = 10 * MINUTE;
+/** How often the queue's tick runs (`start`). */
+const TICK = 30 * SECOND;
+/** Once an opener may go, it goes at a random moment: on average this long after (a chance at each tick). */
+const OPENER_MEAN_WAIT = 20 * MINUTE;
 
 /** How a reply ended: sent in full, paused (the halt switch, the queue stopped), ended by them, dropped for a newer message of theirs, or a send that failed. */
 type Stop = 'done' | 'halt_switch' | 'stopped' | 'ended' | 'superseded' | 'unreachable' | 'failed';
@@ -112,6 +117,8 @@ interface TurnState {
 	restarts: number;
 	/** Saves what the draft being sent wrote and decided (`Turn.keep`): once its first message is sent, or once it is committed. */
 	keep?: () => void;
+	/** It is an opener (settings.initiative): a message of theirs meanwhile stops it (`superseded`) and gets a turn of its own. */
+	opener?: true;
 }
 
 /**
@@ -550,9 +557,8 @@ export function createReplyQueue({
 		}
 	};
 
-	/** One turn under way: the others wait until it ends (or has run PRESENCE_LEASE), then the next starts. */
-	const answer = async (personId: number, conversation: Conversation) => {
-		const state: TurnState = { since: runtime.now(), through: 0, sent: 0, writing: false, superseded: false, restarts: 0 };
+	/** A turn starts with the person: the others wait until it ends (or has run PRESENCE_LEASE); it picks up its phone. */
+	const occupy = (personId: number, state: TurnState) => {
 		active.set(personId, state);
 		present = state;
 		noticeWaiting(personId);
@@ -562,26 +568,88 @@ export function createReplyQueue({
 			if (present === state) present = null;
 			next();
 		}, PRESENCE_LEASE);
+	};
+
+	/** Their turn ended: it may still have their chat open, a message that came too late for it gets its own, and the next starts. */
+	const vacate = (personId: number, state: TurnState) => {
+		active.delete(personId);
+		lastWith.set(personId, runtime.now());
+		lastActive = runtime.now();
+		if (present === state) {
+			present = null;
+			clearTimeout(lease);
+		}
+		// A message that came in too late for this turn gets its own, unless a draft written after it read it
+		const later = owedAfter.get(personId);
+		owedAfter.delete(personId);
+		const person = runtime.store.personById(personId);
+		if (later && person.state === 'active' && person.lastInAt > state.through) schedule(personId, later);
+		release(personId);
+		drain();
+		next();
+	};
+
+	/** One turn under way: the others wait until it ends (or has run PRESENCE_LEASE), then the next starts. */
+	const answer = async (personId: number, conversation: Conversation) => {
+		const state: TurnState = { since: runtime.now(), through: 0, sent: 0, writing: false, superseded: false, restarts: 0 };
+		occupy(personId, state);
 		try {
 			await turn(personId, conversation, state);
 		} catch (error) {
 			runtime.log(persona.id, 'delivery_failed', { personId, error: String(error) });
 		} finally {
-			active.delete(personId);
-			lastWith.set(personId, runtime.now());
-			lastActive = runtime.now();
-			if (present === state) {
-				present = null;
-				clearTimeout(lease);
+			vacate(personId, state);
+		}
+	};
+
+	/**
+	 * Its opener to the person, a turn like any other (one person at a time): composed (the model may choose not to text),
+	 * then delivered as a reply is, without a read receipt. A message of theirs before its first message is sent stops
+	 * it (`superseded`) but keeps the plan: theirs gets an ordinary turn once this one ends, whose prompt shows the plan
+	 * due, to bring up there or drop. Paused before anything went out, it stays pending too; otherwise it is closed with
+	 * how it ended, and audited (`opener_<outcome>`). A dry run closes it as `rehearsed`.
+	 */
+	const reachOut = async (personId: number, conversation: Conversation, opener: Opener) => {
+		const state: TurnState = { since: runtime.now(), through: runtime.store.personById(personId).lastInAt, sent: 0, writing: true, superseded: false, restarts: 0, opener: true };
+		const channel = conversation.channel.id;
+		const close = (outcome: OpenerOutcome, detail: Record<string, unknown> = {}) => {
+			runtime.store.closeOpener(opener.id, outcome);
+			runtime.store.audit(persona.id, `opener_${outcome}`, { personId, platform: channel, kind: opener.kind, ...detail });
+			runtime.log(persona.id, `opener_${outcome}`, { personId, platform: channel, kind: opener.kind, ...detail });
+		};
+		/** They wrote first: nothing of it goes, and the plan stays for their turn to bring up (`opener_superseded`, audited). */
+		const yieldToThem = () => {
+			runtime.store.audit(persona.id, 'opener_superseded', { personId, platform: channel, kind: opener.kind });
+			runtime.log(persona.id, 'opener_superseded', { personId, platform: channel, kind: opener.kind });
+		};
+		occupy(personId, state);
+		try {
+			runtime.log(persona.id, 'opener_processing', { personId, platform: channel, kind: opener.kind });
+			let composed: Turn;
+			try {
+				composed = await brain.composeOpener(personId, conversation.channel, opener, { extraLines: conversation.extraLines });
+			} catch (error) {
+				// Not tried again: an opener is never owed (a spent budget too: what DMs keep for themselves is theirs)
+				return close('failed', { error: String(error) });
 			}
-			// A message that came in too late for this turn gets its own, unless a draft written after it read it
-			const later = owedAfter.get(personId);
-			owedAfter.delete(personId);
-			const person = runtime.store.personById(personId);
-			if (later && person.state === 'active' && person.lastInAt > state.through) schedule(personId, later);
-			release(personId);
-			drain();
-			next();
+			if (state.superseded) return yieldToThem();
+			if (paused()) return;
+			if (!composed.messages.length) {
+				composed.keep?.();
+				return close('declined');
+			}
+			state.keep = composed.keep;
+			// Anyone no longer active (blocked by hand too) gets nothing more of it
+			const stillWanted = () => runtime.store.personById(personId).state === 'active';
+			const { sent, stop } = await deliver(conversation, composed.messages, personId, { stillWanted, state });
+			if (sent) return close(runtime.dryRun ? 'rehearsed' : 'sent', { messages: sent });
+			if (stop === 'halt_switch' || stop === 'stopped') return;
+			if (stop === 'superseded') return yieldToThem();
+			close(stop === 'ended' ? 'dropped' : 'failed', { reason: stop });
+		} catch (error) {
+			runtime.log(persona.id, 'delivery_failed', { personId, error: String(error) });
+		} finally {
+			vacate(personId, state);
 		}
 	};
 
@@ -806,6 +874,13 @@ export function createReplyQueue({
 		// A retry keeps its own delay; if no span is open by then, `due` parks it
 		if (delay !== undefined) return timeReply(personId, conversation, delay, 'retry');
 		const during = active.get(personId);
+		// They wrote first: the opener under way stops (once nothing of it went out), and theirs gets its own turn
+		if (during?.opener) {
+			if (!during.superseded) runtime.log(persona.id, 'opener_superseded_by_message', { personId, platform: conversation.channel.id });
+			during.superseded = true;
+			owedAfter.set(personId, conversation);
+			return;
+		}
 		if (during) {
 			if (burst.restartOnNewMessage && during.writing && during.restarts < burst.maxRestarts) {
 				if (!during.superseded) runtime.log(persona.id, 'reply_superseded', { personId, platform: conversation.channel.id });
@@ -832,6 +907,99 @@ export function createReplyQueue({
 		if (!nextGlance) nextGlance = { at: glanceAt, timer: setTimeout(glance, ms) };
 		glancing.set(personId, conversation);
 		runtime.log(persona.id, 'reply_scheduled', { personId, platform: conversation.channel.id, delayMs: Math.round(ms), dueAt: new Date(glanceAt).toISOString(), reason: 'pacing', watching: false });
+	};
+
+	/** Channels it may text people first on (`allowInitiative`), with how to reach a person there. */
+	const initiating = new Map<ChannelId, (person: Person) => Promise<Conversation | null>>();
+	/** An opener's conversation is being looked up: no second one meanwhile. */
+	let opening = false;
+
+	/**
+	 * Nothing else wants the persona now: no turn under way, coming due, waiting for their quiet or their next look, no
+	 * timer set (a reply, a retry or a backlog gap), nobody in the backlog with a span open, not away, halted or stopped.
+	 * An opener is the least of its turns: replies always come first.
+	 */
+	const idle = (now: number) =>
+		!stopped &&
+		!runtime.halted() &&
+		!occupied() &&
+		!opening &&
+		!ready.size &&
+		!pending.size &&
+		!glancing.size &&
+		!settling.size &&
+		!quiet.size &&
+		drainingId === null &&
+		![...waiting.values()].some((conversation) => spanAt(persona, now, conversation.channel.id)) &&
+		!isAway();
+
+	/** The channel to text them first on: the one of the last message between them, else any of theirs, where allowed. */
+	const channelFor = (person: Person) => {
+		const last = runtime.store.history(person.id, 1)[0]?.channel;
+		if (last !== undefined && initiating.has(last) && person.ids[last] !== undefined) return last;
+		return Object.keys(person.ids).find((channel) => initiating.has(channel));
+	};
+
+	/**
+	 * As a full online span opens on a channel allowed for openers (or at the first tick in one), once per span, kept in
+	 * the store (kv `initiativeSpan`) so a restart doesn't plan it again: the check-ins and the share of that span
+	 * (initiative.ts planCheckIns, planShare).
+	 */
+	const plan = (now: number) => {
+		const span = [...initiating.keys()].map((channel) => spanAt(persona, now, channel)).find((open) => open?.kind === 'online');
+		if (!span || runtime.store.get(persona.id, 'initiativeSpan') === String(span.start)) return;
+		runtime.store.set(persona.id, 'initiativeSpan', String(span.start));
+		const context = { store: runtime.store, persona, settings, span, now, rng: runtime.rng, reachable: (person: Person) => channelFor(person) !== undefined };
+		const planned = [...planCheckIns(context), planShare(context)].filter((opener) => opener !== null);
+		if (planned.length) runtime.log(persona.id, 'openers_planned', { openers: planned.map(({ personId, kind, dueAt }) => ({ personId, kind, dueAt: new Date(dueAt).toISOString() })) });
+	};
+
+	/**
+	 * At each tick, while texting first is on (settings.initiative), it plans the span's openers if it has not yet
+	 * (`plan`). Every due opener the guardrails never will allow is dropped (initiative.ts openerBlock); then, while the
+	 * persona is idle, the first one they allow now, on a channel allowed for it, in a full online span with
+	 * `spanEndMinutes` left, goes (a follow-up at a random moment, on average OPENER_MEAN_WAIT on), one at a time.
+	 */
+	const initiate = async () => {
+		const { initiative } = settings;
+		if (!initiative.enabled || !initiating.size || stopped || runtime.halted()) return;
+		const now = runtime.now();
+		plan(now);
+		// Every due opener that can never go is closed now; the first that may go now is the one taken
+		let chosen: { opener: Opener; person: Person; channel: ChannelId } | undefined;
+		for (const opener of runtime.store.dueOpeners(persona.id, now)) {
+			if (queued(opener.personId) || active.has(opener.personId)) continue;
+			const person = runtime.store.personById(opener.personId);
+			const blocked = openerBlock(runtime.store, person, now, initiative, opener);
+			if (blocked?.final) {
+				runtime.store.closeOpener(opener.id, 'dropped');
+				runtime.store.audit(persona.id, 'opener_dropped', { personId: person.id, kind: opener.kind, reason: blocked.reason });
+				continue;
+			}
+			if (blocked || chosen) continue;
+			const channel = channelFor(person);
+			const span = channel === undefined ? null : spanAt(persona, now, channel);
+			if (channel !== undefined && span?.kind === 'online' && span.end - now >= initiative.spanEndMinutes * MINUTE) chosen = { opener, person, channel };
+		}
+		if (!chosen || !idle(now)) return;
+		const { opener, person, channel } = chosen;
+		// A follow-up's day is only roughly planned: it thinks of them at a random moment of the time it may (a check-in or a share has its moment already)
+		if (opener.kind === 'followUp' && runtime.rng() >= 1 - Math.exp(-TICK / OPENER_MEAN_WAIT)) return;
+		opening = true;
+		let conversation: Conversation | null;
+		try {
+			conversation = await initiating.get(channel)!(person);
+		} finally {
+			opening = false;
+		}
+		if (!conversation) {
+			runtime.store.closeOpener(opener.id, 'dropped');
+			runtime.store.audit(persona.id, 'opener_dropped', { personId: person.id, kind: opener.kind, reason: 'unreachable' });
+			return;
+		}
+		// Something came up while the app looked them up: the opener waits for the next tick
+		if (!idle(runtime.now()) || queued(person.id) || runtime.store.personById(person.id).lastInAt !== person.lastInAt) return;
+		void reachOut(person.id, conversation, opener);
 	};
 
 	return {
@@ -883,6 +1051,16 @@ export function createReplyQueue({
 			}
 		},
 		/**
+		 * Lets the persona text people first on `channel` (settings.initiative, off by default): `conversationOf` answers a
+		 * person's conversation there, or null when they can't be reached there. Answers a function that withdraws it.
+		 */
+		allowInitiative(channel: ChannelId, conversationOf: (person: Person) => Promise<Conversation | null>) {
+			initiating.set(channel, conversationOf);
+			return () => {
+				if (initiating.get(channel) === conversationOf) initiating.delete(channel);
+			};
+		},
+		/**
 		 * Once every channel is up: every 30 s, records when the persona was last online and answering (not halted, not a
 		 * dry run), for the next start's backlogSince, and moves the backlog and the ready turns on. Once only, and never after `stop`.
 		 */
@@ -894,10 +1072,12 @@ export function createReplyQueue({
 				isAway();
 				drain();
 				next();
-			}, 30_000);
+				initiate().catch((error: unknown) => runtime.log(persona.id, 'opener_failed', { error: String(error) }));
+			}, TICK);
 		},
 		stop() {
 			stopped = true;
+			initiating.clear();
 			clearInterval(tick);
 			clearTimeout(lease);
 			clearTimeout(comeback);

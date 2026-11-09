@@ -25,6 +25,16 @@ Where the beta stands and what is planned before 1.0.
 - Freeze the public API and the database layout; document the migration policy.
 - More channel adapter examples.
 
+## Planned: texting first
+
+Follow-ups, check-ins and sharing its day are the kinds of opener so far (`settings.initiative`,
+[concepts](./concepts.md#texting-first)). Planned, on the same table, guardrails and turn:
+
+- **The app's own openers**: a reason only the application knows, quoted as data.
+- **A cheap check first**: with the Decisions client on, whether a text would be welcome now, before paying for the
+  model.
+- **A person's own "don't text me first"**, short of a stop.
+
 ## Planned: realism
 
 - **A mood that follows what happens, shared by everyone it talks with.** A persona has no mood today. Planned: one
@@ -36,7 +46,7 @@ Where the beta stands and what is planned before 1.0.
   conversation"), never naming the other person or repeating what they said. How fast it moves and fades are
   settings; off by default.
 - **Opening a link later.** Today a persona only ever knows a link's preview. A durable "I'll look at it" that comes
-  back once it has had the time, with a turn of its own.
+  back once it has had the time, with a turn of its own: an opener of its own kind.
 - **Interruptions with a reason, told to the model.** Each interruption gets a reason fitting how long it lasts
   (reasons are configured with the lengths they suit, so a 3-minute absence is never "took a shower"), and the next
   DM turn's time line says it: "You were away for 3 minutes (a phone call)", so the persona can say "sorry, got

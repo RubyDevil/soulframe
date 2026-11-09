@@ -87,11 +87,21 @@ const nowText = (persona: PersonaConfig, now: number) => {
 	return `offline; next: ${next.kind} ${dayKey(localDateOf(next.start, timezone))} ${clockText(next.start, timezone)} (${new Date(next.start).toISOString().slice(11, 16)} UTC)`;
 };
 
+/** "up to 2 openers a day: follow-ups (14 days ahead at most), check-ins (after 3 quiet days)": how it texts first. */
+const initiativeText = ({ perDay, followUps, checkIns, sharing }: Settings['initiative']) => {
+	const kinds = [
+		followUps.enabled ? `follow-ups (${followUps.maxDays} days ahead at most)` : '',
+		checkIns.enabled ? `check-ins (after ${checkIns.quietDays} quiet days)` : '',
+		sharing.enabled ? `sharing its day (${Math.round(sharing.chance * 100)}% of its returns from a busy block)` : '',
+	].filter(Boolean);
+	return `up to ${perDay} openers a day: ${kinds.join(', ') || 'no kind on'}`;
+};
+
 /**
  * A config check's lines on one persona, after the app's header line, with the settings its brain runs with (its own
  * pacing and relationship over `settings`; a ConfigError if they don't fit, as from createBrain): its prompt's length,
  * now (`status` in place of what its hours say, when the app gives one), today, tomorrow, today's interruptions
- * (`pacing.interruptions`) and its models.
+ * (`pacing.interruptions`), whether it texts first (only when it does: `initiative`) and its models.
  */
 export function personaReport(persona: Persona, { settings: given, now, status }: { settings: Settings; now: number; status?: string }): string[] {
 	const settings = ownSettings(persona, given);
@@ -104,8 +114,10 @@ export function personaReport(persona: Persona, { settings: given, now, status }
 		`  today (${dayKey(today)}, ${persona.timezone}, ${offsetText(now, persona.timezone)}): ${agendaText(agendaOn(persona, today), persona.timezone)}`,
 		`  tomorrow (${dayKey(tomorrow)}): ${agendaText(agendaOn(persona, tomorrow), persona.timezone)}`,
 		`  interruptions today: ${interruptionsOn(persona, today, settings.pacing).map((away) => `${clockText(away.start, persona.timezone)} to ${clockText(away.end, persona.timezone)}`).join(', ') || 'none'}`,
+		...(settings.initiative.enabled ? [`  initiative: ${initiativeText(settings.initiative)}`] : []),
 		`  models: ${TASKS.map((task) => ({ task, used: taskModel(settings, task) }))
-			.filter(({ used }) => !used.off)
+			// The opener's model only once it texts first
+			.filter(({ task, used }) => !used.off && (task !== 'initiative' || settings.initiative.enabled))
 			.map(({ task, used }) => `${task} ${(provider && used.model) || '(canned)'}${provider && used.ownProvider && used.baseUrl ? ` (${new URL(used.baseUrl).host})` : ''}`)
 			.join(', ')}`,
 	];

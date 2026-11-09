@@ -192,6 +192,50 @@ delivers:
 A turn's messages are recorded in the history only once actually sent, and the person's messages are marked handled
 once delivery was attempted.
 
+## Texting first
+
+Off by default (`settings.initiative.enabled`). With it on, a persona may start a DM conversation itself: an
+**opener**. The code decides who and when; the model decides whether to text and what, and may decline.
+
+- **Where openers come from.** Three kinds, one plan at most per person:
+  - **A follow-up**: when someone tells it about something still ahead of them (an interview, a trip) or it promises
+    to get back to them, the DM turn may plan to text them again `days` ahead (`initiative.followUps`), with a short
+    note of its own.
+  - **A check-in** (`initiative.checkIns`): someone close (familiarity, faded for the time apart, and affinity above
+    thresholds) it hasn't heard from in `quietDays`. As each span of its online time opens, each such person is drawn,
+    about once in `meanDays` of their silence, up to twice as often for the closest, so people apart for months drift
+    off the list; it goes at a random moment of the span, and is dropped if they talk before it does (`planCheckIns`,
+    initiative.ts:121).
+  - **Sharing its day** (`initiative.sharing`, off by default): when a span opens within 30 minutes of a busy block's
+    end, now and then (`chance`), it texts one of the people closest to it about it ("at the gym"), within the next
+    30 minutes (`planShare`, initiative.ts:161). The model makes up what happened, keeping to its notes on itself.
+
+  A follow-up is kept only with the turn that planned it (`Turn.keep`). Every later turn with them sees it, so once
+  they talk about it the model drops it, and once its day has come their own turn is asked to bring it up. It may go
+  from 6 AM that day, in the persona's time zone, until the end of the day after it. Check-ins and shares are the
+  code's: no turn sees them. They are planned once per span (a restart doesn't plan it again), for people an allowed
+  channel reaches, at most what `perDay` leaves.
+- **Which channels.** Only those the app allows: `queue.allowInitiative(channel, conversationOf)` (see
+  [channels](./channels.md#texting-first-allowinitiative)), on the channel of the last message between them.
+- **The guardrails**, which no setting relaxes (`openerBlock`, initiative.ts:30): never to anyone who never wrote to
+  it, who is not `active`, deny-listed on any account or flagged as possibly under 18; never while a reply to them is
+  owed or within two hours of the last message either way; at most one opener left unanswered (nothing more goes
+  until they write), and `personGapHours` between two, doubled for each one in a row they ignored; `perDay` in any 24
+  hours, and one a day per account across every persona.
+- **When.** Checked at each tick of the queue, in a full `online` span on that channel with `spanEndMinutes` left,
+  and only when nothing else wants the persona: no turn under way, coming due or in the backlog, not away. Replies
+  always come first. A due opener then goes at a random moment, on average 20 minutes on, one at a time.
+- **The turn.** An opener is a turn like the others (one person at a time): `brain.composeOpener` writes it from the
+  history, the notes, the relationship and the time line, with its own model task (`models.initiative`), and the
+  queue types and sends it as a reply, without a read receipt. If they write while it is being written or typed,
+  before its first message goes out, it stops (`opener_superseded`) and their message gets an ordinary turn; the
+  plan stays, so that turn may bring it up. Only the notes are kept
+  from an opener: familiarity and affinity move with their answer.
+- **How it ended** is kept with the opener and audited (`opener_sent`, `opener_declined` when the model chose not to
+  text, `opener_dropped` with the reason, `opener_failed`; `opener_rehearsed` in a dry run, which
+  sends nothing). A plan never sent is closed as `expired`. Nothing is tried again: an opener is never owed. The halt
+  switch keeps it waiting.
+
 ## Memory and identities
 
 The store (`createStore` on a database from `openDatabase`) keeps everything in one SQLite file, through Node's
@@ -224,7 +268,7 @@ loads; `node --disable-warning=ExperimentalWarning` hides it.
 - **Deny list.** Shared by every persona and keyed by channel and account: someone deny-listed by one persona is never
   approached by another, and every person with that account is denied at once.
 - **Minor flags**, **kv** (small per-persona values, token counts) and the **audit** log (what was decided, with the
-  probabilities of any typed checks). `store.sweep(before)` deletes old messages and audit lines.
+  probabilities of any typed checks). `store.sweep(before)` deletes old messages, audit lines and closed openers.
 
 ## The brain
 
@@ -245,7 +289,8 @@ loads; `node --disable-warning=ExperimentalWarning` hides it.
    channel's `notes`, that follows the channel's rules and does not repeat its recent posts, or `null`. With `policy.allowedLinks` set, it
    contains no links.
 
-The application decides where and when group chats and posts happen; the brain only writes. Group chats and posts
+The application decides where and when group chats and posts happen; the brain only writes. With texting first on,
+`composeOpener` writes a first message to someone, for the reply queue ([Texting first](#texting-first)). Group chats and posts
 are meant for full online time (`fullyOnline`).
 
 The model answers DM turns and group-chat lines in JSON. The answer is read leniently (a reply cut off, raw line
