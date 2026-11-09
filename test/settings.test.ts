@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, parseSettings } from '../src/settings.js';
+import { DEFAULT_SERVICE_SETTINGS, DEFAULT_SETTINGS, parseServiceSettings, parseSettings, SettingsSchema, taskModel } from '../src/settings.js';
 
 describe('parseSettings', () => {
 	it('fills in every default: nothing at all, null (an empty YAML file) and {} are the defaults', () => {
@@ -39,11 +39,32 @@ describe('parseSettings', () => {
 	});
 
 	it('wants a model for every text task once a provider is set (vision aside)', () => {
-		expect(parseSettings({ llm: { baseUrl: 'https://llm.example/v1' } }).issues).toEqual(
-			['directMessage', 'groupChat', 'post'].map((task) => `models.${task}: no model named (set it, or llm.model)`),
+		expect(parseSettings({ models: { default: { baseUrl: 'https://llm.example/v1' } } }).issues).toEqual(
+			['directMessage', 'groupChat', 'post'].map((task) => `models.${task}: no model named (set it, or models.default.model)`),
 		);
-		expect(parseSettings({ llm: { baseUrl: 'https://llm.example/v1', model: 'chat' } }).issues).toEqual([]);
-		expect(parseSettings({ llm: { baseUrl: 'https://llm.example/v1' }, models: { directMessage: { model: 'a' }, groupChat: { model: 'b' }, post: { model: 'c' } } }).issues).toEqual([]);
+		expect(parseSettings({ models: { default: { baseUrl: 'https://llm.example/v1', model: 'chat' } } }).issues).toEqual([]);
+		expect(parseSettings({ models: { default: { baseUrl: 'https://llm.example/v1' }, directMessage: { model: 'a' }, groupChat: { model: 'b' }, post: { model: 'c' } } }).issues).toEqual([]);
+	});
+
+	it("wants a task on a provider of its own to name its own key and model: the default provider's never reach another host", () => {
+		const main = { baseUrl: 'https://llm.example/v1', model: 'chat', apiKeyEnv: 'MAIN_KEY' };
+		expect(parseSettings({ models: { default: main, groupChat: { baseUrl: 'https://other.example/v1' } } }).issues).toEqual([
+			"models.groupChat.apiKeyEnv: on a provider of its own (its baseUrl), it names its own key variable ('' for none): the default one is never sent to another host",
+			'models.groupChat.model: on a provider of its own (its baseUrl), it names its own model',
+		]);
+		expect(parseSettings({ models: { default: main, groupChat: { baseUrl: 'https://other.example/v1', apiKeyEnv: '', model: 'small' } } }).issues).toEqual([]);
+		// vision too, once it is on a provider of its own
+		expect(parseSettings({ models: { default: main, vision: { baseUrl: 'https://eyes.example/v1', model: 'eyes' } } }).issues).toEqual([
+			"models.vision.apiKeyEnv: on a provider of its own (its baseUrl), it names its own key variable ('' for none): the default one is never sent to another host",
+		]);
+	});
+
+	it('says where each setting of the 0.1 betas went: llm to models.default and the service settings, the Decisions client to the service settings', () => {
+		expect(parseSettings({ llm: { baseUrl: 'https://llm.example/v1' }, decisions: { enabled: true, model: 'x', stop: { at: 0.95 } } }).issues).toEqual([
+			"llm: moved: its baseUrl, apiKeyEnv, model, jsonMode and timeoutSeconds to models.default; dailyTokens, directMessageReserve and concurrency to the service settings' text (parseServiceSettings)",
+			"decisions.enabled: moved to the service settings' decisions (parseServiceSettings): one Decisions client serves every persona",
+			"decisions.model: moved to the service settings' decisions (parseServiceSettings): one Decisions client serves every persona",
+		]);
 	});
 
 	it('takes one threshold for the group-chat gate, and says so to the per-chattiness ones of the 0.1 betas', () => {
@@ -60,5 +81,56 @@ describe('parseSettings', () => {
 	it('refuses settings that are not a mapping, "<source>:" before it as before any problem of the whole', () => {
 		expect(parseSettings(['a list']).issues).toEqual(['Expected object, received array (got ["a list"])']);
 		expect(parseSettings('oops', { source: 'settings.yaml' }).issues).toEqual(['settings.yaml: Expected object, received string (got "oops")']);
+	});
+});
+
+describe('taskModel', () => {
+	const settings = SettingsSchema.parse({
+		models: {
+			default: { baseUrl: 'https://llm.example/v1', model: 'chat', apiKeyEnv: 'MAIN_KEY', jsonMode: true, timeoutSeconds: 90 },
+			groupChat: { model: 'small', maxTokens: 60 },
+			post: { baseUrl: 'https://other.example/v1', apiKeyEnv: 'OTHER_KEY', model: 'poster' },
+			vision: { model: 'eyes' },
+		},
+	});
+
+	it("takes what a task names, else the default provider's", () => {
+		expect(taskModel(settings, 'directMessage')).toEqual({ baseUrl: 'https://llm.example/v1', apiKeyEnv: 'MAIN_KEY', model: 'chat', jsonMode: true, timeoutSeconds: 90, maxTokens: 400, temperature: 0.9, ownProvider: false });
+		expect(taskModel(settings, 'groupChat')).toMatchObject({ model: 'small', maxTokens: 60, apiKeyEnv: 'MAIN_KEY' });
+	});
+
+	it("on a provider of its own takes nothing of the default provider but its timeout", () => {
+		expect(taskModel(settings, 'post')).toEqual({ baseUrl: 'https://other.example/v1', apiKeyEnv: 'OTHER_KEY', model: 'poster', jsonMode: false, timeoutSeconds: 90, maxTokens: 160, temperature: 1, ownProvider: true });
+		const bare = SettingsSchema.parse({ models: { ...settings.models, post: { baseUrl: 'https://other.example/v1' } } });
+		expect(taskModel(bare, 'post')).toMatchObject({ apiKeyEnv: undefined, model: undefined, jsonMode: false });
+	});
+
+	it('never gives vision the default model, which may not take images', () => {
+		expect(taskModel(settings, 'vision')).toMatchObject({ model: 'eyes', baseUrl: 'https://llm.example/v1', apiKeyEnv: 'MAIN_KEY' });
+		expect(taskModel(SettingsSchema.parse({ models: { default: settings.models.default } }), 'vision').model).toBeUndefined();
+	});
+});
+
+describe('parseServiceSettings', () => {
+	it('fills in every default: nothing at all, null and {} are the defaults', () => {
+		for (const raw of [undefined, null, {}]) expect(parseServiceSettings(raw)).toEqual({ service: DEFAULT_SERVICE_SETTINGS, issues: [] });
+		expect(DEFAULT_SERVICE_SETTINGS).toEqual({
+			text: { dailyTokens: 200_000, directMessageReserve: 0.3, concurrency: 4 },
+			decisions: { enabled: false, baseUrl: 'https://api.openai.com/v1', apiKeyEnv: 'OPENAI_API_KEY', model: 'gpt-6-luna', timeoutSeconds: 5, dailyTokens: 2_000_000 },
+		});
+	});
+
+	it('answers every problem with its path after its source, an unknown key with the nearest one, and no service settings', () => {
+		expect(parseServiceSettings({ text: { directMessageReserve: 0.95, concurency: 2 }, decisions: { baseUrl: 'nope' } }, { source: 'service.yaml' })).toEqual({
+			issues: [
+				'service.yaml › text.directMessageReserve: Number must be less than or equal to 0.9 (got 0.95)',
+				'service.yaml › decisions.baseUrl: Invalid url (got "nope")',
+				'service.yaml › text.concurency: unknown key (did you mean "concurrency"?)',
+			],
+		});
+	});
+
+	it("holds none of a brain's settings", () => {
+		expect(parseServiceSettings({ pacing: {} }).issues).toEqual(['pacing: unknown key']);
 	});
 });

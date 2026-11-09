@@ -5,8 +5,10 @@ and its **prompt**, free Markdown: who it is, how it talks, what it knows. `pars
 checks the two, from wherever your app keeps them. The one file format soulframe reads, and only if you want it, is
 a Markdown file per persona with its config as YAML frontmatter (`loadPersonas`, `parsePersonaMarkdown`).
 
-What a brain runs with (models, token limits, memory, pacing, the typed checks) is its **settings**, never part of a
-persona: you give them to `createBrain({ persona, settings })` and read them with `parseSettings`.
+What a brain runs with (its models, memory, pacing, which typed checks it asks) is its **settings**, never part of a
+persona: you give them to `createBrain({ persona, settings })` and read them with `parseSettings`. What every persona
+shares (the text provider's daily budget, the Decisions client) is the **service settings**, set once
+(`parseServiceSettings`).
 
 Everything below is taken from the package's schemas (`src/config/personas.ts`, `src/config/hours.ts`,
 `src/settings.ts`).
@@ -16,8 +18,9 @@ Everything below is taken from the package's schemas (`src/config/personas.ts`, 
 - [The prompt](#the-prompt)
 - [`schedule`](#schedule)
 - [Your own loader](#your-own-loader)
-- [`settings`](#settings): [`llm`](#llm), [`models`](#models), [`perception`](#perception), [`decisions`](#decisions),
+- [`settings`](#settings): [`models`](#models), [`perception`](#perception), [`decisions`](#decisions),
   [`memory`](#memory), [`relationship`](#relationship), [`pacing`](#pacing), [`context`](#context), [`retries`](#retries)
+- [Service settings](#service-settings): [`text`](#text), [`decisions` (the client)](#decisions-the-client)
 - [Errors and warnings](#errors-and-warnings)
 - [Check helpers](#check-helpers)
 - [Coming from 0.1.0-beta.1](#coming-from-010-beta1)
@@ -186,18 +189,17 @@ What a brain runs with, never part of a persona: `createBrain({ persona, setting
 `parseSettings(raw, { source })`: like the persona parsers it fills in every default, never throws, and answers every
 problem. `createBrain` needs them: `parseSettings({})` gives every default.
 
-The provider's budget is one for every persona, whatever their settings: `llm.dailyTokens`, `directMessageReserve` and
-`concurrency` must be the same in each (`llmsFor` refuses settings that disagree). The rest may differ by brain.
+What every persona shares is not here: the text provider's daily budget and the Decisions client are the
+[service settings](#service-settings), set once.
 
 `settings.yaml`, say:
 
 ```yaml
-llm:
-  baseUrl: https://api.provider.example/v1
-  apiKeyEnv: LLM_API_KEY
-  model: provider-chat-large
-  dailyTokens: 400000
 models:
+  default:
+    baseUrl: https://api.provider.example/v1
+    apiKeyEnv: LLM_API_KEY
+    model: provider-chat-large
   groupChat:
     model: provider-chat-small
 ```
@@ -233,25 +235,23 @@ pacing:
   typingCharsPerSecond: { range: [4, 8], shape: uniform }
 ```
 
-### `llm`
+### `models`
 
-The text provider, for text generation only (never read by `decisions`). `dailyTokens` and `concurrency` are for every
-persona together: they apply where your code builds the meter and the model clients (`createTokenMeter`, `llmsFor`).
+The text provider and a model per kind of task, for text generation only (never read by `decisions`). `default` is
+the provider and model of every task that names none; a task may name a cheaper model (group chats are frequent and
+mostly a decision to stay quiet) or move to a provider of its own.
+
+`default`:
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `baseUrl` | URL | none | An OpenAI-compatible base URL, e.g. `https://api.provider.example/v1`. Without one (and no text task's own), the persona has no provider: `llmsFor` gives it the canned model in a dry run, else refuses. |
 | `apiKeyEnv` | string | `LLM_API_KEY` | The key's environment variable; empty for a provider without authentication. |
-| `model` | string | none | The model of every task that doesn't name its own. |
+| `model` | string | none | The model of every text task that doesn't name its own (never `vision`'s). |
+| `jsonMode` | boolean | `false` | Ask for strict JSON (`response_format: json_object`), for providers that support it. |
 | `timeoutSeconds` | number, 5 to 300 | `60` | Before a request is given up (it is retried once). |
-| `dailyTokens` | integer, 0 or more | `200000` | Tokens per UTC day for every persona together; 0 for no limit. At the shipped prompt sizes a DM turn is about 3,500 to 4,000 tokens, so the default buys about 55 DM turns a day: size it to your fleet. Applies through the meter your code passes to `llmsFor` (`createTokenMeter(store, settings.llm.dailyTokens)`). |
-| `directMessageReserve` | number, 0 to 0.9 | `0.3` | The share of `dailyTokens` kept for DMs and their photos: group chat and posts stop once the rest is spent. |
-| `concurrency` | integer, 1 to 32 | `4` | The most requests in flight for every persona together; pass it to `llmsFor`. |
-| `jsonMode` | boolean | `false` | Ask for strict JSON (`response_format: json_object`), for providers that support it. A task with its own `baseUrl` doesn't inherit it. |
 
-### `models`
-
-A model per kind of task, so the frequent cheap ones can use a cheaper model.
+`default` is no task: it holds the connection only. Each task's answer limits are its own:
 
 | Task | `maxTokens` default | `temperature` default |
 | --- | --- | --- |
@@ -264,18 +264,34 @@ Each task takes:
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `model` | string | `llm.model` | The model's name at the provider. |
-| `baseUrl` | URL | `llm.baseUrl` | Another provider for this task only. |
-| `apiKeyEnv` | string | `llm.apiKeyEnv` | Empty disables authentication. |
-| `jsonMode` | boolean | `llm.jsonMode` on `llm.baseUrl`, off with its own `baseUrl` | |
+| `model` | string | `default.model` | The model's name at its provider. |
+| `baseUrl` | URL | `default.baseUrl` | A provider of its own for this task only (see below). |
+| `apiKeyEnv` | string | `default.apiKeyEnv` on the default provider | Empty disables authentication. |
+| `jsonMode` | boolean | `default.jsonMode` on the default provider, off on its own | |
+| `timeoutSeconds` | number, 5 to 300 | `default.timeoutSeconds` | |
 | `maxTokens` | integer, 16 to 4000 | see above | The most tokens the answer may hold. |
 | `temperature` | number, 0 to 2 | see above | Higher is more varied. Left out of the request to OpenAI's own `gpt-5` models (at `api.openai.com`). |
 
-Once a provider is set (`llm.baseUrl` or the task's `baseUrl`), every task must name a model, its own or `llm.model`.
+**A task on a provider of its own** (its own `baseUrl`) takes nothing of the default provider but its timeout: no key,
+no model, no `jsonMode`. It names its own `model` and `apiKeyEnv` (empty for none), and `parseSettings` refuses it
+otherwise, so the default provider's key is never sent to another host:
 
-`vision` is the exception: it is optional and off until it names a model of its own. It never falls back to
-`llm.model`, which may not take images. Left out, a photo is only its `alt`, else it shows as not loading. If your chat model takes images, name it
-here too.
+```yaml
+models:
+  default:
+    baseUrl: https://api.provider.example/v1
+    model: provider-chat-large
+  groupChat:
+    baseUrl: http://localhost:11434/v1   # a local model for the frequent group-chat calls
+    apiKeyEnv: ''
+    model: llama3.2
+```
+
+Once a provider is set, every text task must have a model: its own, or `default.model` on the default provider.
+
+`vision` is the exception: it is optional and off until it names a model of its own. It never takes `default.model`,
+which may not take images. Left out, a photo is only its `alt`, else it shows as not loading. If your chat model takes
+images, name it here too.
 
 ### `perception`
 
@@ -290,20 +306,13 @@ What comes with a message in a DM (see [attention](./attention.md#perception-pho
 
 ### `decisions`
 
-Optional typed checks by a Decisions API (see [concepts](./concepts.md#decisions-optional-typed-checks)). This
-block is its only configuration: nothing falls back to `llm` or `models`. Off by default:
-turning it on sends people's messages, the personas' replies and group-chat lines to `baseUrl`. Before you turn it
-on, check that the endpoint and model you use (the defaults below, or your own) answer `{baseUrl}/decisions`: any
-failure behaves as if the checks were off, so a wrong endpoint would only show in the `decisions_failed` log.
+Which typed checks a brain asks of the Decisions client, and the thresholds that act on the answers (see
+[concepts](./concepts.md#decisions-optional-typed-checks)). Whether any check runs at all, and the client itself, are
+the [service settings'](#service-settings) `decisions`: one client for every persona. Nothing here falls back to
+`models`.
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `enabled` | boolean | `false` | The switch for every Decisions call. |
-| `baseUrl` | URL | `https://api.openai.com/v1` | Requests go to `{baseUrl}/decisions`. |
-| `apiKeyEnv` | string | `OPENAI_API_KEY` | Empty for no authentication. |
-| `model` | string | `gpt-6-luna` | |
-| `timeoutSeconds` | number, 1 to 30 | `5` | Before a request is given up (it is retried once). |
-| `dailyTokens` | integer, 0 or more | `2000000` | Input tokens per UTC day for every Decisions call, counted apart from `llm.dailyTokens`; 0 for no limit. Applies through the meter your code passes to `createConfiguredDecisions`. |
 | `dmMessages` | integer, 1 to 20 | `6` | The person's newest messages (since the persona's last reply) sent with each DM check. |
 | `minor.enabled` | boolean | `true` | Whether to run the age check, only on channels with `adult: true`: elsewhere the `minor` settings do not apply. |
 | `minor.denyAt` | number, 0.5 to 1 | `0.9` | At or above: goodbye and deny list, like the code's own check. Only on channels with `adult: true`. |
@@ -466,14 +475,68 @@ within `typingDurationSeconds`; a message of `thinkingPauses.minChars` or more t
 | `delayMinutes` | drawn range, uniform | `[1, 4]` | Before the next try, times the attempt number; through an outage, doubled after each try, up to 16 times. |
 | `budgetCheckMinutes` | number, 1 or more | `60` | While the day's tokens are spent, minutes between checks. |
 
+## Service settings
+
+What the whole service shares, set once and never per brain: the text provider's daily budget, which every persona's
+model client spends together (one meter, one limit of requests in flight), and the Decisions client, one for every
+persona. Read them with `parseServiceSettings(raw, { source })`, as `parseSettings` reads a brain's, and build the
+shared pieces from them:
+
+```yaml
+# service.yaml
+text:
+  dailyTokens: 400000
+decisions:
+  enabled: true
+```
+
+```ts
+import { ConfigError, createConfiguredDecisions, createTokenMeter, llmsFor, parseServiceSettings } from 'soulframe';
+
+const { service, issues } = parseServiceSettings(parse(readFileSync('service.yaml', 'utf8')), { source: 'service.yaml' });
+if (!service) throw new ConfigError('service.yaml', issues);
+const meter = createTokenMeter(store, service.text.dailyTokens, runtime.now);
+const llms = llmsFor(personas.map(({ id }) => ({ id, settings })), { dryRun, apiKeyOf, meter, budget: service.text });
+const decisions = createConfiguredDecisions({ settings: service.decisions, apiKeyOf, meter: createTokenMeter(store, service.decisions.dailyTokens, runtime.now, 'decisionTokens'), now: runtime.now });
+```
+
+### `text`
+
+The text provider's budget, for every persona together.
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `dailyTokens` | integer, 0 or more | `200000` | Tokens per UTC day for every persona together; 0 for no limit. At the shipped prompt sizes a DM turn is about 3,500 to 4,000 tokens, so the default buys about 55 DM turns a day: size it to your fleet. Spent through the meter you build with it (`createTokenMeter`) and pass to `llmsFor`. |
+| `directMessageReserve` | number, 0 to 0.9 | `0.3` | The share of `dailyTokens` kept for DMs and their photos: group chats and posts stop once the rest is spent. |
+| `concurrency` | integer, 1 to 32 | `4` | The most text model requests in flight for every persona together; the others wait their turn. |
+
+### `decisions` (the client)
+
+The Decisions API client. Off by default: turning it on sends people's messages, the personas' replies and group-chat
+lines to `baseUrl`. Before you turn it on, check that the endpoint and model you use (the defaults below, or your own)
+answer `{baseUrl}/decisions`: any failure behaves as if the checks were off, so a wrong endpoint would only show in the
+`decisions_failed` log. While `enabled` is off, `createConfiguredDecisions` gives the disabled client: nothing is ever
+sent, for any persona.
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `enabled` | boolean | `false` | The switch for every Decisions call. |
+| `baseUrl` | URL | `https://api.openai.com/v1` | Requests go to `{baseUrl}/decisions`. |
+| `apiKeyEnv` | string | `OPENAI_API_KEY` | Empty for no authentication. |
+| `model` | string | `gpt-6-luna` | |
+| `timeoutSeconds` | number, 1 to 30 | `5` | Before a request is given up (it is retried once). |
+| `dailyTokens` | integer, 0 or more | `2000000` | Input tokens per UTC day for every Decisions call, counted apart from text generation; 0 for no limit. Spent through the meter you pass to `createConfiguredDecisions`. |
+
 ## Errors and warnings
 
-None of `parsePersona`, `parsePersonaMarkdown`, `loadPersonas` and `parseSettings` throws on a config problem:
+None of `parsePersona`, `parsePersonaMarkdown`, `loadPersonas`, `parseSettings` and `parseServiceSettings` throws on a
+config problem:
 
 - `parsePersona` and `parsePersonaMarkdown` answer `{ persona?, issues }`: no persona while there is any problem;
 - `loadPersonas` answers `{ personas, issues }`: a persona with a problem is left out, the others are loaded, in the
   order asked for;
-- `parseSettings` answers `{ settings?, issues }`: no settings while there is any problem.
+- `parseSettings` answers `{ settings?, issues }`, and `parseServiceSettings` `{ service?, issues }`: none while there is
+  any problem.
 
 A file the 0.1 betas read, left in the folder (`_shared.yaml`, an `<id>.yaml` beside its `<id>.md`), is a problem too:
 `loadPersonas` then loads no persona it may have set something for, so a shared `sfw` or limit is never quietly lost.
@@ -491,6 +554,7 @@ personas/robin.md › sfw: is the brain's policy now: createBrain({ policy: { sf
 personas/kai.md: no frontmatter: a persona file starts with its config between two --- lines
 settings.yaml › pacing.replySplitChance: Number must be less than or equal to 1 (got 1.5)
 settings.yaml › pacng: unknown key (did you mean "pacing"?)
+settings.yaml › models.groupChat.apiKeyEnv: on a provider of its own (its baseUrl), it names its own key variable ('' for none): the default one is never sent to another host
 no file personas/sky.md
 ```
 
@@ -526,6 +590,10 @@ For a config check command (none of them starts anything or touches the network)
 | `character.facts`, `interests`, `boundaries` | In the prompt, in your words |
 | `character.moods` | Gone: soulframe picks no mood. A mood that follows what happens is planned ([roadmap](./roadmap.md)) |
 | `settings:` in a persona's file or `_shared.yaml` | `parseSettings`, then `createBrain({ settings })` and `llmsFor` |
+| `settings.llm.baseUrl`, `apiKeyEnv`, `model`, `jsonMode`, `timeoutSeconds` | `models.default.*` |
+| `settings.llm.dailyTokens`, `directMessageReserve`, `concurrency` | The service settings' `text` (`parseServiceSettings`); `llmsFor` takes it as `budget` in place of `concurrency` |
+| `settings.decisions.enabled`, `baseUrl`, `apiKeyEnv`, `model`, `timeoutSeconds`, `dailyTokens` | The service settings' `decisions`, given to `createConfiguredDecisions` (the thresholds stay in each brain's `settings.decisions`) |
+| A task with its own `baseUrl` using `llm.apiKeyEnv` and `llm.model` | Name its own `apiKeyEnv` (`''` for none) and `model`: the default provider's are never sent to another host |
 | `parsePersonas({ shared, personas, channels, readPrompt })` | `parsePersona({ config, prompt, channels })` per persona |
 | `createReplyQueue({ persona, brain, runtime, act })` | `createReplyQueue({ brain, runtime, act })`: the persona and settings are the brain's |
 | `personaReport(persona, { shared, now })` | `personaReport(persona, { settings, now })` |

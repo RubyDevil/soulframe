@@ -11,7 +11,7 @@ import { providerSet, type Llm, type LlmMessage } from './llm.js';
 import { interruptionsOn } from './pacing.js';
 import { clockText } from './prompts.js';
 import { addDays, agendaOn, isOn, localDateOf, nextSpan, onlineMinutesByWeekday, spanAt, weekdayOf, WEEKDAYS, type DayAgenda, type LocalDate } from './schedule.js';
-import { DAY, MINUTE, type Settings } from './settings.js';
+import { DAY, MINUTE, TASKS, taskModel, type Settings } from './settings.js';
 import { createStore, openDatabase, type Person } from './store.js';
 
 /** A city's zone follows its daylight saving; an abbreviation (EST) or a fixed offset (Etc/GMT+5) never does. UTC is meant as it is. */
@@ -44,7 +44,7 @@ export function settingsWarnings(settings: Settings): string[] {
 		...(burst.restartOnNewMessage && burst.maxRestarts > 1
 			? [`pacing.burst.maxRestarts ${burst.maxRestarts}: each restart drops a draft already paid for, so one reply may cost up to ${burst.maxRestarts + 1} DM turns of tokens`]
 			: []),
-		...(providerSet(settings) ? [] : ['no text provider (llm.baseUrl): llmsFor refuses to make its model outside a dry run, which uses canned lines']),
+		...(providerSet(settings) ? [] : ['no text provider (models.default.baseUrl): llmsFor refuses to make its model outside a dry run, which uses canned lines']),
 	];
 }
 
@@ -95,9 +95,9 @@ export function personaReport(persona: Persona, { settings, now, status }: { set
 		`  today (${dayKey(today)}, ${persona.timezone}, ${offsetText(now, persona.timezone)}): ${agendaText(agendaOn(persona, today), persona.timezone)}`,
 		`  tomorrow (${dayKey(tomorrow)}): ${agendaText(agendaOn(persona, tomorrow), persona.timezone)}`,
 		`  interruptions today: ${interruptionsOn(persona, today, settings.pacing).map((away) => `${clockText(away.start, persona.timezone)} to ${clockText(away.end, persona.timezone)}`).join(', ') || 'none'}`,
-		`  models: ${Object.entries(settings.models)
-			.filter(([task, model]) => task !== 'vision' || model.model)
-			.map(([task, model]) => `${task} ${(provider && (model.model ?? settings.llm.model)) || '(canned)'}`)
+		`  models: ${TASKS.map((task) => ({ task, used: taskModel(settings, task) }))
+			.filter(({ task, used }) => task !== 'vision' || used.model)
+			.map(({ task, used }) => `${task} ${(provider && used.model) || '(canned)'}${provider && used.ownProvider && used.baseUrl ? ` (${new URL(used.baseUrl).host})` : ''}`)
 			.join(', ')}`,
 	];
 }

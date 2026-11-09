@@ -291,7 +291,8 @@ ships:
 
 A Decisions API is a classifier: it answers typed questions (yes or no, or a level on a scale) with probabilities and
 writes no text. `createConfiguredDecisions` is a client for it (OpenAI's by default, or any gateway that speaks it),
-configured only by `settings.decisions`. It is **off by default**: while `decisions.enabled` is false nothing is sent.
+one for every persona, configured by the service settings' `decisions`. It is **off by default**: while their
+`enabled` is false nothing is sent. Which checks each brain asks, and their thresholds, are its `settings.decisions`.
 
 When it is on, it adds three checks:
 
@@ -307,7 +308,8 @@ When it is on, it adds three checks:
   compared with its brain's threshold (`groupChatGate.chimeInAt`), before the group-chat model is called.
 
 It is additive only. The code's own checks run first and stay authoritative; every failure, timeout, refusal or spent
-budget (`decisions.dailyTokens`, counted apart from text generation) behaves exactly as if it were off. The thresholds
+budget (the service settings' `decisions.dailyTokens`, counted apart from text generation) behaves exactly as if it
+were off. The thresholds
 are not calibrated: tune them from the audit rows, which record each probability.
 
 ## Errors

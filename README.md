@@ -104,7 +104,7 @@ const text = 'hey robin, how is your evening going?';
 await queue.handle(brain.incoming(conversation.channel, 'sam', 'Sam', text), conversation, text);
 ```
 
-Replace `createCannedLlm` with a real client ([configuration](./docs/configuration.md#llm)) to talk through your
+Replace `createCannedLlm` with a real client ([configuration](./docs/configuration.md#models)) to talk through your
 provider. [`examples/console-chat.ts`](./examples/console-chat.ts) is a longer, commented version, and
 [`examples/personas/robin.md`](./examples/personas/robin.md) a persona as a file (`loadPersonas`).
 

@@ -7,8 +7,9 @@ Where the beta stands and what is planned before 1.0.
 - **No stability promise.** The exports, the persona config and the database layout may change between betas, and
   there is no migration policy yet.
 - **One kind of text provider.** Text generation speaks the OpenAI-compatible `/chat/completions` API only.
-- **A small default budget.** `llm.dailyTokens` defaults to 200,000 tokens a day for every persona together, about
-  55 DM turns at the shipped prompt sizes: size it to your fleet ([configuration](./configuration.md#llm)).
+- **A small default budget.** The service settings' `text.dailyTokens` defaults to 200,000 tokens a day for every
+  persona together, about 55 DM turns at the shipped prompt sizes: size it to your fleet
+  ([configuration](./configuration.md#text)).
 - **No adapters.** You write the channel adapters ([guide](./channels.md)).
 - **Test helpers and model error classes are not exported** (a scripted Decisions client, a seeded random source,
   the errors a custom model client needs to signal a spent budget or an outage).

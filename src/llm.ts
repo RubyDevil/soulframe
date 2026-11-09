@@ -1,7 +1,7 @@
 import { POST_REQUEST } from './prompts.js';
 import type { Rng } from './rng.js';
 import { between, pick, sleep } from './rng.js';
-import type { Settings } from './settings.js';
+import { DEFAULT_SERVICE_SETTINGS, TASKS, taskModel, type ServiceSettings, type Settings, type Task } from './settings.js';
 import type { Store } from './store.js';
 
 export interface LlmMessage {
@@ -11,8 +11,8 @@ export interface LlmMessage {
 	images?: readonly string[];
 }
 
-/** The kinds of task, each with its own model settings (`settings.models`). */
-export type LlmTask = keyof Settings['models'];
+/** The kinds of task, each with its own model settings (`settings.models.<task>`; `default` is none). */
+export type LlmTask = Task;
 
 interface LlmOptions {
 	task: LlmTask;
@@ -126,64 +126,66 @@ export function createLimiter(size: number) {
 
 type Limiter = ReturnType<typeof createLimiter>;
 
-/** The variable holding a task's key: its own `apiKeyEnv`, else `llm.apiKeyEnv`; '' for none. */
-export const keyEnvFor = (settings: Settings, task: LlmTask) => settings.models[task].apiKeyEnv ?? settings.llm.apiKeyEnv;
+/** The variable holding a task's key (settings.ts taskModel); '' for none, undefined on a provider of its own that names none. */
+export const keyEnvFor = (settings: Settings, task: LlmTask) => taskModel(settings, task).apiKeyEnv;
 
 /** The key variables a persona's text model reads, each with the setting naming it: one per task with a provider, none for an empty key. */
 export function modelKeys(settings: Settings): Map<string, string> {
 	const keys = new Map<string, string>();
-	for (const task of Object.keys(settings.models) as LlmTask[]) {
+	for (const task of TASKS) {
+		const { baseUrl, apiKeyEnv, model } = taskModel(settings, task);
 		// A task that is off needs no key
-		if (task === 'vision' && !settings.models.vision.model) continue;
-		const name = keyEnvFor(settings, task);
-		if (!name || keys.has(name) || !(settings.models[task].baseUrl ?? settings.llm.baseUrl)) continue;
-		keys.set(name, settings.models[task].apiKeyEnv === undefined ? 'settings.llm.apiKeyEnv' : `settings.models.${task}.apiKeyEnv`);
+		if (task === 'vision' && !model) continue;
+		if (!apiKeyEnv || keys.has(apiKeyEnv) || !baseUrl) continue;
+		keys.set(apiKeyEnv, settings.models[task].apiKeyEnv === undefined ? 'models.default.apiKeyEnv' : `models.${task}.apiKeyEnv`);
 	}
 	return keys;
 }
 
 /**
- * The configured text provider(s): each task uses its model from `settings.models`, falling back to
- * `settings.llm` for the provider, the key, the model name and (only with the provider) jsonMode. Past
- * `1 - llm.directMessageReserve` of the day's tokens, only direct messages are still generated.
+ * The configured text provider(s): each task calls the model `taskModel` resolves for it (settings.ts): its own, else
+ * `models.default`'s on the default provider, and on a provider of its own only what it names, so the default key
+ * never reaches another host. Past `1 - budget.directMessageReserve` of the day's tokens, only direct messages (and
+ * their photos) are still generated.
  */
 export function createConfiguredLlm({
 	settings,
 	apiKeyOf,
 	meter,
-	limit = createLimiter(settings.llm.concurrency),
+	budget = DEFAULT_SERVICE_SETTINGS.text,
+	limit = createLimiter(budget.concurrency),
 	rng = Math.random,
 }: {
 	settings: Settings;
 	/** Reads a key from the environment by the variable's name. */
 	apiKeyOf: (envName: string) => string;
 	meter?: TokenMeter;
-	/** Shared by every persona's client (llmsFor): `llm.concurrency` requests in flight at most. */
+	/** The budget every persona shares (`ServiceSettings.text`): its DM reserve, and its concurrency without a `limit`. */
+	budget?: ServiceSettings['text'];
+	/** Shared by every persona's client (llmsFor): `budget.concurrency` requests in flight at most. */
 	limit?: Limiter;
 	rng?: Rng;
 }): Llm {
 	return {
 		async complete(messages, { task, json = false }) {
-			const taskModel = settings.models[task];
-			const baseUrl = taskModel.baseUrl ?? settings.llm.baseUrl;
-			const model = taskModel.model ?? settings.llm.model;
-			if (!baseUrl || !model) throw new ModelNotConfiguredError(`No model set for ${task}: set settings.llm.baseUrl and a model`);
-			const apiKeyEnv = keyEnvFor(settings, task);
+			const used = taskModel(settings, task);
+			const { baseUrl, model, apiKeyEnv } = used;
+			if (!baseUrl || !model) throw new ModelNotConfiguredError(`No model set for ${task}: set models.default.baseUrl and a model`);
+			// On a provider of its own a task names its key: the default one is never sent to another host
+			if (apiKeyEnv === undefined) throw new ModelNotConfiguredError(`No key variable set for ${task}, on a provider of its own: set models.${task}.apiKeyEnv ('' for none)`);
 			const apiKey = apiKeyEnv ? apiKeyOf(apiKeyEnv) : '';
 			const openAi = new URL(baseUrl).hostname === 'api.openai.com';
-			// llm.jsonMode is about llm's provider: a task on its own provider sets its own
-			const jsonMode = taskModel.jsonMode ?? (taskModel.baseUrl ? false : settings.llm.jsonMode);
-			// Checked and counted within its turn, so the calls waiting behind llm.concurrency never spend past their share
+			// Checked and counted within its turn, so the calls waiting behind the concurrency limit never spend past their share
 			const text = await limit(async () => {
 				// A photo is looked at only in a DM, so it spends what is kept for them
-				if (meter?.exceeded(task === 'directMessage' || task === 'vision' ? 1 : 1 - settings.llm.directMessageReserve)) throw new LlmBudgetError();
+				if (meter?.exceeded(task === 'directMessage' || task === 'vision' ? 1 : 1 - budget.directMessageReserve)) throw new LlmBudgetError();
 				const body = (await postModelJson(`${baseUrl.replace(/\/+$/, '')}/chat/completions`, apiKey, {
 					model,
 					messages: messages.map(wireMessage),
-					...(openAi ? { max_completion_tokens: taskModel.maxTokens } : { max_tokens: taskModel.maxTokens }),
-					...(!(openAi && model.startsWith('gpt-5')) && { temperature: taskModel.temperature }),
-					...(jsonMode && json && { response_format: { type: 'json_object' } }),
-				}, settings.llm.timeoutSeconds * 1000, () => between(rng, 2_000, 6_000), 'LLM')) as { choices?: { message?: { content?: string } }[]; usage?: { total_tokens?: number } };
+					...(openAi ? { max_completion_tokens: used.maxTokens } : { max_tokens: used.maxTokens }),
+					...(!(openAi && model.startsWith('gpt-5')) && { temperature: used.temperature }),
+					...(used.jsonMode && json && { response_format: { type: 'json_object' } }),
+				}, used.timeoutSeconds * 1000, () => between(rng, 2_000, 6_000), 'LLM')) as { choices?: { message?: { content?: string } }[]; usage?: { total_tokens?: number } };
 				const answer = body.choices?.[0]?.message?.content?.trim();
 				// A provider that reports no usage is counted at about four characters a token
 				const images = messages.reduce((sum, message) => sum + (message.images?.length ?? 0), 0);
@@ -209,46 +211,38 @@ export function createCannedLlm(rng: Rng): Llm {
 	};
 }
 
-/** Whether a text provider is set: `llm.baseUrl`, or a text task's own `baseUrl` (never `models.vision`'s or `decisions.baseUrl`). */
-export const providerSet = ({ llm, models: { vision: _vision, ...text } }: Settings) => !!(llm.baseUrl || Object.values(text).some((model) => model.baseUrl));
-
-/** The settings that are one budget for every persona, as one meter and one limit spend it: never one of their own. */
-const BUDGET = ['dailyTokens', 'directMessageReserve', 'concurrency'] as const;
+/** Whether a text provider is set: `models.default.baseUrl`, or a text task's own `baseUrl` (never `models.vision`'s, nor the Decisions client's). */
+export const providerSet = (settings: Settings) => TASKS.some((task) => task !== 'vision' && taskModel(settings, task).baseUrl !== undefined);
 
 /**
  * One model client per persona, by id, with the settings given for it (those its brain is given: one object for
- * every persona, or one of their own), so its `settings.models` apply (the meter, `llm.dailyTokens`, and the
- * `concurrency` limit stay shared). Canned lines for a persona in `keyless`, and in a dry run for one without a
- * provider: otherwise that is an error, naming every such persona. Settings that disagree on the shared budget
- * (`llm.dailyTokens`, `directMessageReserve`, `concurrency`) are an error too, naming each value.
+ * every persona, or one of their own), so its `settings.models` apply. The budget is every persona's together
+ * (`ServiceSettings.text`): one `meter` (`createTokenMeter(store, budget.dailyTokens)`) and one limit of
+ * `budget.concurrency` requests in flight. Canned lines for a persona in `keyless`, and in a dry run for one without a
+ * provider: otherwise that is an error, naming every such persona.
  */
 export function llmsFor(
 	personas: readonly { id: string; settings: Settings }[],
-	{ dryRun, apiKeyOf, meter, concurrency, keyless = new Set(), rng = Math.random }: {
+	{ dryRun, apiKeyOf, meter, budget, keyless = new Set(), rng = Math.random }: {
 		dryRun: boolean;
 		apiKeyOf: (envName: string) => string;
+		/** Spends `budget.dailyTokens`, for every persona together. */
 		meter?: TokenMeter;
-		/** The most requests in flight at once, for every persona together (`llm.concurrency`, the same in every persona's settings). */
-		concurrency: number;
+		/** The service settings' `text`: the budget every persona shares. */
+		budget: ServiceSettings['text'];
 		/** Personas whose model key is unset (the caller gives them in a dry run only). */
 		keyless?: ReadonlySet<string>;
 		rng?: Rng;
 	},
 ): Map<string, Llm> {
-	// One meter and one limit spend one budget: what each persona's settings say of it must agree
-	const differ = BUDGET.filter((key) => new Set(personas.map(({ settings }) => settings.llm[key])).size > 1);
-	if (differ.length) {
-		const values = personas.map(({ id, settings }) => `${id} ${differ.map((key) => settings.llm[key]).join('/')}`).join(', ');
-		throw new Error(`settings.llm.${differ.join(', ')} are one budget for every persona: give every persona the same (${values})`);
-	}
 	const noProvider = personas.filter((persona) => !providerSet(persona.settings)).map((persona) => persona.id);
 	if (noProvider.length && !dryRun) {
-		throw new Error(`Set settings.llm.baseUrl and a model in the config (a dry run uses canned lines); no provider for: ${noProvider.join(', ')}`);
+		throw new Error(`Set models.default.baseUrl and a model in the settings (a dry run uses canned lines); no provider for: ${noProvider.join(', ')}`);
 	}
 	const canned = createCannedLlm(rng);
-	const limit = createLimiter(concurrency);
+	const limit = createLimiter(budget.concurrency);
 	return new Map(personas.map((persona) => [
 		persona.id,
-		providerSet(persona.settings) && !keyless.has(persona.id) ? createConfiguredLlm({ settings: persona.settings, apiKeyOf, meter, limit, rng }) : canned,
+		providerSet(persona.settings) && !keyless.has(persona.id) ? createConfiguredLlm({ settings: persona.settings, apiKeyOf, meter, budget, limit, rng }) : canned,
 	]));
 }

@@ -10,7 +10,7 @@ import { dirname, join, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import * as api from '../src/index.js';
-import { DEFAULT_SETTINGS } from '../src/settings.js';
+import { DEFAULT_SERVICE_SETTINGS, DEFAULT_SETTINGS } from '../src/settings.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (path: string) => readFileSync(join(ROOT, path), 'utf8');
@@ -228,8 +228,8 @@ describe('links in the docs', () => {
 
 // --- Settings ---------------------------------------------------------------------------------------------------
 
-/** Every setting's dotted path in the defaults, a drawn range (`{ range, shape }`) and a list taken whole. */
-const settingPaths = () => {
+/** Every setting's dotted path in these defaults (a brain's unless given), a drawn range (`{ range, shape }`) and a list taken whole. */
+const settingPaths = (defaults: unknown = DEFAULT_SETTINGS) => {
 	const paths: string[] = [];
 	const walk = (value: unknown, path: string[]) => {
 		const plain = typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -237,7 +237,7 @@ const settingPaths = () => {
 		if (plain && !drawn) for (const [key, inner] of Object.entries(value)) walk(inner, [...path, key]);
 		else paths.push(path.join('.'));
 	};
-	walk(DEFAULT_SETTINGS, []);
+	walk(defaults, []);
 	return paths;
 };
 /** How the configuration reference names a setting: without its group (`pacing.`), and a model's without its task. */
@@ -249,11 +249,14 @@ const documentedAs = (path: string) => {
 const REMOVED = ['singlePresence', 'quickReplyChance', 'slowReplyChance', 'quickReplyDelaySeconds', 'slowReplyDelaySeconds', 'busyReplyDelaySeconds', 'relationshipAfter'];
 
 describe('settings in the docs', () => {
-	it('lists every setting of the defaults in the configuration reference', () => {
+	it("lists every setting of the defaults, a brain's and the service's, in the configuration reference", () => {
 		const reference = read('docs/configuration.md');
 		const paths = settingPaths();
 		expect(paths.length).toBeGreaterThan(60);
 		expect(paths.filter((path) => !reference.includes(`\`${documentedAs(path)}\``))).toEqual([]);
+		const service = settingPaths(DEFAULT_SERVICE_SETTINGS);
+		expect(service).toHaveLength(9);
+		expect(service.filter((path) => !reference.includes(`\`${documentedAs(path)}\``))).toEqual([]);
 	});
 
 	it('explains every timing and relationship setting in the attention guide', () => {

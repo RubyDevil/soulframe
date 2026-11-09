@@ -21,7 +21,7 @@ import { z } from 'zod';
 import type { ChannelId } from '../channel.js';
 import { isPlainObject } from '../merge.js';
 import { refuseSchool, ScheduleSchema, type ScheduleConfig } from './hours.js';
-import { schemaProblems, sourced, suggest, unknownKeyProblem, unknownKeys, type Problem } from './issues.js';
+import { schemaProblems, sourced, suggest, unknownKeyProblems, unknownKeys, type Problem } from './issues.js';
 
 /** A persona's id: the key of everything stored about it and the seed of its days; a persona file's name without .md. */
 export const PERSONA_ID = /^[a-z0-9-]{2,32}$/;
@@ -106,9 +106,7 @@ export function parsePersona({
 	const parsed = (adult ? ADULT_SCHEMA : PersonaConfigSchema).safeParse(config);
 	const problems = schemaProblems(parsed.error, config);
 	// A key the 0.1 betas read says where it went
-	const movedTo = (path: (string | number)[]) => (path.length === 1 && Object.hasOwn(MOVED, path[0]!) ? MOVED[path[0]!] : undefined);
-	const unknown = unknownKeys(PersonaConfigSchema, config);
-	problems.push(...unknown.map((key) => ({ path: key.path, message: movedTo(key.path) ?? unknownKeyProblem(key).message })));
+	problems.push(...unknownKeyProblems(unknownKeys(PersonaConfigSchema, config), MOVED));
 	if (typeof prompt !== 'string') problems.push({ path: ['prompt'], message: "must be text: the persona's voice and background, in Markdown" });
 	// Its hours may only name its own channels
 	for (const { path, name } of parsed.success ? unknownChannels(parsed.data.schedule, channels) : []) {

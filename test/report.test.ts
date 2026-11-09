@@ -7,7 +7,7 @@ import { everyDay, NOTED_DM, personaOf, settingsOf, TEST_IDENTITY, TEST_POLICY, 
 // Thursday, November 5, 12:00 UTC
 const now = Date.UTC(2026, 10, 5, 12);
 /** Settings with a text provider, as most apps run with. */
-const TEXT = settingsOf({ llm: { baseUrl: 'https://llm.example/v1', model: 'chat-model' } });
+const TEXT = settingsOf({ models: { default: { baseUrl: 'https://llm.example/v1', model: 'chat-model' } } });
 const WINDOW = everyDay(['19:00', '19:30'], ['23:00', '23:30']);
 const evening = { start: ['19:00', '19:00'], end: ['23:00', '23:00'] } as { start: [string, string]; end: [string, string] };
 /** The same hours every day: online from `start` to `end`, with a chance of a day off. */
@@ -56,6 +56,9 @@ describe('the report on a persona', () => {
 		expect(lines).toContain('  models: directMessage chat-model, groupChat chat-model, post chat-model');
 		expect(lines.at(-1)).toBe('  models: directMessage chat-model, groupChat chat-model, post chat-model');
 		expect(reportOf({ schedule: daily(evening) }, undefined, settingsOf())).toContain('  models: directMessage (canned), groupChat (canned), post (canned)');
+		// A task on a provider of its own shows its host; vision shows only once it names a model
+		const split = settingsOf({ models: { ...TEXT.models, post: { baseUrl: 'https://other.example/v1', apiKeyEnv: 'OTHER_KEY', model: 'post-model' }, vision: { model: 'eyes' } } });
+		expect(reportOf({ schedule: daily(evening) }, undefined, split)).toContain('  models: directMessage chat-model, groupChat chat-model, post post-model (other.example), vision eyes');
 	});
 });
 
@@ -84,7 +87,7 @@ describe('the warnings on a persona', () => {
 
 describe('the warnings on settings', () => {
 	it('warn of no text provider, whose every model is canned', () => {
-		expect(settingsWarnings(settingsOf({ llm: { model: 'chat-model' } }))).toEqual(['no text provider (llm.baseUrl): llmsFor refuses to make its model outside a dry run, which uses canned lines']);
+		expect(settingsWarnings(settingsOf({ models: { default: { model: 'chat-model' } } }))).toEqual(['no text provider (models.default.baseUrl): llmsFor refuses to make its model outside a dry run, which uses canned lines']);
 		expect(settingsWarnings(TEXT)).toEqual([]);
 	});
 
@@ -93,7 +96,7 @@ describe('the warnings on settings', () => {
 			'pacing.burst.maxRestarts 3: each restart drops a draft already paid for, so one reply may cost up to 4 DM turns of tokens',
 		]);
 		// Not when it never starts over
-		expect(settingsWarnings(settingsOf({ llm: TEXT.llm, pacing: { burst: { maxRestarts: 3, restartOnNewMessage: false } } }))).toEqual([]);
+		expect(settingsWarnings(settingsOf({ models: TEXT.models, pacing: { burst: { maxRestarts: 3, restartOnNewMessage: false } } }))).toEqual([]);
 	});
 });
 
