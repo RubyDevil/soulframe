@@ -9,7 +9,12 @@ export interface Sent {
 	from: string;
 	text: string;
 	at: number;
+	/** It texted first (settings.initiative): the kind of opener (followUp, checkIn, share). */
+	kind?: string;
 }
+
+/** The kinds of opener, as people read them. */
+const KINDS: Record<string, string> = { followUp: 'follow-up', checkIn: 'check-in', share: 'sharing its day', opener: 'opener' };
 
 /** A runtime log line, with the time it was logged. */
 export interface LoggedEvent {
@@ -147,10 +152,33 @@ export interface PersonaMetrics {
 	typingMs: number;
 	events: Record<keyof typeof COUNTED, number>;
 	model: { calls: number; failed: number; averageMs: number | null; maxMs: number | null };
+	/** Texting first (settings.initiative): openers planned by kind, how they ended, and those it held back for their message. */
+	initiative: { planned: Record<string, number>; outcomes: Record<string, number>; superseded: number };
 }
 
 /** The numbers of one persona's side of the run. */
-export function metricsOf(id: string, { sent, events, calls, typing }: { sent: readonly Sent[]; events: readonly LoggedEvent[]; calls: readonly ModelCall[]; typing: readonly { persona: string; on: boolean; at: number }[] }): PersonaMetrics {
+export function metricsOf(
+	id: string,
+	{
+		sent,
+		events,
+		calls,
+		typing,
+		audited = [],
+		openers = [],
+	}: {
+		sent: readonly Sent[];
+		events: readonly LoggedEvent[];
+		calls: readonly ModelCall[];
+		typing: readonly { persona: string; on: boolean; at: number }[];
+		/** The store's audit lines as they were written. */
+		audited?: readonly LoggedEvent[];
+		/** Every opener planned, with how it ended (null: still pending). */
+		openers?: readonly { persona: string; kind: string; outcome: string | null }[];
+	},
+): PersonaMetrics {
+	const own = openers.filter((opener) => opener.persona === id);
+	const tally = (keys: string[]) => keys.reduce<Record<string, number>>((counts, key) => ({ ...counts, [key]: (counts[key] ?? 0) + 1 }), {});
 	const mine = sent.filter((message) => message.from === id);
 	const turns = turnsOf(sent).filter((turn) => turn.from === id);
 	const gaps = turns.flatMap((turn) => (turn.gap === null ? [] : [turn.gap]));
@@ -178,6 +206,11 @@ export function metricsOf(id: string, { sent, events, calls, typing }: { sent: r
 			failed: ownCalls.length - okCalls.length,
 			averageMs: okCalls.length ? Math.round(okCalls.reduce((sum, call) => sum + call.ms, 0) / okCalls.length) : null,
 			maxMs: quantile(okCalls.map((call) => call.ms), 1),
+		},
+		initiative: {
+			planned: tally(own.map((opener) => opener.kind)),
+			outcomes: tally(own.map((opener) => opener.outcome ?? 'pending')),
+			superseded: audited.filter((entry) => entry.persona === id && entry.event === 'opener_superseded').length,
 		},
 	};
 }
@@ -219,7 +252,8 @@ export function transcriptMarkdown(sides: readonly Side[], sent: readonly Sent[]
 	for (const [i, message] of sent.entries()) {
 		const before = sent[i - 1];
 		const gap = before ? ` (+${duration(message.at - before.at)})` : '';
-		lines.push(`**${utcStamp(message.at, before?.at)}**${gap} **${nameOf.get(message.from) ?? message.from}:** ${message.text.replace(/\r?\n/g, ' ')}`, '');
+		const first = message.kind ? ` _(texts first: ${KINDS[message.kind] ?? message.kind})_` : '';
+		lines.push(`**${utcStamp(message.at, before?.at)}**${gap} **${nameOf.get(message.from) ?? message.from}:**${first} ${message.text.replace(/\r?\n/g, ' ')}`, '');
 	}
 	return lines.join('\n');
 }
@@ -282,6 +316,9 @@ export function reportMarkdown({
 		row('Model calls (average / longest)', (m) => `${m.model.calls} (${m.model.averageMs === null ? 'n/a' : `${duration(m.model.averageMs)} / ${duration(m.model.maxMs!)}`})`),
 		row('Failed model calls / turns given up', (m) => `${m.model.failed} / ${m.events.gaveUp}`),
 		row('Failed deliveries', (m) => String(m.events.failedDeliveries)),
+		row('Texted first (follow-ups / check-ins / shares planned)', (m) => `${m.initiative.planned.followUp ?? 0} / ${m.initiative.planned.checkIn ?? 0} / ${m.initiative.planned.share ?? 0}`),
+		row('Openers: sent / declined / dropped / expired / pending', (m) => ['sent', 'declined', 'dropped', 'expired', 'pending'].map((outcome) => m.initiative.outcomes[outcome] ?? 0).join(' / ')),
+		row('Openers held back because they wrote first', (m) => String(m.initiative.superseded)),
 		'',
 		'## What each kept by the end',
 		'',
@@ -315,6 +352,8 @@ export interface SummaryRun {
 	/** Its folder, from the summary's. */
 	dir: string;
 	messages: number;
+	/** Messages sent texting first (settings.initiative); missing from summaries written before it was counted. */
+	textedFirst?: number;
 	personaMs: number;
 	realMs: number;
 	tokens: number;
@@ -416,9 +455,9 @@ export function summaryMarkdown(summary: SuiteSummary, baseline?: SuiteSummary):
 	}
 	const broken = summary.runs.filter((run) => run.broken.length);
 	if (broken.length) lines.push('## Broken runs', '', ...broken.map((run) => `- ${run.scenario} #${run.run}: ${run.broken.join('; ')}`), '');
-	lines.push('## Conversations', '', '| Scenario | Run | Messages | Persona time | Real time | Tokens | Overall | Report |', '| --- | --- | --- | --- | --- | --- | --- | --- |');
+	lines.push('## Conversations', '', '| Scenario | Run | Messages | Texted first | Persona time | Real time | Tokens | Overall | Report |', '| --- | --- | --- | --- | --- | --- | --- | --- | --- |');
 	for (const run of summary.runs) {
-		lines.push(`| ${cell(run.scenario)} | ${run.run} | ${run.messages} | ${duration(run.personaMs)} | ${duration(run.realMs)} | ${run.tokens.toLocaleString('en-US')} | ${run.overall ?? (run.analysisProblem ? cell(run.analysisProblem) : '–')} | [report](${run.dir}/report.md) |`);
+		lines.push(`| ${cell(run.scenario)} | ${run.run} | ${run.messages} | ${run.textedFirst ?? '–'} | ${duration(run.personaMs)} | ${duration(run.realMs)} | ${run.tokens.toLocaleString('en-US')} | ${run.overall ?? (run.analysisProblem ? cell(run.analysisProblem) : '–')} | [report](${run.dir}/report.md) |`);
 	}
 	lines.push('');
 	return lines.join('\n');

@@ -1,14 +1,23 @@
 # The persona test's default suite (npm run persona-test -- --suite scripts/persona-test/suite.yaml): the same
 # scenarios on every run, so the scores of two runs (a change and its baseline) compare. Each scenario may set:
 #   a, b         the persona files (a opens); --a and --b override them
-#   opener       a's first message
+#   opener       a's first message; null for none (nobody writes until one texts first)
 #   start        when it starts: online (both online, 45 min or more left), closing (both online, one of them with
 #                15 to 30 min left), away (a online, b offline: b answers once back), now, or an ISO time
 #   messages     stop after this many messages, the opener included
 #   hours        stop after this many hours of persona time
 #   where        the channel, as the brains are told it
 #   adult        mark the channel 18+
-# --messages and --hours override every scenario's.
+#   settings     settings for both brains over the run's (--settings), such as initiative (texting first)
+#   past         what they had before the run, written into the store as if it had happened:
+#                  daysAgo        when their last message was
+#                  familiarity, affinity, conversations   how well each knows and likes the other (both ways)
+#                  notes          what each had noted about the other: { a: ..., b: ... }
+#                  messages       the end of their last conversation, oldest first: - a: ... / - b: ...
+# --messages and --hours override every scenario's. With texting first on, a conversation that goes quiet is not
+# over: it runs to its message or hour limit, so whether and when one texts first is part of what it tests. Texting
+# first also depends on the hours each persona's agenda draws for those days: a run where it never came up says so in
+# its report (the openers planned and how they ended).
 scenarios:
   # A first chat on an evening both are free: voice, curiosity, getting to know each other
   - name: evening
@@ -29,3 +38,66 @@ scenarios:
     start: away
     messages: 16
     hours: 30
+
+  # Texting first, a follow-up: Robin has something ahead tomorrow, then has to go; does Noa get back to it, and well?
+  - name: follow-up
+    opener: "ugh, job interview tomorrow at 10 at the big bookshop in town. i'm a wreck"
+    start: closing
+    messages: 24
+    hours: 40
+    settings:
+      initiative:
+        enabled: true
+
+  # Texting first, a check-in: they got on well and have not talked for five days; nobody writes first unless one
+  # checks in. Check-ins are made likelier than by default (meanDays: 1) so one comes within the run
+  - name: check-in
+    opener: null
+    start: online
+    messages: 12
+    hours: 72
+    settings:
+      initiative:
+        enabled: true
+        checkIns:
+          meanDays: 1
+    past:
+      daysAgo: 5
+      familiarity: 0.6
+      affinity: 0.4
+      conversations: 4
+      notes:
+        a: "Noa: sound designer in Berlin, records city noises for films. Was fixing their bike at last."
+        b: "Robin: works in a bookshop, cat called Biscuit, bakes on weekends. Was trying a sourdough."
+      messages:
+        - a: "ok the sourdough is in the oven. wish me luck"
+        - b: "good luck. send a photo if it survives"
+        - a: "will do. night!"
+
+  # Texting first, sharing its day: Noa may tell Robin about the studio as it gets back (when it comes online within
+  # half an hour of its busy block ends); the chance is raised to 1 so it shares whenever the agenda allows
+  - name: sharing
+    opener: null
+    start: online
+    messages: 12
+    hours: 96
+    settings:
+      initiative:
+        enabled: true
+        checkIns:
+          enabled: false
+        sharing:
+          enabled: true
+          chance: 1
+    past:
+      daysAgo: 1
+      familiarity: 0.7
+      affinity: 0.5
+      conversations: 6
+      notes:
+        a: "Noa: sound designer in Berlin, records city noises for films; working on a short film's soundtrack this week."
+        b: "Robin: works in a bookshop, cat called Biscuit; loves hearing about Noa's recordings."
+      messages:
+        - b: "the director wants 'the sound of a lonely fridge'. so that's my week"
+        - a: "i need updates on the fridge"
+        - b: "you'll get them"

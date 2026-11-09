@@ -177,14 +177,38 @@ const ScenarioSchema = z
 		name: z.string().regex(/^[a-z0-9-]{1,40}$/, 'a-z, 0-9 and -: it names the scenario\'s folder'),
 		a: z.string().optional(),
 		b: z.string().optional(),
-		opener: z.string().min(1).optional(),
+		/** null: no first message; nobody writes until one texts first (settings.initiative on). */
+		opener: z.string().min(1).nullable().optional(),
 		start: START.optional(),
 		messages: z.number().int().min(2).optional(),
 		hours: z.number().min(0.1).optional(),
 		where: z.string().min(1).optional(),
 		adult: z.boolean().optional(),
+		/** Settings for both brains over the run's (texting first, say), checked as a brain's settings are. */
+		settings: z.record(z.string(), z.unknown()).optional(),
+		/** What the two had before: an earlier conversation, how well they know each other, what each noted. */
+		past: z
+			.object({
+				daysAgo: z.number().min(0),
+				familiarity: z.number().min(0).max(1).default(0.5),
+				affinity: z.number().min(-1).max(1).default(0.3),
+				conversations: z.number().int().min(1).default(3),
+				notes: z.object({ a: z.string().optional(), b: z.string().optional() }).strict().default({}),
+				messages: z.array(z.union([z.object({ a: z.string().min(1) }).strict(), z.object({ b: z.string().min(1) }).strict()])).min(1),
+			})
+			.strict()
+			.optional(),
 	})
 	.strict();
+
+/** `over` written key by key over `base`: a mapping merged, anything else replacing. */
+const deepMerge = (base: Record<string, unknown>, over: Record<string, unknown>): Record<string, unknown> =>
+	Object.fromEntries(
+		[...new Set([...Object.keys(base), ...Object.keys(over)])].map((key) => {
+			const [a, b] = [base[key], over[key]];
+			return [key, isPlainObject(a) && isPlainObject(b) ? deepMerge(a, b) : key in over ? b : a];
+		}),
+	);
 const SuiteSchema = z.object({ scenarios: z.array(ScenarioSchema).min(1) }).strict();
 
 const startRule = (text: string): StartRule => (['now', 'online', 'closing', 'away'].includes(text) ? (text as StartRule) : Date.parse(text));
@@ -206,12 +230,16 @@ const scenarios: Scenario[] = asWritten.map((scenario) => ({
 	name: scenario.name,
 	a: args.a ?? scenario.a ?? 'examples/personas/robin.md',
 	b: args.b ?? scenario.b ?? 'examples/personas/noa.md',
-	opener: (args.suite ? scenario.opener : args.opener) ?? args.opener ?? "hey! how's your day going?",
+	opener: args.suite && scenario.opener !== undefined ? scenario.opener : (args.opener ?? "hey! how's your day going?"),
 	start: startRule((args.suite ? scenario.start : args.start) ?? args.start ?? 'online'),
 	messages: args.messages ? numberOf('messages', args.messages, 2) : (scenario.messages ?? 30),
 	hours: args.hours ? numberOf('hours', args.hours, 0.1) : (scenario.hours ?? 24),
 	where: (args.suite ? scenario.where : args.where) ?? args.where ?? 'a private chat app',
 	adult: args.adult ?? scenario.adult ?? false,
+	settings: scenario.settings ? settingsOf(deepMerge(live ? { ...rawSettings, models: personaModels } : rawSettings, scenario.settings), `${args.suite} › ${scenario.name}.settings`) : settings,
+	...(scenario.past && {
+		past: { ...scenario.past, messages: scenario.past.messages.map((message) => ('a' in message ? { from: 'a' as const, text: message.a } : { from: 'b' as const, text: message.b })) },
+	}),
 }));
 
 // --- The baseline --------------------------------------------------------------------------------------------------
@@ -238,7 +266,6 @@ const say = (line: string) => {
 };
 const setup: Setup = {
 	live,
-	settings,
 	service,
 	...(reviewer && { reviewer }),
 	...(!reviewer && { noReview: live ? 'skipped (--no-review)' : 'a canned run is not reviewed' }),
@@ -287,6 +314,7 @@ const summary: SuiteSummary = {
 		run: result.run,
 		dir: relative(outDir, result.dir) || '.',
 		messages: result.messages,
+		textedFirst: result.textedFirst,
 		personaMs: result.summary.end - result.summary.start,
 		realMs: result.summary.realMs,
 		tokens: result.summary.tokens,
