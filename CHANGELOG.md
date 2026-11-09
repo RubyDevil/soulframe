@@ -44,6 +44,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   queue reads) and throws a `ConfigError` naming the persona if they don't fit; `settingsFor(persona, settings)`
   answers them, or the problems, without throwing. `personaReport` runs with them too, and lists what they change
   (`own settings:`). Any other setting in a persona's config is refused as its brain's alone.
+- [`examples/settings.yaml`](./examples/settings.yaml) and [`examples/service.yaml`](./examples/service.yaml), loaded
+  by the tests and shown word for word in the configuration reference, as `examples/personas/robin.md` is.
 
 ### Changed
 

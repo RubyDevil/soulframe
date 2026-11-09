@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SERVICE_SETTINGS, DEFAULT_SETTINGS, parseServiceSettings, parseSettings, settingsFor, SettingsSchema, taskModel } from '../src/settings.js';
 import { settingsOf } from './fixtures.js';
@@ -82,6 +84,17 @@ describe('parseSettings', () => {
 	it('refuses settings that are not a mapping, "<source>:" before it as before any problem of the whole', () => {
 		expect(parseSettings(['a list']).issues).toEqual(['Expected object, received array (got ["a list"])']);
 		expect(parseSettings('oops', { source: 'settings.yaml' }).issues).toEqual(['settings.yaml: Expected object, received string (got "oops")']);
+	});
+});
+
+describe('the example settings files', () => {
+	const example = (name: string) => parse(readFileSync(new URL(`../examples/${name}`, import.meta.url), 'utf8'));
+
+	it("load as written, a brain's and the service's (examples/settings.yaml and service.yaml, shown in docs/configuration.md)", () => {
+		const { settings, issues } = parseSettings(example('settings.yaml'), { source: 'settings.yaml' });
+		expect(issues).toEqual([]);
+		expect(taskModel(settings!, 'groupChat')).toMatchObject({ baseUrl: 'https://api.provider.example/v1', model: 'provider-chat-small', apiKeyEnv: 'LLM_API_KEY' });
+		expect(parseServiceSettings(example('service.yaml'), { source: 'service.yaml' })).toEqual({ service: { ...DEFAULT_SERVICE_SETTINGS, text: { ...DEFAULT_SERVICE_SETTINGS.text, dailyTokens: 400_000 }, decisions: { ...DEFAULT_SERVICE_SETTINGS.decisions, enabled: true } }, issues: [] });
 	});
 });
 

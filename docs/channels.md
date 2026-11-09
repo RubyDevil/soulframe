@@ -86,8 +86,23 @@ stranger sent, so if `previewLink` does, guard it the way you would guard any se
 (no private addresses, a size and time limit). URLs in the text are found for you; with no card, the persona knows
 only the site's name. In DMs only: for group chats, write what you want the persona to know into `GroupChatLine.text`.
 
-And the wiring, once per persona (`persona` from `loadPersonas` or `parsePersona`, `settings` from `parseSettings`, the
-same for every persona or its own):
+And the wiring. What every persona shares is built once, from the
+[service settings](./configuration.md#service-settings) (`service` from `parseServiceSettings`): the token meters,
+every persona's model client and the Decisions client (`personas` from `loadPersonas` or `parsePersona`, `settings`
+from `parseSettings`, the same for every persona or its own):
+
+```ts
+const meter = createTokenMeter(runtime.store, service.text.dailyTokens, runtime.now);
+const llms = llmsFor(personas.map(({ id }) => ({ id, settings })), { dryRun: false, apiKeyOf: (name) => process.env[name] ?? '', meter, budget: service.text });
+const decisions = createConfiguredDecisions({
+	settings: service.decisions,
+	apiKeyOf: (name) => process.env[name] ?? '',
+	meter: createTokenMeter(runtime.store, service.decisions.dailyTokens, runtime.now, 'decisionTokens'),
+	now: runtime.now,
+});
+```
+
+Then, once per persona (its `llm` is `llms.get(persona.id)!`):
 
 ```ts
 // What your personas are, how they write, your rules and allowed links, all optional: left out, the identity line is

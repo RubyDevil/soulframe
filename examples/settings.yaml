@@ -1,0 +1,7 @@
+models:
+  default:
+    baseUrl: https://api.provider.example/v1
+    apiKeyEnv: LLM_API_KEY
+    model: provider-chat-large
+  groupChat:
+    model: provider-chat-small

@@ -34,7 +34,7 @@ A pull request keeps these green (CI runs `npm run check` once, then the tests a
 
 - a code reference, `file.ts:NN`, `src/file.ts:NN`, a range `file.ts:NN-MM` or a list `file.ts:NN, :MM` (the file
   under `src/`), must point at existing lines; the first of a list must also hold one of the names in the code span
-  written just before it, such as `` `compose` (brain.ts:330) `` or `` (`checkIncoming`, brain.ts:272-281) ``. Write
+  written just before it, such as `` `compose` (brain.ts:333) `` or `` (`checkIncoming`, brain.ts:272-281) ``. Write
   that span when you add a reference: it is what keeps the reference from drifting silently. A failure names the
   nearest line that holds the name;
 - every export of `src/index.ts` has its `###` heading in `docs/api.md`, and every heading there is an export;
@@ -90,9 +90,9 @@ versions with the same rules.
 - **npm dist-tags.** A version with a hyphen is published with `npm publish --tag beta` (the tag matches the label), so
   it never becomes `latest`; only a version without a prerelease part does. Install a beta with
   `npm install soulframe@beta`.
-- **What counts as the public API:** the exports of `src/index.ts`, the shape of a persona's config and of the settings
-  (and the persona file format: a Markdown file, its config as frontmatter), and the database layout. See
-  [docs/api.md](./docs/api.md).
+- **What counts as the public API:** the exports of `src/index.ts`, the shape of a persona's config, of a brain's
+  settings and of the service settings (and the persona file format: a Markdown file, its config as frontmatter), and
+  the database layout. See [docs/api.md](./docs/api.md).
 - A published version is never changed or reused: fix forward with a new version.
 
 ## Commit messages

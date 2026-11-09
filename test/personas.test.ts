@@ -1,6 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { stringify } from 'yaml';
+import { parse, stringify } from 'yaml';
 import { describe, expect, it } from 'vitest';
 import { ScheduleSchema } from '../src/config/hours.js';
 import { loadPersonas, parsePersonaMarkdown, type ConfigFiles } from '../src/config/personas.js';
@@ -211,8 +212,10 @@ describe('the example persona file', () => {
 		expect(loaded.issues).toEqual([]);
 		expect(loaded.personas[0]).toMatchObject({ id: 'robin', name: 'Robin', timezone: 'Europe/Lisbon' });
 		expect(loaded.personas[0]!.prompt).toMatch(/^You are Robin, 29,[^]*kindly\.$/);
-		// Its own pacing and relationship, as written
+		// Its own pacing and relationship, as written, fit the example settings too
 		expect(loaded.personas[0]).toMatchObject({ pacing: { typingCharsPerSecond: [2.5, 5] }, relationship: { familiarity: { growth: 0.008 } } });
+		const settings = settingsOf(parse(readFileSync(new URL('../examples/settings.yaml', import.meta.url), 'utf8')));
+		expect(loadPersonas({ dir: fileURLToPath(new URL('../examples/personas', import.meta.url)), channels: { robin: ['chat'] }, adult: true, settings }).issues).toEqual([]);
 	});
 });
 
