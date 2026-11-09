@@ -45,10 +45,7 @@ export const testPersona = (fields: Record<string, unknown> = {}) => ({
 	...fields,
 });
 
-/**
- * parsePersona on this config with `prompt`, on `channels` (both test channels unless given), for 18+ conversations
- * with `adult`, its own settings checked over `settings` (the defaults unless given).
- */
+/** parsePersona on this config with `prompt`, on `channels` (both test channels unless given), for 18+ conversations with `adult`. */
 export const parsedOf = (
 	config: unknown,
 	{ prompt = 'A voice.', channels = ['forum', 'chat'], adult, settings, source }: { prompt?: string; channels?: ChannelId[]; adult?: boolean; settings?: Settings; source?: string } = {},

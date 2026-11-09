@@ -3,9 +3,9 @@
 How a persona decides **when** it answers, **who** it answers first, and **how well it knows and likes** each person,
 with every setting that changes it explained in plain terms. The [configuration reference](./configuration.md#settings)
 lists the same keys in tables, with their types and ranges; this page says what each one does, and what to expect when
-you change it. All of them are settings of a persona's brain (`createBrain({ settings })`), and a persona's config may
-set its own over them ([its own pacing and relationship](./configuration.md#its-own-pacing-and-relationship)): one
-settings object for every persona, with a few keys of its own for a persona that should answer differently.
+you change it. All of them are settings of a persona's brain (`createBrain({ settings })`): one object for every
+persona, with [its own](./configuration.md#its-own-pacing-and-relationship) over them for one that should answer
+differently.
 
 - [The model in one minute](#the-model-in-one-minute)
 - [`relationship`: getting to know and like each person](#relationship-getting-to-know-and-like-each-person)
@@ -64,8 +64,7 @@ The shipped affinity levels, from -1, -0.6, -0.2, 0.2 and 0.6: hard to warm to (
 way now and then; nothing said; you like them; you're really fond of them. Their exact words, and how the line is
 put together, are in [system prompts](./prompts.md) (`FAMILIARITY_LEVELS`, `AFFINITY_LEVELS`).
 
-Your own levels, with thresholds of your own, in the settings for every persona or in one persona's config for it
-alone:
+Your own levels, with thresholds of your own:
 
 ```yaml
 relationship:

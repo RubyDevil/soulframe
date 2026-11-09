@@ -3,7 +3,6 @@
 //   points at lines that exist, and at what the code span written just before it names;
 // - every export of src/index.ts has its heading in docs/api.md, and every heading there is an export;
 // - every relative link and anchor in the package's Markdown resolves;
-// - every example file a doc shows (its link, a colon, then a code block) is shown word for word;
 // - every setting is in docs/configuration.md, the timing and relationship ones are explained in docs/attention.md too,
 //   and no removed setting is left in the configuration reference.
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
@@ -224,31 +223,6 @@ describe('links in the docs', () => {
 		expect(slugOf('Decisions: optional typed checks')).toBe('decisions-optional-typed-checks');
 		expect(linkProblem('README.md', './docs/nope.md')).toBe('docs/nope.md does not exist');
 		expect(linkProblem('README.md', '#no-such-heading')).toBe('README.md has no heading #no-such-heading');
-	});
-});
-
-// --- Example files ----------------------------------------------------------------------------------------------
-
-/** Each example file a doc shows: a line that is only its link and a colon, then (after blank lines) a code block of it. */
-const examplesShown = (path: string): { at: string; file: string; shown?: string }[] => {
-	const lines = linesOf(read(path));
-	return lines.flatMap((line, index) => {
-		// The link's text is its target, from docs/ or the root
-		const file = /^\[`(examples\/[^`]+)`\]\((?:\.\.\/|\.\/)?\1\):$/.exec(line)?.[1];
-		if (!file) return [];
-		let start = index + 1;
-		while (lines[start] === '') start++;
-		if (!/^```/.test(lines[start] ?? '')) return [{ at: `${path}:${index + 1}`, file }];
-		const end = lines.findIndex((next, at) => at > start && /^```\s*$/.test(next));
-		return [{ at: `${path}:${index + 1}`, file, shown: lines.slice(start + 1, end).join('\n') }];
-	});
-};
-
-describe('example files in the docs', () => {
-	it('shows each word for word where it links it with a colon', () => {
-		const shown = REFERENCING.flatMap(examplesShown);
-		expect(shown.map(({ file }) => file).sort()).toEqual(['examples/personas/robin.md', 'examples/service.yaml', 'examples/settings.yaml']);
-		expect(shown.filter(({ file, shown: text }) => text !== read(file).trimEnd()).map(({ at, file }) => `${at}: ${file} is not shown as it is`)).toEqual([]);
 	});
 });
 

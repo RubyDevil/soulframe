@@ -5,7 +5,7 @@ export { parsePersona, parsePersonaMarkdown, loadPersonas, nodeFiles, PERSONA_ID
 export { ConfigError, describe, suggest, unknownKeys, unknownKeyIssues, addQuietIssue, shownValue, type Problems } from './config/issues.js';
 // What a brain runs with (models, limits, pacing, the typed checks), and what the whole service shares (the text
 // budget, the Decisions client); neither is part of a persona
-export { parseSettings, parseServiceSettings, settingsFor, range, SECOND, MINUTE, HOUR, DAY, type PersonaSettings, type Settings, type ServiceSettings } from './settings.js';
+export { parseSettings, parseServiceSettings, range, SECOND, MINUTE, HOUR, DAY, type Settings, type ServiceSettings } from './settings.js';
 export { diffPaths, isPlainObject, valueAt } from './merge.js';
 export { personaReport, personaWarnings, settingsWarnings, samplePrompt } from './report.js';
 

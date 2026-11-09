@@ -462,11 +462,6 @@ export const SettingsSchema = z
 	.default({});
 
 export type Settings = z.infer<typeof SettingsSchema>;
-/** A brain's settings as written, before the defaults are filled in (`parseSettings`' input): every key optional. */
-export type SettingsInput = NonNullable<z.input<typeof SettingsSchema>>;
-
-/** The groups of a brain's settings a persona's config may set for itself, over them (`settingsFor`): how it texts and how it bonds. */
-export const PERSONA_SETTINGS = ['pacing', 'relationship'] as const;
 
 /** What a task uses to call its model (`taskModel`): its provider, key, model and request options, as resolved. */
 export interface TaskModel {
@@ -625,34 +620,24 @@ export function parseServiceSettings(raw: unknown, { source }: { source?: string
 	return value ? { service: value, issues } : { issues };
 }
 
-/** What a persona's config may set of its brain's settings (`PERSONA_SETTINGS`): only the keys it changes. */
-export type PersonaSettings = { [Key in (typeof PERSONA_SETTINGS)[number]]?: NonNullable<SettingsInput[Key]> };
-
-/** settingsFor's work, its problems not yet worded (parsePersona words them after its source). */
-export function mergedSettings(persona: PersonaSettings, settings: Settings): { value?: Settings; problems: Problem[] } {
-	const own = Object.fromEntries(PERSONA_SETTINGS.filter((key) => persona[key] !== undefined).map((key) => [key, persona[key]]));
-	if (!Object.keys(own).length) return { value: settings, problems: [] };
-	return readWith(SettingsSchema, deepMerge(settings, own), {}, checkSettings);
-}
+type SettingsInput = NonNullable<z.input<typeof SettingsSchema>>;
+/** A persona's own pacing and relationship, as its config writes them: only the keys it changes. */
+export type PersonaSettings = { pacing?: NonNullable<SettingsInput['pacing']>; relationship?: NonNullable<SettingsInput['relationship']> };
 
 /**
- * The settings a persona's brain runs with: `settings` with the persona's own `pacing` and `relationship` (from its
- * config) merged over them, key by key, a list or a `[least, most]` range replacing (as in a settings file, a bare
- * range takes the setting's own shape), then checked again, since a rule across keys (a p90 above its median) depends
- * on both. With any problem there are no settings, and `issues` say why, after `source › ` when given. `createBrain`
- * runs it (and throws on a problem); a config check may run it first. Never throws.
+ * `settings` with a persona's own pacing and relationship merged over them, key by key (a list or a range replaces;
+ * a bare `[least, most]` takes the setting's own shape), checked again: a rule across keys may depend on both.
  */
-export function settingsFor(persona: PersonaSettings, settings: Settings, { source }: { source?: string } = {}): { settings?: Settings; issues: string[] } {
-	const { value, problems } = mergedSettings(persona, settings);
-	const issues = problems.map((problem) => sourced(source, problem));
-	return value ? { settings: value, issues } : { issues };
+export function mergedSettings({ pacing, relationship }: PersonaSettings, settings: Settings): { value?: Settings; problems: Problem[] } {
+	if (pacing === undefined && relationship === undefined) return { value: settings, problems: [] };
+	return readWith(SettingsSchema, deepMerge(settings, { pacing, relationship }), {}, checkSettings);
 }
 
-/** settingsFor's settings, else a ConfigError naming the persona, with every issue: what createBrain and the config check's report run with. */
+/** mergedSettings' value, else a ConfigError naming the persona: what createBrain and personaReport run with. */
 export function ownSettings(persona: PersonaSettings & { id: string }, settings: Settings): Settings {
-	const { settings: own, issues } = settingsFor(persona, settings);
-	if (!own) throw new ConfigError(`the settings of persona "${persona.id}"`, issues);
-	return own;
+	const { value, problems } = mergedSettings(persona, settings);
+	if (!value) throw new ConfigError(`the settings of persona "${persona.id}"`, problems.map((problem) => sourced(undefined, problem)));
+	return value;
 }
 
 /** Milliseconds from seconds, minutes, hours or days, for the ranges above. */

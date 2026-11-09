@@ -4,7 +4,7 @@
  */
 export const isPlainObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 
-/** `over` on top of `base`, neither changed: plain objects merge key by key; a list, a `[least, most]` range or any other value replaces. */
+/** `over` on top of `base`, neither changed: plain objects merge key by key; anything else (a list, a range) replaces. */
 export function deepMerge(base: unknown, over: unknown): unknown {
 	if (over === undefined) return base;
 	if (!isPlainObject(over) || !isPlainObject(base)) return over;
