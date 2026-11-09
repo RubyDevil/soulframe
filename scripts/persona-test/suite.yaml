@@ -1,0 +1,31 @@
+# The persona test's default suite (npm run persona-test -- --suite scripts/persona-test/suite.yaml): the same
+# scenarios on every run, so the scores of two runs (a change and its baseline) compare. Each scenario may set:
+#   a, b         the persona files (a opens); --a and --b override them
+#   opener       a's first message
+#   start        when it starts: online (both online, 45 min or more left), closing (both online, one of them with
+#                15 to 30 min left), away (a online, b offline: b answers once back), now, or an ISO time
+#   messages     stop after this many messages, the opener included
+#   hours        stop after this many hours of persona time
+#   where        the channel, as the brains are told it
+#   adult        mark the channel 18+
+# --messages and --hours override every scenario's.
+scenarios:
+  # A first chat on an evening both are free: voice, curiosity, getting to know each other
+  - name: evening
+    opener: "hey! how's your day going?"
+    start: online
+    messages: 30
+
+  # One of them has to go soon: wrapping up, leaving, and picking it back up the next day
+  - name: closing
+    opener: "hey, you around? i have the weirdest story from today"
+    start: closing
+    messages: 24
+    hours: 30
+
+  # The other is offline when it starts: the reply comes hours later, and both should read the gap right
+  - name: away
+    opener: "random question: what's the best sound you've heard this week?"
+    start: away
+    messages: 16
+    hours: 30

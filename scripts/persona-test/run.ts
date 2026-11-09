@@ -1,49 +1,24 @@
 /**
- * The persona test: two personas talk to each other through their real brains and reply queues, on a live model, at
- * the pace the settings give (seconds to minutes between messages, their hours, their interruptions), then a model
- * reviews the conversation. The queues run on a step clock (`createStepClock`): every wait is skipped, while every
- * timestamp (in the store, the prompts and the transcript) is what it would have been live, from the real time on.
- * A conversation of hours runs in the time its model calls take.
+ * The persona test, for improving the personas and the framework: two personas talk to each other through their real
+ * brains and reply queues, on a live model, at the pace the settings give (seconds to minutes between messages,
+ * their hours, their interruptions), then a model reviews each conversation. The queues run on a step clock
+ * (`createStepClock`): every wait is skipped, while every timestamp is what it would have been live, from the real
+ * time on. A suite of scenarios, each run several times, gives scores to compare with a baseline run.
  *
  *   npx tsx scripts/persona-test/run.ts --help
  *
- * Writes the transcript, the report, every runtime event, the run as JSON and the SQLite database to --out.
  * See docs/testing.md ("Two personas, live").
  */
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { parse } from 'yaml';
-import {
-	createBrain,
-	createCannedLlm,
-	createConfiguredDecisions,
-	createReplyQueue,
-	createStepClock,
-	createStore,
-	createTokenMeter,
-	DISABLED_DECISIONS,
-	HOUR,
-	isPlainObject,
-	llmsFor,
-	MINUTE,
-	modelKeys,
-	openDatabase,
-	parsePersonaMarkdown,
-	parseServiceSettings,
-	parseSettings,
-	spanAt,
-	type Channel,
-	type Conversation,
-	type Decisions,
-	type Llm,
-	type Persona,
-	type Rng,
-	type Runtime,
-	type Settings,
-} from 'soulframe';
-import { localTime, metricsOf, parseAnalysis, reportMarkdown, transcriptMarkdown, duration, type Analysis, type EndState, type LoggedEvent, type ModelCall, type RunSummary, type Sent, type Side } from './report.js';
+import { z } from 'zod';
+import { isPlainObject, modelKeys, parseServiceSettings, parseSettings, type Settings } from 'soulframe';
+import { converse, reader, SetupError, type ConversationResult, type Scenario, type Setup, type StartRule } from './conversation.js';
+import { summaryMarkdown, type SuiteSummary } from './report.js';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const ROOT = resolve(HERE, '..', '..');
@@ -52,13 +27,24 @@ const HELP = `Two personas talk to each other on a live model, their waits skipp
 
   npx tsx scripts/persona-test/run.ts [options]
 
-Personas and setting
+What to run
+  --suite <file.yaml>    run its scenarios (scripts/persona-test/suite.yaml is the default suite); without it,
+                         one scenario from the options below
+  --only <names>         only these scenarios of the suite, comma-separated
+  --runs <n>             run each scenario n times (default 1): the scores are averaged
+  --baseline <path>      compare with an earlier run: its summary.json, or the folder holding it
+
+One scenario (each also overrides the suite's, but --opener, --start and --where)
   --a <file.md>          the persona who opens (default examples/personas/robin.md)
   --b <file.md>          the other persona (default examples/personas/noa.md)
   --opener <text>        the first message, from --a (default "hey! how's your day going?")
+  --start <when>         online (default: both online, 45 min or more left), closing (one of them has 15 to 30
+                         min left), away (--a online, --b not), now, or an ISO time
+  --messages <n>         stop after n messages, the opener included (default 30)
+  --hours <h>            stop after h hours of persona time (default 24)
   --where <text>         the channel, as the brain is told it (default "a private chat app")
-  --identity <text>      the app's phrase after each persona's name in its identity line (default none)
   --adult                mark the channel 18+ (the minors safeguard runs on every message)
+  --identity <text>      the app's phrase after each persona's name in its identity line (default none)
 
 Models (OpenAI-compatible)
   --settings <file.yaml> the brains' settings (models, pacing, memory...); default every default
@@ -69,36 +55,34 @@ Models (OpenAI-compatible)
                          The key is read from models.default.apiKeyEnv: LLM_API_KEY by default.
   --canned               no network: canned lines and no review (a smoke test of the harness)
 
-When and how long
-  --start <when>         "now", "online" (default: now, or the next time both are online with 45 min
-                         left) or an ISO time
-  --messages <n>         stop after n messages, the opener included (default 30)
-  --hours <h>            stop after h hours of persona time (default 24)
-
 Output
   --out <dir>            where to write the results (default persona-test-results/<time>)
-  --no-review            skip the model's review
-  --min-score <n>        exit 1 when the review's overall score is under n (1 to 5)
+  --no-review            skip the reviews
+  --min-score <n>        exit 1 when the mean overall score is under n (1 to 5)
   --quiet                print only the summary
 `;
 
 const { values: args } = parseArgs({
 	options: {
-		a: { type: 'string', default: 'examples/personas/robin.md' },
-		b: { type: 'string', default: 'examples/personas/noa.md' },
-		opener: { type: 'string', default: "hey! how's your day going?" },
-		where: { type: 'string', default: 'a private chat app' },
+		suite: { type: 'string' },
+		only: { type: 'string' },
+		runs: { type: 'string', default: '1' },
+		baseline: { type: 'string' },
+		a: { type: 'string' },
+		b: { type: 'string' },
+		opener: { type: 'string' },
+		start: { type: 'string' },
+		messages: { type: 'string' },
+		hours: { type: 'string' },
+		where: { type: 'string' },
+		adult: { type: 'boolean' },
 		identity: { type: 'string' },
-		adult: { type: 'boolean', default: false },
 		settings: { type: 'string' },
 		service: { type: 'string' },
 		'base-url': { type: 'string' },
 		model: { type: 'string' },
 		'judge-model': { type: 'string' },
 		canned: { type: 'boolean', default: false },
-		start: { type: 'string', default: 'online' },
-		messages: { type: 'string', default: '30' },
-		hours: { type: 'string', default: '24' },
 		out: { type: 'string' },
 		'no-review': { type: 'boolean', default: false },
 		'min-score': { type: 'string' },
@@ -113,24 +97,24 @@ if (args.help) {
 	process.exit(0);
 }
 
-/** Stops with a message: a problem of the setup, not of the conversation. */
+/** Stops with a message: a problem of the setup, not of a conversation. */
 function fail(message: string): never {
 	console.error(`persona-test: ${message}`);
 	process.exit(2);
 }
 
-/** A whole number of at least `min` from an option. */
-const count = (name: string, text: string, min: number) => {
+/** A number of at least `min` from an option. */
+const numberOf = (name: string, text: string, min: number) => {
 	const value = Number(text);
 	if (!Number.isFinite(value) || value < min) fail(`--${name} must be a number of at least ${min} (got ${JSON.stringify(text)})`);
 	return value;
 };
 
-const fromRoot = (path: string) => resolve(ROOT, path);
+const read = reader(ROOT);
 const readYaml = (path: string): Record<string, unknown> => {
 	let value: unknown;
 	try {
-		value = parse(readFileSync(fromRoot(path), 'utf8')) ?? {};
+		value = parse(read(path)) ?? {};
 	} catch (error) {
 		fail(`${path}: ${error instanceof Error ? error.message : String(error)}`);
 	}
@@ -139,9 +123,8 @@ const readYaml = (path: string): Record<string, unknown> => {
 };
 
 const live = !args.canned;
-const maxMessages = count('messages', args.messages, 2);
-const maxHours = count('hours', args.hours, 0.1);
-const minScore = args['min-score'] ? count('min-score', args['min-score'], 1) : undefined;
+const runs = numberOf('runs', args.runs, 1);
+const minScore = args['min-score'] ? numberOf('min-score', args['min-score'], 1) : undefined;
 const baseUrl = args['base-url'] ?? (process.env.LLM_BASE_URL || undefined);
 const model = args.model ?? (process.env.LLM_MODEL || undefined);
 const judgeModel = args['judge-model'] ?? (process.env.LLM_JUDGE_MODEL || undefined);
@@ -152,18 +135,13 @@ const apiKeyOf = (name: string) => process.env[name] ?? '';
 /** The settings as written, with --base-url and --model over models.default. */
 const rawSettings = args.settings ? readYaml(args.settings) : {};
 const rawModels = isPlainObject(rawSettings.models) ? rawSettings.models : {};
-const withModels = (models: Record<string, unknown>) => ({ ...rawSettings, models });
-const personaModels = {
-	...rawModels,
-	default: { ...(isPlainObject(rawModels.default) ? rawModels.default : {}), ...(baseUrl && { baseUrl }), ...(model && { model }) },
-};
-
+const personaModels = { ...rawModels, default: { ...(isPlainObject(rawModels.default) ? rawModels.default : {}), ...(baseUrl && { baseUrl }), ...(model && { model }) } };
 const settingsOf = (raw: unknown, source: string): Settings => {
 	const { settings, issues } = parseSettings(raw, { source });
 	if (!settings) fail(`the settings have problems:\n  ${issues.join('\n  ')}`);
 	return settings;
 };
-const settings = settingsOf(live ? withModels(personaModels) : rawSettings, args.settings ?? 'settings');
+const settings = settingsOf(live ? { ...rawSettings, models: personaModels } : rawSettings, args.settings ?? 'settings');
 
 // Without a service file, no daily limit: a test run should not wait for tomorrow's budget
 const { service, issues: serviceIssues } = parseServiceSettings(args.service ? readYaml(args.service) : { text: { dailyTokens: 0 } }, { source: args.service ?? 'service settings' });
@@ -176,290 +154,165 @@ if (live) {
 	if (missing.length) fail(`no API key: set ${missing.join(', ')} (models.default.apiKeyEnv names the variable; '' for none)`);
 }
 
-// --- Personas ------------------------------------------------------------------------------------------------------
+// The reviewer: the personas' provider, its own model when given, room for a long answer and a long transcript
+const reviewed = live && !args['no-review'];
+const reviewer = reviewed
+	? settingsOf(
+			{
+				...rawSettings,
+				models: {
+					...personaModels,
+					directMessage: { ...(isPlainObject(rawModels.directMessage) ? rawModels.directMessage : {}), ...(judgeModel && { model: judgeModel }), maxTokens: 4000, temperature: 0.2, timeoutSeconds: 300 },
+				},
+			},
+			'the reviewer settings',
+		)
+	: undefined;
 
-const CHANNEL_ID = 'chat';
-const channel: Channel = { id: CHANNEL_ID, where: args.where, maxLength: 1000, ...(args.adult && { adult: true }) };
+// --- Scenarios -----------------------------------------------------------------------------------------------------
 
-const personaFrom = (path: string): Persona => {
-	let text: string;
+const START = z.union([z.enum(['now', 'online', 'closing', 'away']), z.string().refine((text) => !Number.isNaN(Date.parse(text)), 'an ISO time, or now, online, closing or away')]);
+const ScenarioSchema = z
+	.object({
+		name: z.string().regex(/^[a-z0-9-]{1,40}$/, 'a-z, 0-9 and -: it names the scenario\'s folder'),
+		a: z.string().optional(),
+		b: z.string().optional(),
+		opener: z.string().min(1).optional(),
+		start: START.optional(),
+		messages: z.number().int().min(2).optional(),
+		hours: z.number().min(0.1).optional(),
+		where: z.string().min(1).optional(),
+		adult: z.boolean().optional(),
+	})
+	.strict();
+const SuiteSchema = z.object({ scenarios: z.array(ScenarioSchema).min(1) }).strict();
+
+const startRule = (text: string): StartRule => (['now', 'online', 'closing', 'away'].includes(text) ? (text as StartRule) : Date.parse(text));
+const asWritten = (() => {
+	if (!args.suite) return [{ name: 'conversation' }];
+	const parsed = SuiteSchema.safeParse(readYaml(args.suite));
+	if (!parsed.success) fail(`${args.suite}:\n  ${parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('\n  ')}`);
+	const names = parsed.data.scenarios.map((scenario) => scenario.name);
+	if (new Set(names).size !== names.length) fail(`${args.suite}: two scenarios have the same name`);
+	const only = args.only?.split(',').map((name) => name.trim()).filter(Boolean);
+	const unknown = only?.filter((name) => !names.includes(name)) ?? [];
+	if (unknown.length) fail(`--only: no scenario ${unknown.join(', ')} in ${args.suite} (${names.join(', ')})`);
+	return parsed.data.scenarios.filter((scenario) => !only || only.includes(scenario.name));
+})();
+if (args.start !== undefined && !START.safeParse(args.start).success) fail(`--start must be now, online, closing, away or an ISO time (got ${JSON.stringify(args.start)})`);
+
+// The options override the suite where they make sense for every scenario (the personas, the limits, the channel's 18+ mark)
+const scenarios: Scenario[] = asWritten.map((scenario) => ({
+	name: scenario.name,
+	a: args.a ?? scenario.a ?? 'examples/personas/robin.md',
+	b: args.b ?? scenario.b ?? 'examples/personas/noa.md',
+	opener: (args.suite ? scenario.opener : args.opener) ?? args.opener ?? "hey! how's your day going?",
+	start: startRule((args.suite ? scenario.start : args.start) ?? args.start ?? 'online'),
+	messages: args.messages ? numberOf('messages', args.messages, 2) : (scenario.messages ?? 30),
+	hours: args.hours ? numberOf('hours', args.hours, 0.1) : (scenario.hours ?? 24),
+	where: (args.suite ? scenario.where : args.where) ?? args.where ?? 'a private chat app',
+	adult: args.adult ?? scenario.adult ?? false,
+}));
+
+// --- The baseline --------------------------------------------------------------------------------------------------
+
+const baseline = (() => {
+	if (!args.baseline) return undefined;
+	const path = resolve(args.baseline);
+	const file = existsSync(path) && statSync(path).isDirectory() ? join(path, 'summary.json') : path;
 	try {
-		text = readFileSync(fromRoot(path), 'utf8');
+		const value = JSON.parse(readFileSync(file, 'utf8')) as SuiteSummary;
+		if (value.version !== 1 || !Array.isArray(value.runs)) fail(`${file}: not a persona test summary`);
+		return value;
 	} catch (error) {
-		fail(`can't read ${path} (${(error as { code?: string }).code ?? String(error)})`);
+		fail(`--baseline: can't read ${file} (${error instanceof Error ? error.message : String(error)})`);
 	}
-	const { persona, issues } = parsePersonaMarkdown(text, { id: basename(path, '.md'), channels: [CHANNEL_ID], adult: args.adult, settings, source: path });
-	if (!persona) fail(`the persona has problems:\n  ${issues.join('\n  ')}`);
-	return persona;
-};
-const personas = [personaFrom(args.a), personaFrom(args.b)] as const;
-if (personas[0].id === personas[1].id) fail(`the two personas have the same id ("${personas[0].id}"): use two files of different names`);
-
-// --- The clock -----------------------------------------------------------------------------------------------------
-
-const realStart = Date.now();
-
-/** From `from`, the first time (in 5-minute steps, within 8 days) both are online here with at least 45 minutes left for each. */
-const bothOnline = (from: number) => {
-	for (let at = from; at < from + 8 * 24 * HOUR; at += 5 * MINUTE) {
-		const spans = personas.map((persona) => spanAt(persona, at, CHANNEL_ID));
-		if (spans.every((span) => span?.kind === 'online' && span.end - at >= 45 * MINUTE)) return at;
-	}
-	return null;
-};
-
-const startAt = (() => {
-	if (args.start === 'now') return realStart;
-	if (args.start === 'online') {
-		const at = bothOnline(realStart);
-		if (at === null) console.warn('persona-test: the two are never online together in the next 8 days: starting now');
-		return at ?? realStart;
-	}
-	const at = Date.parse(args.start);
-	if (Number.isNaN(at)) fail(`--start must be "now", "online" or an ISO time (got ${JSON.stringify(args.start)})`);
-	return at;
 })();
 
-const clock = createStepClock({ start: startAt });
+// --- The runs ------------------------------------------------------------------------------------------------------
 
-/** mulberry32: a canned run draws the same numbers each time. */
-const seeded = (seed: number): Rng => () => {
-	seed = (seed + 0x6d2b79f5) >>> 0;
-	let t = seed;
-	t = Math.imul(t ^ (t >>> 15), t | 1);
-	t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-	return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-};
-const rng: Rng = live ? Math.random : seeded(42);
-
-// --- Output --------------------------------------------------------------------------------------------------------
-
-const outDir = resolve(args.out ?? join(ROOT, 'persona-test-results', new Date(realStart).toISOString().replace(/[:.]/g, '-').slice(0, 19)));
-mkdirSync(outDir, { recursive: true });
+const createdAt = new Date();
+const outDir = resolve(args.out ?? join(ROOT, 'persona-test-results', createdAt.toISOString().replace(/[:.]/g, '-').slice(0, 19)));
 const say = (line: string) => {
 	if (!args.quiet) console.log(line);
 };
-
-// --- The runtime, the models, the brains ---------------------------------------------------------------------------
-
-const db = openDatabase(join(outDir, 'conversation.db'));
-const store = createStore(db, clock.now);
-const events: LoggedEvent[] = [];
-const sent: Sent[] = [];
-const calls: ModelCall[] = [];
-const typing: { persona: string; on: boolean; at: number }[] = [];
-
-/** Events worth a line while it runs: what a reader of the transcript would want to know happened between messages. */
-const SHOWN: Record<string, (detail: Record<string, unknown>) => string> = {
-	away: (detail) => `away until ${String(detail.until).slice(11, 16)} UTC`,
-	reply_waiting: (detail) => `waits for its hours (${String(detail.reason)})${detail.nextOpenAt ? `, back ${String(detail.nextOpenAt).slice(0, 16).replace('T', ' ')} UTC` : ''}`,
-	reply_skipped: () => 'left it on read',
-	reply_restarted: () => 'started its draft over',
-	reply_failed: (detail) => `the model failed (attempt ${String(detail.attempt)}): ${String(detail.error)}`,
-	reply_waiting_provider: (detail) => `the provider is down, waiting: ${String(detail.error)}`,
-	delivery_failed: (detail) => `delivery failed: ${String(detail.error)}`,
-};
-const nameOf = (id: string) => personas.find((persona) => persona.id === id)?.name ?? id;
-
-const runtime: Runtime = {
-	now: clock.now,
-	rng,
-	store,
-	dryRun: false,
-	halted: () => false,
-	timers: clock.timers,
-	log(persona, event, detail = {}) {
-		const at = clock.now();
-		events.push({ at, persona, event, detail });
-		const shown = SHOWN[event];
-		if (shown) say(`${new Date(at).toISOString().slice(11, 19)}            (${nameOf(persona)} ${shown(detail)})`);
-	},
+const setup: Setup = {
+	live,
+	settings,
+	service,
+	...(reviewer && { reviewer }),
+	...(!reviewer && { noReview: live ? 'skipped (--no-review)' : 'a canned run is not reviewed' }),
+	apiKeyOf,
+	...(args.identity !== undefined && { identity: args.identity }),
+	rubric: readFileSync(join(HERE, 'analysis.md'), 'utf8'),
+	read,
+	say,
 };
 
-let tokens = 0;
-const meter = createTokenMeter(store, service.text.dailyTokens, clock.now);
-const countedMeter = { ...meter, add: (spent: number) => ((tokens += spent), meter.add(spent)) };
-
-/** A model client whose calls the clock waits for (no wait is skipped while one is under way), each timed. */
-const tracked = (persona: string, llm: Llm): Llm => ({
-	complete(messages, options) {
-		const began = performance.now();
-		return clock.track(
-			llm.complete(messages, options).then(
-				(text) => {
-					calls.push({ persona, task: options.task, ms: performance.now() - began });
-					return text;
-				},
-				(error: unknown) => {
-					calls.push({ persona, task: options.task, ms: performance.now() - began, error: String(error) });
-					throw error;
-				},
-			),
-		);
-	},
-});
-
-const models = live
-	? llmsFor(personas.map((persona) => ({ id: persona.id, settings })), { dryRun: false, apiKeyOf, meter: countedMeter, budget: service.text, rng })
-	: new Map(personas.map((persona) => [persona.id, createCannedLlm(rng)]));
-
-const configured = live
-	? createConfiguredDecisions({ settings: service.decisions, apiKeyOf, meter: createTokenMeter(store, service.decisions.dailyTokens, clock.now, 'decisionTokens'), log: runtime.log, rng, now: clock.now })
-	: DISABLED_DECISIONS;
-const decisions: Decisions = configured.enabled ? { enabled: true, ask: (...asked) => clock.track(configured.ask(...asked)) } : configured;
-
-const sides = personas.map((persona) => {
-	const brain = createBrain({ persona, settings, identity: args.identity, runtime, llm: tracked(persona.id, models.get(persona.id)!), decisions });
-	const queue = createReplyQueue({ brain, runtime, act: async () => undefined });
-	return { persona, brain, queue };
-});
-
-let lastShownAt: number | undefined;
-/** A message from side `from` reaches the other: in the transcript, then to the other's brain and queue, as an adapter would hand it on. */
-const pass = (from: 0 | 1, text: string) => {
-	const me = sides[from]!;
-	const other = sides[from === 0 ? 1 : 0]!;
-	const at = clock.now();
-	sent.push({ from: me.persona.id, text, at });
-	const gap = lastShownAt === undefined ? '' : `+${duration(at - lastShownAt)}`;
-	lastShownAt = at;
-	say(`${new Date(at).toISOString().slice(11, 19)} ${gap.padStart(10)}  ${me.persona.name}: ${text}`);
-	const decision = other.brain.incoming(channel, me.persona.id, me.persona.name, text);
-	other.queue.handle(decision, conversationOf(from === 0 ? 1 : 0), text).catch((error: unknown) => runtime.log(other.persona.id, 'handle_failed', { error: String(error) }));
-};
-
-/** Where side `i`'s replies go: to the other persona. */
-const conversationOf = (i: 0 | 1): Conversation => ({
-	channel,
-	async typing(on) {
-		typing.push({ persona: sides[i]!.persona.id, on, at: clock.now() });
-	},
-	async send(text) {
-		pass(i, text);
-	},
-});
-
-// --- The conversation ----------------------------------------------------------------------------------------------
-
-/** Whether `side` still owes the other a turn: their newest message has not had one yet. */
-const owes = (side: (typeof sides)[number], other: (typeof sides)[number]) => {
-	const person = store.person(side.persona.id, CHANNEL_ID, other.persona.id);
-	return !!person && person.state === 'active' && person.lastInAt > person.handledAt;
-};
-const [a, b] = sides as [(typeof sides)[0], (typeof sides)[1]];
-
-say(`Persona test: ${a.persona.name} and ${b.persona.name}, ${live ? `live on ${settings.models.default.model}` : 'canned model'}`);
-say(`Starting ${new Date(startAt).toISOString().replace('T', ' ').slice(0, 16)} UTC (${a.persona.name}: ${localTime(startAt, a.persona.timezone)}, ${b.persona.name}: ${localTime(startAt, b.persona.timezone)}); results in ${outDir}\n`);
-
-for (const side of sides) side.queue.start();
-// The opener goes out outside the queue, as one the app sent for it
-a.brain.outgoing(channel, b.persona.id, b.persona.name, args.opener);
-pass(0, args.opener);
-
-const deadline = startAt + maxHours * HOUR;
-const outcome = await clock.run({ until: deadline, done: () => sent.length >= maxMessages || (!owes(a, b) && !owes(b, a)) });
-for (const side of sides) side.queue.stop();
-// A model call under way finishes (its turn then finds the queue stopped and sends nothing more)
-await clock.settle();
-const end = Math.max(sent.at(-1)?.at ?? startAt, Math.min(clock.now(), deadline));
-
-const ended =
-	outcome === 'until' ? `the ${maxHours}-hour limit` : sent.length >= maxMessages ? `the ${maxMessages}-message limit` : outcome === 'done' ? 'neither owed the other a reply' : 'nothing left to do';
-
-// --- What it measured ----------------------------------------------------------------------------------------------
-
-const sideInfo: Side[] = personas.map(({ id, name, timezone, prompt }) => ({ id, name, timezone, prompt }));
-const metrics = Object.fromEntries(personas.map((persona) => [persona.id, metricsOf(persona.id, { sent, events, calls, typing })]));
-const endState: Record<string, EndState> = {};
-for (const [side, other] of [[a, b], [b, a]] as const) {
-	const person = store.person(side.persona.id, CHANNEL_ID, other.persona.id);
-	if (!person) continue;
-	endState[side.persona.id] = {
-		state: person.state,
-		notes: person.summary,
-		self: store.get(side.persona.id, 'selfNotes') ?? '',
-		familiarity: person.familiarity,
-		affinity: person.affinity,
-		importance: person.importance,
-	};
-}
-const run: RunSummary = { start: startAt, end, realMs: Date.now() - realStart, skippedMs: clock.skipped(), tokens, ended, live, model: live ? settings.models.default.model ?? null : null };
-
-// --- The review ----------------------------------------------------------------------------------------------------
-
-let analysis: Analysis | undefined;
-let analysisProblem: string | undefined;
-let analysisRaw: string | undefined;
-if (!live) analysisProblem = 'a canned run is not reviewed';
-else if (args['no-review']) analysisProblem = 'skipped (--no-review)';
-else if (sent.length < 2) analysisProblem = 'nothing to review: the other persona never answered';
-else {
-	say('\nReviewing the conversation...');
-	// The reviewer: the personas' provider, its own model when given, room for a long answer and a long transcript
-	const judgeSettings = settingsOf(
-		withModels({
-			...personaModels,
-			directMessage: { ...(isPlainObject(rawModels.directMessage) ? rawModels.directMessage : {}), ...(judgeModel && { model: judgeModel }), maxTokens: 4000, temperature: 0.2, timeoutSeconds: 300 },
-		}),
-		'the reviewer settings',
-	);
-	const judge = llmsFor([{ id: 'reviewer', settings: judgeSettings }], { dryRun: false, apiKeyOf, budget: service.text, rng }).get('reviewer')!;
-	const review = {
-		personas: sideInfo,
-		channel: args.where,
-		ended,
-		transcript: sent.map((message, i) => ({
-			from: message.from,
-			text: message.text,
-			utc: new Date(message.at).toISOString(),
-			senderLocal: localTime(message.at, personas.find((persona) => persona.id === message.from)!.timezone),
-			gapSeconds: i ? Math.round((message.at - sent[i - 1]!.at) / 1000) : null,
-		})),
-		metrics,
-		endState,
-	};
+const commit = (() => {
+	if (process.env.GITHUB_SHA) return process.env.GITHUB_SHA.slice(0, 12);
 	try {
-		analysisRaw = await judge.complete(
-			[
-				{ role: 'system', content: readFileSync(join(HERE, 'analysis.md'), 'utf8') },
-				{ role: 'user', content: JSON.stringify(review, null, '\t') },
-			],
-			{ task: 'directMessage', json: true },
-		);
-		({ analysis, problem: analysisProblem } = parseAnalysis(analysisRaw));
-	} catch (error) {
-		analysisProblem = `the review failed: ${error instanceof Error ? error.message : String(error)}`;
+		return execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null;
+	} catch {
+		return null;
+	}
+})();
+
+say(`Persona test: ${scenarios.length} scenario${scenarios.length > 1 ? 's' : ''} × ${runs} run${runs > 1 ? 's' : ''}, ${live ? `live on ${settings.models.default.model}` : 'canned model'}; results in ${outDir}\n`);
+const results: ConversationResult[] = [];
+for (const scenario of scenarios) {
+	for (let run = 1; run <= runs; run++) {
+		// One scenario run once writes straight into --out, as a single conversation always did
+		const dir = scenarios.length === 1 && runs === 1 ? outDir : join(outDir, scenario.name, String(run));
+		mkdirSync(dir, { recursive: true });
+		try {
+			results.push(await converse(setup, scenario, { dir, run }));
+		} catch (error) {
+			if (error instanceof SetupError) fail(error.message);
+			throw error;
+		}
 	}
 }
 
-// --- The results ---------------------------------------------------------------------------------------------------
+// --- The summary ---------------------------------------------------------------------------------------------------
 
-const transcript = transcriptMarkdown(sideInfo, sent, run);
-const report = reportMarkdown({ sides: sideInfo, run, sent, metrics, endState, analysis, analysisProblem, transcript });
-writeFileSync(join(outDir, 'transcript.md'), transcript);
-writeFileSync(join(outDir, 'report.md'), report);
-writeFileSync(join(outDir, 'events.jsonl'), events.map((event) => JSON.stringify({ ...event, at: new Date(event.at).toISOString() })).join('\n') + '\n');
-writeFileSync(
-	join(outDir, 'run.json'),
-	JSON.stringify({ run, personas: sideInfo, settings: { opener: args.opener, where: args.where, adult: args.adult, maxMessages, maxHours }, transcript: sent, metrics, endState, calls, analysis: analysis ?? null, analysisProblem: analysisProblem ?? null, analysisRaw: analysisRaw ?? null }, null, '\t'),
-);
-db.close();
-if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${report}\n`);
+const summary: SuiteSummary = {
+	version: 1,
+	createdAt: createdAt.toISOString(),
+	commit,
+	model: live ? (settings.models.default.model ?? null) : null,
+	reviewer: reviewer ? (reviewer.models.directMessage.model ?? reviewer.models.default.model ?? null) : null,
+	runs: results.map((result) => ({
+		scenario: result.scenario,
+		run: result.run,
+		dir: relative(outDir, result.dir) || '.',
+		messages: result.messages,
+		personaMs: result.summary.end - result.summary.start,
+		realMs: result.summary.realMs,
+		tokens: result.summary.tokens,
+		overall: result.analysis?.overall ?? null,
+		scores: Object.fromEntries(Object.entries(result.analysis?.scores ?? {}).map(([aspect, { score }]) => [aspect, score])),
+		issues: (result.analysis?.issues ?? []).map((issue) => ({ ...issue, scenario: result.scenario, run: result.run })),
+		analysisProblem: result.analysisProblem ?? null,
+		broken: result.broken,
+	})),
+};
+const summaryText = summaryMarkdown(summary, baseline);
+writeFileSync(join(outDir, 'summary.json'), JSON.stringify(summary, null, '\t'));
+writeFileSync(join(outDir, 'summary.md'), summaryText);
+if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${summaryText}\n`);
 
 // --- How it went ---------------------------------------------------------------------------------------------------
 
-const broken = [
-	...personas.flatMap((persona) => (metrics[persona.id]!.events.gaveUp ? [`${persona.name} gave up on a reply`] : [])),
-	...(sent.every((message) => message.from === a.persona.id) ? [`${b.persona.name} never answered`] : []),
-	...(minScore !== undefined && !analysis ? [`no review to hold to --min-score (${analysisProblem})`] : []),
-	...(minScore !== undefined && analysis && analysis.overall < minScore ? [`the review scored it ${analysis.overall}/5, under --min-score ${minScore}`] : []),
+const scored = summary.runs.flatMap((run) => (run.overall === null ? [] : [run.overall]));
+const mean = scored.length ? scored.reduce((sum, value) => sum + value, 0) / scored.length : null;
+const failures = [
+	...summary.runs.flatMap((run) => run.broken.map((problem) => `${run.scenario} #${run.run}: ${problem}`)),
+	...(minScore !== undefined && mean === null ? ['no review to hold to --min-score'] : []),
+	...(minScore !== undefined && mean !== null && mean < minScore ? [`the mean overall score is ${mean.toFixed(2)}, under --min-score ${minScore}`] : []),
 ];
-
-console.log(`\n${sent.length} messages, ${duration(end - startAt)} of persona time in ${duration(run.realMs)}; ended: ${ended}.`);
-if (analysis) console.log(`Review: ${analysis.overall}/5. ${analysis.summary}`);
-else console.log(`No review: ${analysisProblem}.`);
-console.log(`Report: ${join(outDir, 'report.md')}`);
-if (broken.length) {
-	console.error(`\nFailed: ${broken.join('; ')}.`);
+console.log(`${summary.runs.length} conversation${summary.runs.length === 1 ? "" : "s"}${mean !== null ? `, mean overall ${mean.toFixed(2)}/5 over ${scored.length} review${scored.length === 1 ? "" : "s"}` : ''}. Summary: ${join(outDir, 'summary.md')}`);
+if (failures.length) {
+	console.error(`\nFailed: ${failures.join('; ')}.`);
 	process.exitCode = 1;
 }

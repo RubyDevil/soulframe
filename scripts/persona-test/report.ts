@@ -45,6 +45,10 @@ export interface EndState {
 	importance: number;
 }
 
+/** Where an issue's fix belongs, as the rubric names them (analysis.md), and `unsorted` for an answer that named none of them. */
+export const AREAS = ['persona', 'framework', 'pacing', 'memory', 'model', 'unsorted'] as const;
+export type Area = (typeof AREAS)[number];
+
 const SCORE = z.object({ score: z.number().min(1).max(5), why: z.string() });
 
 /** The review the model answers (scripts/persona-test/analysis.md). */
@@ -56,6 +60,8 @@ export const AnalysisSchema = z.object({
 		.array(
 			z.object({
 				severity: z.enum(['high', 'medium', 'low']).catch('medium'),
+				/** Where its fix belongs (analysis.md); one the reviewer left out or made up is unsorted. */
+				area: z.enum(AREAS).catch('unsorted'),
 				persona: z.string().default('both'),
 				what: z.string(),
 				evidence: z.string().default(''),
@@ -249,8 +255,8 @@ export function reportMarkdown({
 		for (const [aspect, { score, why }] of Object.entries(analysis.scores)) lines.push(`| ${cell(aspect)} | ${score}/5 | ${cell(why)} |`);
 		lines.push('', '## Issues', '');
 		if (analysis.issues.length) {
-			lines.push('| Severity | Persona | What | Evidence | Suggestion |', '| --- | --- | --- | --- | --- |');
-			for (const issue of analysis.issues) lines.push(`| ${issue.severity} | ${cell(issue.persona)} | ${cell(issue.what)} | ${issue.evidence ? `"${cell(issue.evidence)}"` : ''} | ${cell(issue.suggestion)} |`);
+			lines.push('| Severity | Area | Persona | What | Evidence | Suggestion |', '| --- | --- | --- | --- | --- | --- |');
+			for (const issue of analysis.issues) lines.push(`| ${issue.severity} | ${issue.area} | ${cell(issue.persona)} | ${cell(issue.what)} | ${issue.evidence ? `"${cell(issue.evidence)}"` : ''} | ${cell(issue.suggestion)} |`);
 		} else lines.push('None found.');
 		if (analysis.highlights.length) lines.push('', '## Highlights', '', ...analysis.highlights.map((highlight) => `- ${highlight.replace(/\r?\n/g, ' ')}`));
 		lines.push('');
@@ -258,6 +264,8 @@ export function reportMarkdown({
 	const row = (label: string, value: (m: PersonaMetrics) => string) => `| ${label} | ${value(metrics[a.id]!)} | ${value(metrics[b.id]!)} |`;
 	lines.push(
 		'## Metrics',
+		'',
+		'Every prompt and answer of the run is in `calls.jsonl`, to trace an issue to what the model was told.',
 		'',
 		`| | ${a.name} | ${b.name} |`,
 		'| --- | --- | --- |',
@@ -295,5 +303,123 @@ export function reportMarkdown({
 		);
 	}
 	lines.push('<details><summary>Transcript</summary>', '', transcript.replace(/^# .*\n/, ''), '</details>', '');
+	return lines.join('\n');
+}
+
+// --- A suite: every conversation of a run, and how it compares with a baseline ----------------------------------------
+
+/** One conversation as the suite's summary keeps it: enough to compare two runs, without the transcripts. */
+export interface SummaryRun {
+	scenario: string;
+	run: number;
+	/** Its folder, from the summary's. */
+	dir: string;
+	messages: number;
+	personaMs: number;
+	realMs: number;
+	tokens: number;
+	overall: number | null;
+	scores: Record<string, number>;
+	issues: (Analysis['issues'][number] & { scenario: string; run: number })[];
+	analysisProblem: string | null;
+	broken: string[];
+}
+
+/** What `summary.json` holds: a run of the suite, to read back as a later run's baseline (`--baseline`). */
+export interface SuiteSummary {
+	version: 1;
+	createdAt: string;
+	/** The commit it ran on, when known: what a comparison is about. */
+	commit: string | null;
+	model: string | null;
+	reviewer: string | null;
+	runs: SummaryRun[];
+}
+
+/** Mean, lowest and highest of `values`, or null for none. */
+const spread = (values: readonly number[]) =>
+	values.length ? { mean: values.reduce((sum, value) => sum + value, 0) / values.length, min: Math.min(...values), max: Math.max(...values), n: values.length } : null;
+
+type Spread = NonNullable<ReturnType<typeof spread>>;
+
+/** By scenario (and `*` for all of them), the spread of the overall score and of each aspect over the reviewed runs. */
+export function aggregate(summary: SuiteSummary) {
+	const groups = new Map<string, SummaryRun[]>();
+	for (const run of summary.runs) groups.set(run.scenario, [...(groups.get(run.scenario) ?? []), run]);
+	groups.set('*', summary.runs);
+	const aspects = [...new Set(summary.runs.flatMap((run) => Object.keys(run.scores)))];
+	return {
+		aspects,
+		groups: new Map(
+			[...groups].map(([name, runs]) => [
+				name,
+				{
+					runs: runs.length,
+					overall: spread(runs.flatMap((run) => (run.overall === null ? [] : [run.overall]))),
+					scores: Object.fromEntries(aspects.map((aspect) => [aspect, spread(runs.flatMap((run) => (aspect in run.scores ? [run.scores[aspect]!] : [])))])) as Record<string, Spread | null>,
+				},
+			]),
+		),
+	};
+}
+
+const SEVERITY_ORDER = { high: 0, medium: 1, low: 2 } as const;
+
+/**
+ * The suite's summary: by scenario, the mean score (lowest to highest) over its runs, each with its change since the
+ * baseline when given; the issues by where their fix belongs; and every conversation, linked to its report.
+ */
+export function summaryMarkdown(summary: SuiteSummary, baseline?: SuiteSummary): string {
+	const now = aggregate(summary);
+	const before = baseline ? aggregate(baseline) : undefined;
+	const delta = (value: Spread | null | undefined, then: Spread | null | undefined) => {
+		if (!value || !then) return '';
+		const change = value.mean - then.mean;
+		return Math.abs(change) < 0.05 ? ' (=)' : ` (${change > 0 ? '+' : '−'}${Math.abs(change).toFixed(1)})`;
+	};
+	const shown = (value: Spread | null | undefined, then?: Spread | null) =>
+		value ? `${value.mean.toFixed(1)}${value.min !== value.max ? ` (${value.min}–${value.max})` : ''}${delta(value, then)}` : '–';
+	const reviewed = summary.runs.filter((run) => run.overall !== null).length;
+	const lines = [
+		'# Persona test',
+		'',
+		`${summary.runs.length} conversations (${reviewed} reviewed) · commit ${summary.commit ?? 'unknown'} · model ${summary.model ?? 'canned'} · reviewer ${summary.reviewer ?? 'none'}`,
+		'',
+	];
+	if (baseline) lines.push(`Compared with the baseline of commit ${baseline.commit ?? 'unknown'} (${baseline.createdAt.slice(0, 16).replace('T', ' ')} UTC, ${baseline.runs.length} conversations): changes of the mean in brackets.`, '');
+	if (reviewed) {
+		lines.push(
+			'Scores are means over the reviewed runs (lowest–highest); a review varies from run to run, so read a change of a few tenths over a few runs as noise.',
+			'',
+			`| Scenario | Overall | ${now.aspects.join(' | ')} |`,
+			`| --- | --- | ${now.aspects.map(() => '---').join(' | ')} |`,
+		);
+		for (const [name, group] of now.groups) {
+			const then = before?.groups.get(name);
+			lines.push(`| ${name === '*' ? '**all**' : cell(name)} | ${shown(group.overall, then?.overall)} | ${now.aspects.map((aspect) => shown(group.scores[aspect], then?.scores[aspect])).join(' | ')} |`);
+		}
+		lines.push('');
+	}
+	const issues = summary.runs.flatMap((run) => run.issues);
+	if (issues.length) {
+		lines.push('## Issues by area', '', 'Where each fix belongs, as the reviewer saw it: `framework` is soulframe\'s prompts and code, `persona` the persona files.', '', '| Area | High | Medium | Low |', '| --- | --- | --- | --- |');
+		const byArea = AREAS.map((area) => ({ area, issues: issues.filter((issue) => issue.area === area) })).filter((entry) => entry.issues.length);
+		for (const { area, issues: found } of byArea) lines.push(`| ${area} | ${(['high', 'medium', 'low'] as const).map((severity) => found.filter((issue) => issue.severity === severity).length).join(' | ')} |`);
+		lines.push('');
+		for (const { area, issues: found } of byArea) {
+			lines.push(`### ${area}`, '');
+			for (const issue of [...found].sort((x, y) => SEVERITY_ORDER[x.severity] - SEVERITY_ORDER[y.severity])) {
+				lines.push(`- **${issue.severity}** (${cell(issue.scenario)} #${issue.run}, ${cell(issue.persona)}) ${issue.what.replace(/\r?\n/g, ' ')}${issue.evidence ? ` — "${issue.evidence.replace(/\r?\n/g, ' ')}"` : ''}${issue.suggestion ? ` → ${issue.suggestion.replace(/\r?\n/g, ' ')}` : ''}`);
+			}
+			lines.push('');
+		}
+	}
+	const broken = summary.runs.filter((run) => run.broken.length);
+	if (broken.length) lines.push('## Broken runs', '', ...broken.map((run) => `- ${run.scenario} #${run.run}: ${run.broken.join('; ')}`), '');
+	lines.push('## Conversations', '', '| Scenario | Run | Messages | Persona time | Real time | Tokens | Overall | Report |', '| --- | --- | --- | --- | --- | --- | --- | --- |');
+	for (const run of summary.runs) {
+		lines.push(`| ${cell(run.scenario)} | ${run.run} | ${run.messages} | ${duration(run.personaMs)} | ${duration(run.realMs)} | ${run.tokens.toLocaleString('en-US')} | ${run.overall ?? (run.analysisProblem ? cell(run.analysisProblem) : '–')} | [report](${run.dir}/report.md) |`);
+	}
+	lines.push('');
 	return lines.join('\n');
 }
