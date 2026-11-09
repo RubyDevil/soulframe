@@ -110,12 +110,15 @@ const world = (seed: number, { interruptions = true, initiative = false }: { int
 	};
 	const write = async (from: string, text: string) => queue.handle(brain.incoming(NOTED_DM, from, from, text), conversationOf(from), text);
 
-	/** A random hour of events, 35 minutes of them: messages, bursts, a halt now and then (unless `halts` is off), someone asking to stop. */
-	const play = async (minutes = 35, { halts = true }: { halts?: boolean } = {}) => {
+	/**
+	 * A random hour of events, 35 minutes of them: messages from `writers` (everyone unless given), bursts, a halt now and
+	 * then (unless `halts` is off), someone asking to stop.
+	 */
+	const play = async (minutes = 35, { halts = true, writers = PEOPLE }: { halts?: boolean; writers?: readonly string[] } = {}) => {
 		const events: { at: number; run: () => Promise<void> | void }[] = [];
 		for (let i = 0; i < 28; i++) {
 			const at = Math.floor(luck() * minutes * MINUTE);
-			const from = PEOPLE[Math.floor(luck() * PEOPLE.length)]!;
+			const from = writers[Math.floor(luck() * writers.length)]!;
 			const roll = luck();
 			if (roll < 0.04) events.push({ at, run: () => void write(from, 'please stop messaging me') });
 			else if (roll < 0.1) {
@@ -134,12 +137,12 @@ const world = (seed: number, { interruptions = true, initiative = false }: { int
 		halted = false;
 	};
 	if (initiative) {
-		// Everyone wrote yesterday, close enough for a check-in, and two of them have a follow-up due
+		// Everyone wrote yesterday, close enough for a check-in; Cy and Dee, who stay at rest, have a follow-up due
 		for (const [i, from] of PEOPLE.entries()) {
 			const decision = brain.incoming(NOTED_DM, from, from, 'talk tomorrow!', START - 24 * 60 * MINUTE);
 			if (decision.kind !== 'reply') continue;
 			store.updatePerson(decision.person.id, { handledAt: decision.person.lastInAt, familiarity: 0.7, affinity: 0.5 });
-			if (i % 2) store.planOpener(persona.id, decision.person.id, { kind: 'followUp', about: 'ask how it went', dueAt: START, expiresAt: START + 24 * 60 * MINUTE });
+			if (i >= 2) store.planOpener(persona.id, decision.person.id, { kind: 'followUp', about: 'ask how it went', dueAt: START, expiresAt: START + 24 * 60 * MINUTE });
 		}
 		queue.allowInitiative(NOTED_DM.id, async (person) => conversationOf(person.ids[NOTED_DM.id]!));
 	}
@@ -180,10 +183,18 @@ describe.each(Array.from({ length: 20 }, (_, seed) => seed))('texting first unde
 		const run = world(seed, { initiative: true });
 		run.queue.start();
 		try {
-			await run.play(35);
-			await vi.advanceTimersByTimeAsync(START + 100 * MINUTE - Date.now());
+			// Ana and Bo write all along (a check-in planned for them is dropped as they talk); Cy and Dee stay at rest, a follow-up due
+			await run.play(35, { writers: ['ana', 'bo'] });
+			// To the last moment an opener may go (23:00 less spanEndMinutes)
+			await vi.advanceTimersByTimeAsync(START + 160 * MINUTE - Date.now());
 			expect(run.violations).toEqual([]);
 			expect(run.composing.size).toBe(0);
+			expect(run.opened.length).toBeGreaterThan(0);
+			// A check-in for someone who talked after it was planned is closed, not left pending
+			for (const opener of run.store.dueOpeners(run.persona.id, Date.now())) {
+				const last = run.store.history(opener.personId, 1)[0]!;
+				if (opener.kind === 'checkIn') expect(last.at, `a check-in pending for ${opener.personId}, who talked since`).toBeLessThanOrEqual(opener.createdAt);
+			}
 			for (const from of PEOPLE) {
 				const person = run.store.person(run.persona.id, NOTED_DM.id, from)!;
 				if (person.state === 'active') expect(person.handledAt, `${person.name} is still owed a turn`).toBeGreaterThanOrEqual(person.lastInAt);
@@ -197,25 +208,6 @@ describe.each(Array.from({ length: 20 }, (_, seed) => seed))('texting first unde
 		} finally {
 			run.queue.stop();
 		}
-	});
-});
-
-describe('texting first under random load, across its seeds', () => {
-	// Everyone writes all along, so few are ever at rest long enough for one: a few openers, not many
-	it('sends openers at all', async () => {
-		let opened = 0;
-		for (let seed = 0; seed < 20; seed++) {
-			const run = world(seed, { initiative: true });
-			run.queue.start();
-			try {
-				await run.play(35);
-				await vi.advanceTimersByTimeAsync(START + 100 * MINUTE - Date.now());
-				opened += run.opened.length;
-			} finally {
-				run.queue.stop();
-			}
-		}
-		expect(opened).toBeGreaterThan(0);
 	});
 });
 

@@ -2025,7 +2025,8 @@ describe('people waiting in line', () => {
 		// 0.66 expected, 0.027 a standard deviation
 		expect(bo / trials).toBeGreaterThan(0.57);
 		expect(bo / trials).toBeLessThan(0.75);
-	});
+		// 300 runs of a queue: under 2 s on a fast machine, over the default 5 s on a slow, busy CI runner
+	}, 15_000);
 });
 
 describe('texting first (settings.initiative)', () => {

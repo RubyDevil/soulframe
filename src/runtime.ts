@@ -956,17 +956,17 @@ export function createReplyQueue({
 
 	/**
 	 * At each tick, while texting first is on (settings.initiative), it plans the span's openers if it has not yet
-	 * (`plan`), then, while the persona is idle: the first due opener the
-	 * guardrails allow now (initiative.ts openerBlock; one they never will is dropped), on a channel allowed for it, in a
-	 * full online span with `spanEndMinutes` left, goes (a follow-up at a random moment, on average OPENER_MEAN_WAIT on), one
-	 * at a time.
+	 * (`plan`). Every due opener the guardrails never will allow is dropped (initiative.ts openerBlock); then, while the
+	 * persona is idle, the first one they allow now, on a channel allowed for it, in a full online span with
+	 * `spanEndMinutes` left, goes (a follow-up at a random moment, on average OPENER_MEAN_WAIT on), one at a time.
 	 */
 	const initiate = async () => {
 		const { initiative } = settings;
 		if (!initiative.enabled || !initiating.size || stopped || runtime.halted()) return;
 		const now = runtime.now();
 		plan(now);
-		if (!idle(now)) return;
+		// Every due opener that can never go is closed now; the first that may go now is the one taken
+		let chosen: { opener: Opener; person: Person; channel: ChannelId } | undefined;
 		for (const opener of runtime.store.dueOpeners(persona.id, now)) {
 			if (queued(opener.personId) || active.has(opener.personId)) continue;
 			const person = runtime.store.personById(opener.personId);
@@ -976,30 +976,30 @@ export function createReplyQueue({
 				runtime.store.audit(persona.id, 'opener_dropped', { personId: person.id, kind: opener.kind, reason: blocked.reason });
 				continue;
 			}
-			if (blocked) continue;
+			if (blocked || chosen) continue;
 			const channel = channelFor(person);
-			if (channel === undefined) continue;
-			const span = spanAt(persona, now, channel);
-			if (span?.kind !== 'online' || span.end - now < initiative.spanEndMinutes * MINUTE) continue;
-			// A follow-up's day is only roughly planned: it thinks of them at a random moment of the time it may (a check-in or a share has its moment already)
-			if (opener.kind === 'followUp' && runtime.rng() >= 1 - Math.exp(-TICK / OPENER_MEAN_WAIT)) return;
-			opening = true;
-			let conversation: Conversation | null;
-			try {
-				conversation = await initiating.get(channel)!(person);
-			} finally {
-				opening = false;
-			}
-			if (!conversation) {
-				runtime.store.closeOpener(opener.id, 'dropped');
-				runtime.store.audit(persona.id, 'opener_dropped', { personId: person.id, kind: opener.kind, reason: 'unreachable' });
-				return;
-			}
-			// Something came up while the app looked them up: the opener waits for the next tick
-			if (!idle(runtime.now()) || queued(person.id) || runtime.store.personById(person.id).lastInAt !== person.lastInAt) return;
-			void reachOut(person.id, conversation, opener);
+			const span = channel === undefined ? null : spanAt(persona, now, channel);
+			if (channel !== undefined && span?.kind === 'online' && span.end - now >= initiative.spanEndMinutes * MINUTE) chosen = { opener, person, channel };
+		}
+		if (!chosen || !idle(now)) return;
+		const { opener, person, channel } = chosen;
+		// A follow-up's day is only roughly planned: it thinks of them at a random moment of the time it may (a check-in or a share has its moment already)
+		if (opener.kind === 'followUp' && runtime.rng() >= 1 - Math.exp(-TICK / OPENER_MEAN_WAIT)) return;
+		opening = true;
+		let conversation: Conversation | null;
+		try {
+			conversation = await initiating.get(channel)!(person);
+		} finally {
+			opening = false;
+		}
+		if (!conversation) {
+			runtime.store.closeOpener(opener.id, 'dropped');
+			runtime.store.audit(persona.id, 'opener_dropped', { personId: person.id, kind: opener.kind, reason: 'unreachable' });
 			return;
 		}
+		// Something came up while the app looked them up: the opener waits for the next tick
+		if (!idle(runtime.now()) || queued(person.id) || runtime.store.personById(person.id).lastInAt !== person.lastInAt) return;
+		void reachOut(person.id, conversation, opener);
 	};
 
 	return {
