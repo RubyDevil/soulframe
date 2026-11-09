@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.0-beta.1] - 2026-11-08
+
 ### Added
 
 - `brain.outgoing`: records a message the persona's account sent from outside the reply queue (typed by hand, say), so
@@ -205,5 +207,6 @@ on the `beta` dist-tag under the MIT license.
   lines that hold what its code span names, every export is documented in `docs/api.md` (and nothing else), and every
   relative link and anchor resolves.
 
-[Unreleased]: https://github.com/RubyDevil/soulframe/compare/v0.1.0-beta.0...HEAD
+[Unreleased]: https://github.com/RubyDevil/soulframe/compare/v0.1.0-beta.1...HEAD
+[0.1.0-beta.1]: https://github.com/RubyDevil/soulframe/compare/v0.1.0-beta.0...v0.1.0-beta.1
 [0.1.0-beta.0]: https://github.com/RubyDevil/soulframe/releases/tag/v0.1.0-beta.0
