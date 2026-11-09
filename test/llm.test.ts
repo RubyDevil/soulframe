@@ -379,6 +379,15 @@ describe('llmsFor', () => {
 		expect(JSON.parse(await llms.get('jo')!.complete([{ role: 'user', content: 'hey' }], { task: 'directMessage' }))).toMatchObject({ action: 'none' });
 		expect(fetch).not.toHaveBeenCalled();
 	});
+	it('refuses settings that disagree on the budget every persona shares, naming each value', () => {
+		const tight = { id: 'kai', settings: SettingsSchema.parse({ llm: { baseUrl: 'https://llm.example/v1', model: 'mini', directMessageReserve: 0.5 } }) };
+		expect(() => llmsFor([...personas, tight], { dryRun: false, concurrency: 4, apiKeyOf: () => 'key' })).toThrow(
+			'settings.llm.directMessageReserve are one budget for every persona: give every persona the same (robin 0.3, sky 0.3, kai 0.5)',
+		);
+		// Their models, providers and keys may be their own
+		expect(llmsFor(personas, { dryRun: false, concurrency: 4, apiKeyOf: () => 'key' }).size).toBe(2);
+	});
+
 	it('gives canned lines to a persona in `keyless`, without a request', async () => {
 		const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => answer('ok', 1));
 		const llms = llmsFor(personas, { dryRun: true, concurrency: 4, apiKeyOf: () => 'key', keyless: new Set(['sky']), rng: () => 0 });

@@ -46,9 +46,25 @@ export const describe = (path: readonly (string | number)[], message: string, go
 /** A problem of another file than the ConfigError's: "<file> › <problem>". */
 export const inFile = (file: string, problem: string) => `${file} › ${problem}`;
 
-/** An issue's identity, to tell one a layer only inherits (reported once, where it is written) from its own. */
-export const issueKey = (path: readonly (string | number)[], message: string) => `${path.join('.')}:${message}`;
-export const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+/** A problem found at `path` of a value read from somewhere: what is wrong, and the value it got if that helps. */
+export interface Problem {
+	path: readonly (string | number)[];
+	message: string;
+	got?: unknown;
+}
+
+/**
+ * A problem as shown, of `source` when given: "<source> › <path>: <message>" for a key, "<source>: <message>" for the
+ * whole of it (no path); without a source, `describe`'s alone. The one format of every parser's issues.
+ */
+export const sourced = (source: string | undefined, { path, message, got }: Problem) => {
+	const problem = describe(path, message, got);
+	return source === undefined ? problem : path.length ? inFile(source, problem) : `${source}: ${problem}`;
+};
+
+/** A failed parse's problems (each value shown as `shownValue` says), but for unknown keys, which `unknownKeys` finds with a suggestion. */
+export const schemaProblems = (error: z.ZodError | undefined, raw: unknown): Problem[] =>
+	(error?.issues ?? []).filter((issue) => issue.code !== 'unrecognized_keys').map((issue) => ({ path: issue.path, message: issue.message, got: shownValue(issue, raw) }));
 
 // ---------------------------------------------------------------------------------------------------
 // Unknown keys and suggestions
@@ -104,7 +120,8 @@ export function unknownKeys(schema: z.ZodTypeAny, raw: unknown, path: (string | 
 	const shape = inner.shape as Record<string, z.ZodTypeAny>;
 	const known = Object.keys(shape);
 	return Object.entries(raw).flatMap(([key, value]) => {
-		if (!(key in shape)) {
+		// Its own keys only: `constructor` or `toString` in a config is a key like any other
+		if (!Object.hasOwn(shape, key)) {
 			const suggestion = nearest(key, known);
 			return [{ path: [...path, key], ...(suggestion && { suggestion }) }];
 		}
@@ -112,7 +129,10 @@ export function unknownKeys(schema: z.ZodTypeAny, raw: unknown, path: (string | 
 	});
 }
 
+/** An unknown key as a problem, with the nearest known key if any. */
+export const unknownKeyProblem = ({ path, suggestion }: UnknownKey): Problem => ({ path, message: `unknown key${didYouMean(suggestion)}` });
+
 /** The unknown keys found under `at`, each an issue: a key the schema doesn't know is never silently ignored. */
 export function unknownKeyIssues(found: UnknownKey[], at: readonly (string | number)[]): string[] {
-	return found.map(({ path, suggestion }) => describe([...at, ...path], `unknown key${didYouMean(suggestion)}`, undefined));
+	return found.map((key) => unknownKeyProblem(key)).map(({ path, message }) => describe([...at, ...path], message, undefined));
 }

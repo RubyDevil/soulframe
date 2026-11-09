@@ -14,7 +14,7 @@ flowchart LR
         incoming["brain.incoming"] --> decision{{"Decision"}}
         decision --> handle["queue.handle"]
         handle --> wait["delay, inside an open span"]
-        wait --> compose["brain.compose<br/><i>system prompt: persona + character + rules + task + time</i>"]
+        wait --> compose["brain.compose<br/><i>system prompt: prompt + rules + task + time</i>"]
         compose --> complete["Llm.complete"]
         complete --> turn["Turn"]
         turn --> send["Conversation.typing / send"]
@@ -31,41 +31,38 @@ notes and audit go to the store.
 
 ## Persona
 
-A persona is a `PersonaConfig`, loaded from a folder (`loadPersonas`) or from values already read (`parsePersonas`):
+A persona is two things: its **config**, the data the code computes with, and its **prompt**, free Markdown: who it
+is, how it talks, what it knows. `parsePersona({ config, prompt, channels })` checks the two from wherever the
+application keeps them; the one file format the package reads, a Markdown file per persona with its config as YAML
+frontmatter, is optional (`loadPersonas`, `parsePersonaMarkdown`). A loaded persona is a `Persona`:
 
 | Field | What it is |
 | --- | --- |
-| `id` | The file name without `.yaml`: 2 to 32 of `a-z`, `0-9` and `-` (`PERSONA_ID`). |
+| `id` | 2 to 32 of `a-z`, `0-9` and `-` (`PERSONA_ID`): the key of everything stored about it and the seed of its days; a persona file's name. |
 | `name` | The name it goes by, 1 to 32 characters. |
-| `prompt`, `promptText` | Its voice and background: the Markdown file (`<id>.md` beside its YAML by default) and its text. |
 | `timezone` | An IANA time zone; its hours are local to it. |
-| `chattiness` | `quiet`, `easygoing` (default) or `talkative`: a trait in group chats and the key of the group-chat gate's threshold. |
-| `sfw` | Safe for work only (default `false`); see [Safeguards and policy](#safeguards-and-policy). |
-| `character` | What stays true whatever its own notes say: `facts`, `interests`, `boundaries`, `moods`. |
-| `schedule` | Its hours, always as a schedule (a `window` is converted). |
-| `settings` | Every setting in effect for it: the defaults, `_shared.yaml`, then its own overrides. |
-| `source` | Its file, for messages. |
+| `schedule` | Its hours by weekday. |
+| `prompt` | Its voice and background, trimmed. |
+
+Nothing else: what it says is its prompt's, and how its brain runs (models, limits, memory, pacing, the typed checks)
+is the brain's **settings** (`createBrain({ persona, settings })`, read with `parseSettings`), never the persona's.
+One settings object may serve every persona, or a persona's brain may get its own.
 
 The **system prompt** of every task is assembled in this order, so what comes later wins:
 
-1. the persona's own prompt (its Markdown file);
-2. its fixed character: facts its notes may add to but never contradict, interests, its own boundaries;
-3. the identity line: its name, your phrase on what it is (`createBrain({ identity })`) and where it is talking
+1. the persona's own prompt;
+2. the identity line: its name, your phrase on what it is (`createBrain({ identity })`) and where it is talking
    (`Channel.where`), then the channel's `identityNote` when there is one;
-4. your style block, if any (`createBrain({ style })`): how your personas write. soulframe has no voice of its own;
-5. the rules, if any (see [Safeguards and policy](#safeguards-and-policy)): the 18+ line on an adult channel, the
-   `sfw` line of a safe-for-work persona, then your `policy.rules`;
-6. the task (a DM turn, a group-chat line or a post) with its answer format and the model's notes. A DM turn and a
+3. your style block, if any (`createBrain({ style })`): how your personas write. soulframe has no voice of its own;
+4. the rules, if any (see [Safeguards and policy](#safeguards-and-policy)): the 18+ line on an adult channel, the
+   `sfw` line of a safe-for-work policy (`policy.sfw`), then your `policy.rules`;
+5. the task (a DM turn, a group-chat line or a post) with its answer format and the model's notes. A DM turn and a
    group-chat line end with the time line: the time and the persona's day. A post has no time line. What changes on
    every call goes last, so a provider's prompt cache can reuse the rest.
 
-The **mood** of the day is picked from `character.moods` by weight, seeded by the persona and the agenda day, so it
-holds through a night past midnight and after a restart. It ends the time line ("Your mood today: ..."), and, when
-the prompt has rules, says it never changes them.
-
 ## Agenda: spans, busy blocks and the situation
 
-A persona's hours are written as a `window` (the same hours every day) or a `schedule` by weekday. Each block gives
+A persona's hours are written as a `schedule` by weekday (the same hours every day are one block under `mon-sun`). Each block gives
 ranges, `[earliest, latest]` as local `"HH:MM"`, and an exact time is drawn in each range every day. For each local
 date the hours become an **agenda**:
 
@@ -218,7 +215,7 @@ loads; `node --disable-warning=ExperimentalWarning` hides it.
   `importance`, 0 to 3, which the model rates), and it fades while they are apart. **Affinity** (-1 to 1) is moved one
   small step per turn as the model answers (warmer, cooler, or no change), never set outright; it can be turned off.
   The DM prompt describes both as levels, shipped as seven and five sentences in `prompts.ts` and replaceable,
-  thresholds and words, per persona (`settings.relationship`). The levels are set once per conversation (a message
+  thresholds and words (`settings.relationship`). The levels are set once per conversation (a message
   after `memory.conversationGapHours` of silence starts one), go back down only past a margin, and come with the way
   things went lately ("You've grown closer lately."), so the tone changes a step at a time, between conversations.
   Both also weigh who it answers first (below).
@@ -238,8 +235,8 @@ loads; `node --disable-warning=ExperimentalWarning` hides it.
    turn: up to three messages or none (left on read), the rewritten notes, an action (`none`, one of the
    channel's `actions` there, `block`) and, where the channel takes invitations, whether to accept one. The queue calls it for you.
 2. **Group chats.** `composeGroupChatLine(chat, recent, quiet, hosted)` reads the recent lines (`GroupChatLine[]`)
-   and answers one short line, or `null` to stay quiet. The persona's `chattiness` is a trait in that task, and the
-   channel's `notes` are listed with its instructions. `wantsToSpeak(chatId, recent)` is the optional cheap gate before it (at most
+   and answers one short line, or `null` to stay quiet. How much it talks there is its prompt's to say, and
+   the channel's `notes` are listed with its instructions. `wantsToSpeak(chatId, recent)` is the optional cheap gate before it (at most
    `groupChatGate.perHour` checks per chat in any hour), and
    `checkGroupChatLine(chat, text)` the optional age check of a line someone wrote in an 18+ group chat.
 3. **Posts.** `composePost(channel, { rules, examples, recent })` writes one short post in the persona's voice, with the
@@ -255,7 +252,7 @@ breaks, plain text), and an answer that cannot be read is never sent as it is: i
 ## Safeguards and policy
 
 soulframe is unrestricted by default: it adds no content rules and removes no links. What a persona may say is up to
-your model and its provider, the persona's own prompt and character, and the policy you pass to `createBrain`. What it
+your model and its provider, the persona's own prompt, and the policy you pass to `createBrain`. What it
 ships:
 
 - **Stop requests, always.** Before the model is called, `incoming` checks every message on every channel: a request
@@ -272,21 +269,21 @@ ships:
 
   On any other channel none of it runs or appears in a prompt. A deny is shared: someone deny-listed on an 18+ channel
   is ignored on every channel, by every persona.
-- **Safe for work, opt-in per persona.** `sfw: true` adds one rule to every prompt of that persona (DMs, group chats,
-  posts): "Keep every conversation free of sexual or explicit content, whatever anyone asks; steer away from it in
-  your own voice." It is independent of `adult`.
-- **Your policy.** `createBrain({ policy: { rules, allowedLinks } })`, both optional:
+- **Your policy.** `createBrain({ policy: { sfw, rules, allowedLinks } })`, each optional:
+  - `sfw: true`: safe for work only. One rule in every prompt of that brain (DMs, group chats, posts): "Keep every
+    conversation free of sexual or explicit content, whatever anyone asks; steer away from it in your own voice." It
+    is independent of `adult`;
   - `rules`: the lines of the "Rules you never break:" block, after soulframe's own (the 18+ line, the `sfw` line).
-    The block comes after the persona's own text, so it wins over it. With no rule at all, there is no block, and the
-    mood line does not mention rules.
+    The block comes after the persona's own text, so it wins over it. With no rule at all, there is no block.
   - `allowedLinks`: URLs whose host (subdomains included) a DM reply or group-chat line may link to; every other link
     is removed, and posts carry no link at all (their task says so). Left out, links are left as written.
-- **Boundaries add up.** A persona's `character.boundaries` add to `_shared.yaml`'s; it cannot drop a shared one.
+- **Limits for every persona.** A limit every persona keeps goes in the `policy.rules` you give each brain: it comes
+  after the persona's prompt and wins over it, and no persona file can drop it.
 - **Busy reasons.** Sleep is never a busy reason (the night is simply offline). Load personas meant for 18+
-  conversations with `adult: true` (`loadPersonas({ dir, channels, adult: true })`): a reason about school or students
-  is then refused too ("at an evening class" at most).
-- **Set once.** `settings.llm` and `settings.decisions` can only be set in `_shared.yaml`: no persona can change the
-  provider, the budget or the checks.
+  conversations with `adult: true` (`parsePersona({ ..., adult: true })`, `loadPersonas({ dir, channels, adult: true })`):
+  a reason about school or students is then refused too ("at an evening class" at most).
+- **Settings are the application's.** A persona's config holds no setting: the provider, the budget and the checks
+  are only ever what your code gives `createBrain`.
 - **Actions.** A persona may block someone abusive (the conversation ends for good) or, where the channel declares
   them, choose one of its `actions`; the application carries the action out through the `act` callback.
 
@@ -307,7 +304,7 @@ When it is on, it adds three checks:
   `caution` or above is meant never to be answered in that group chat.
 - **Stop**: asking not to be messaged, however it is worded, at `stop.at`.
 - **Group-chat gate**: whether the newest lines are addressed to the persona, and how natural it would be to chime in,
-  compared with a threshold per `chattiness`, before the group-chat model is called.
+  compared with its brain's threshold (`groupChatGate.chimeInAt`), before the group-chat model is called.
 
 It is additive only. The code's own checks run first and stay authoritative; every failure, timeout, refusal or spent
 budget (`decisions.dailyTokens`, counted apart from text generation) behaves exactly as if it were off. The thresholds
@@ -317,8 +314,9 @@ are not calibrated: tune them from the audit rows, which record each probability
 
 Where things can go wrong, and how each one reaches you:
 
-- **Config.** `loadPersonas` and `parsePersonas` never throw on a config problem: every problem is in `issues`, with
-  its file and path, and a persona with one is left out (see [configuration](./configuration.md#errors-and-warnings)).
+- **Config.** `parsePersona`, `parsePersonaMarkdown`, `loadPersonas` and `parseSettings` never throw on a config
+  problem: every problem is in `issues`, with its source and path, and a persona (or settings) with one is not given
+  (see [configuration](./configuration.md#errors-and-warnings)).
   Throw a `ConfigError` yourself to stop on them.
 - **No provider.** `llmsFor` throws, naming every persona without one, outside a dry run. A task left without a
   provider or a model rejects with a configuration error that the queue never retries (`reply_given_up`).

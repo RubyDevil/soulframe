@@ -1,18 +1,17 @@
 /**
- * Every setting of a persona's brain, with its default, in one place. They are set in the `settings:` block of
- * the persona folder's `_shared.yaml` (config/personas.ts); anything left out keeps the default below. Secrets (API
- * keys, passwords, tokens) never go there: only the names of the environment variables that hold them. The app's own
- * settings (message limits, its channels' timings, retention, the request rate) are not here (the app's config).
- *
- * A persona may override the groups in `PERSONA_SETTINGS` (models, memory, pacing…) in the `settings:` block of its
- * own file, deep-merged over these. The groups in `GLOBAL_SETTINGS` (the text provider and its daily cap, the Decisions
- * checks) are set once for all personas, and no persona can change them.
+ * Every setting of a persona's brain, with its default, in one place: what a brain, its reply queue and its model
+ * client run with. They are no part of a persona's config: the app gives them to `createBrain({ settings })` (and the
+ * same to `llmsFor` for its model), the same object for every persona or one of their own, read with `parseSettings`
+ * from wherever it keeps them; anything left out keeps the default below. Secrets (API keys, passwords, tokens) never
+ * go there: only the names of the environment variables that hold them. The app's own settings (message limits, its
+ * channels' timings, retention, the request rate) are not here (the app's config).
  *
  * Text generation (`llm`, `models`) and the Decisions API (`decisions`) are configured apart: neither reads
  * the other's block.
  */
 
 import { z } from 'zod';
+import { schemaProblems, sourced, unknownKeyProblem, unknownKeys } from './config/issues.js';
 
 /** [least, most]: the bounds a value is kept within, or drawn from evenly (soulframe's own drawn ranges are `drawn`, with a shape). */
 export const range = (min: number, max: number, floor = 0) =>
@@ -223,17 +222,21 @@ export const SettingsSchema = z
 						enabled: z.boolean().default(true),
 						/** Probability the newest lines are addressed to the persona at or above which it speaks. 0 to 1 (0 always speaks, as without the gate). */
 						addressedAt: at(0.5, 0),
-						/** "Chime in" score (0 intrude, 1 optional, 2 opening, 3 expected) at or above which it speaks, by the persona's chattiness. */
+						/**
+						 * "Chime in" score (0 intrude, 1 optional, 2 opening, 3 expected) at or above which it speaks: higher for a
+						 * persona that rarely speaks unasked (about 2.2 waits for a clear opening), lower for a chatty one (about
+						 * 1.2 takes even an optional remark).
+						 */
 						chimeInAt: z
-							.object({
-								/** For a `quiet` persona: only a clear opening. */
-								quiet: z.number().min(0).max(3).default(2.2),
-								/** For an `easygoing` persona. */
-								easygoing: z.number().min(0).max(3).default(1.7),
-								/** For a `talkative` persona: even an optional remark. */
-								talkative: z.number().min(0).max(3).default(1.2),
+							.number({
+								// The 0.1 betas' one per chattiness says where it went; any other wrong value gets the usual message
+								errorMap: (issue, ctx) => ({
+									message: issue.code === 'invalid_type' && issue.received === 'object' ? 'one number: a threshold per chattiness is gone (give a brain its own)' : ctx.defaultError,
+								}),
 							})
-							.default({}),
+							.min(0)
+							.max(3)
+							.default(1.7),
 						/** The most gate checks per group chat per hour (counted by `wantsToSpeak`, per its `chatId`); past it, the model decides as before. */
 						perHour: z.number().int().min(1).default(120),
 					})
@@ -470,22 +473,6 @@ export const SettingsSchema = z
 
 export type Settings = z.infer<typeof SettingsSchema>;
 
-/**
- * The setting groups a persona may set for itself (its file's `settings:`), deep-merged over `_shared.yaml`'s
- * (config/personas.ts). Everything else is set once for every persona.
- */
-export const PERSONA_SETTINGS = ['models', 'perception', 'memory', 'relationship', 'pacing', 'context', 'retries'] as const;
-/** Set once for every persona: the text provider and its daily cap, the Decisions checks. */
-export const GLOBAL_SETTINGS = ['llm', 'decisions'] as const;
-/** Why a group can't be set per persona, for the error message. */
-export const GLOBAL_ONLY_REASONS: Record<(typeof GLOBAL_SETTINGS)[number], string> = {
-	decisions: 'the safety checks are the same for every persona (set them under the global settings.decisions)',
-	llm: 'the text provider and its daily cap are shared (a persona may name its own models in settings.models)',
-};
-// A new setting must be classified as per persona or global: a compile error otherwise
-type Unclassified = Exclude<keyof Settings, (typeof PERSONA_SETTINGS)[number] | (typeof GLOBAL_SETTINGS)[number]>;
-export const SETTINGS_CLASSIFIED: [Unclassified] extends [never] ? true : never = true;
-
 /** Rules across settings that the schema can't express. */
 export function checkSettings(settings: Settings): { path: (string | number)[]; message: string }[] {
 	const issues: { path: (string | number)[]; message: string }[] = [];
@@ -493,13 +480,27 @@ export function checkSettings(settings: Settings): { path: (string | number)[]; 
 	for (const [task, model] of Object.entries(models)) {
 		// Optional, and never falls back to llm.model
 		if (task === 'vision' || (llm.baseUrl === undefined && model.baseUrl === undefined)) continue;
-		if (!model.model && !llm.model) issues.push({ path: ['models', task], message: 'no model named (set it, or settings.llm.model)' });
+		if (!model.model && !llm.model) issues.push({ path: ['models', task], message: 'no model named (set it, or llm.model)' });
 	}
 	return issues;
 }
 
-/** Every setting at its default (tests, and anything built without a config file). */
+/** Every setting at its default: a brain's settings when it is given none (tests, demos). */
 export const DEFAULT_SETTINGS: Settings = SettingsSchema.parse(undefined);
+
+/**
+ * `raw` read as settings: every setting it leaves out at its default (nothing at all, or `null` as an empty YAML file
+ * reads, is every default), or else every problem, each with its path, after `source › ` when given. A key the schema
+ * doesn't know is a problem too, with the nearest known one. Never throws.
+ */
+export function parseSettings(raw: unknown, { source }: { source?: string } = {}): { settings?: Settings; issues: string[] } {
+	const value = raw === null ? undefined : raw;
+	const parsed = SettingsSchema.safeParse(value);
+	const issues = [...schemaProblems(parsed.error, value), ...unknownKeys(SettingsSchema, value).map(unknownKeyProblem), ...(parsed.success ? checkSettings(parsed.data) : [])].map((problem) =>
+		sourced(source, problem),
+	);
+	return parsed.success && !issues.length ? { settings: parsed.data, issues } : { issues };
+}
 
 /** Milliseconds from seconds, minutes, hours or days, for the ranges above. */
 export const SECOND = 1000;

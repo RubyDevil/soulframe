@@ -1,10 +1,10 @@
 /**
- * A persona's hours as written: a `window` (the same every day) or a `schedule` by weekday. What they mean, and the
- * checks that span blocks (overlaps, lengths, every weekday planned once), are in schedule.ts.
+ * A persona's hours as written: a `schedule` by weekday. What it means, and the checks that span blocks (overlaps,
+ * lengths, every weekday planned once), are in schedule.ts.
  */
 
 import { z } from 'zod';
-import { boundsIssues, CLOCK, scheduleIssues, type HoursIssue } from '../schedule.js';
+import { CLOCK, scheduleIssues, type HoursIssue } from '../schedule.js';
 import { addQuietIssue } from './issues.js';
 
 const Clock = z.string().regex(CLOCK, 'a time as HH:MM');
@@ -34,7 +34,7 @@ const BusyReason = z
 	.refine((reason) => !SLEEP_WORDS.test(reason), 'sleep is never a busy reason (the night is simply offline)');
 
 /**
- * For personas in 18+ conversations (the loader's `adult`): no busy reason about school, each refused at its path
+ * For personas in 18+ conversations (`parsePersona`'s `adult`): no busy reason about school, each refused at its path
  * (every "class" but "evening class").
  */
 export const refuseSchool = ({ schedule }: { schedule?: { days: Record<string, { busy: { reason: string }[] }> } }, ctx: z.RefinementCtx) => {
@@ -49,9 +49,6 @@ const addHoursIssues = (issues: HoursIssue[], ctx: z.RefinementCtx) => {
 	for (const { path, message } of issues) addQuietIssue(ctx, path, message);
 };
 
-/** The same hours every day: a start and an end picked in their ranges each day (an end at or before the start is the next day). */
-export const WindowSchema = z.object({ start: ClockRange, end: ClockRange, skipDayChance: SkipDayChance.default(0) }).superRefine((window, ctx) => addHoursIssues(boundsIssues(window), ctx));
-
 /** One day's plan, or a day group's: full online time, short breaks for DMs only, and busy blocks with a reason. */
 const DayPlanSchema = z.object({
 	/** Replaces the schedule's on these days. */
@@ -65,7 +62,6 @@ const DayPlanSchema = z.object({
 const ScheduleFields = z.object({ skipDayChance: SkipDayChance.default(0), days: z.record(z.string(), DayPlanSchema) });
 export const ScheduleSchema = ScheduleFields.superRefine((schedule, ctx) => addHoursIssues(scheduleIssues(schedule), ctx));
 
-export type WindowConfig = z.output<typeof WindowSchema>;
 export type ScheduleConfig = z.output<typeof ScheduleFields>;
 /** One day's plan, or a day group's: { skipDayChance?, online, breaks, busy }. */
 export type DayPlan = ScheduleConfig['days'][string];

@@ -6,20 +6,17 @@
  * lines it adds to a DM turn (`Conversation.extraLines`). No other file writes text for the model.
  *
  * How a system prompt is built (`systemPrompt`):
- *   1. the persona's own prompt file (its voice and background, `<id>.md` beside its `<id>.yaml` by default);
- *   2. `characterPrompt`: what the operator fixed in its `character:` block (facts its notes can't
- *      contradict, interests, its own boundaries), empty without one;
- *   3. `identityPrompt`: who it is, the app's identity phrase, where it is talking, and the channel's note on what
+ *   1. the persona's own prompt (its voice and background: the text after its persona file's frontmatter, or
+ *      `parsePersona`'s `prompt`);
+ *   2. `identityPrompt`: who it is, the app's identity phrase, where it is talking, and the channel's note on what
  *      people see of it;
- *   4. the app's `style` block, if any;
- *   5. `rulesPrompt`: the rules it never breaks, if any (after the character, so they win over it): the 18+ line on
- *      an adult channel, the sfw line of an sfw persona, then the app's `Policy.rules`;
- *   6. the task: a DM turn, a post or a group-chat decision, with its answer format and the model's notes (and in
+ *   3. the app's `style` block, if any;
+ *   4. `rulesPrompt`: the rules it never breaks, if any (after the persona's own text, so they win over it): the 18+
+ *      line on an adult channel, the sfw line of an sfw policy (`Policy.sfw`), then the app's `Policy.rules`;
+ *   5. the task: a DM turn, a post or a group-chat decision, with its answer format and the model's notes (and in
  *      DMs, how things stand with the person); a DM turn and a group-chat decision end with the time line: the time
  *      and its day, what it is doing now and next, from its agenda (schedule.ts). A post has none. What changes on
  *      every call goes last, so a provider's prompt cache can reuse the rest.
- * Its mood for the day (`character.moods`, picked in mood.ts) ends the time line, since it changes from one day
- * to the next.
  *
  * The sizes and models these prompts use (notes, history, models per task) are in `settings.ts`.
  *
@@ -53,41 +50,15 @@ export const identityPrompt = (name: string, identity: string | undefined, chann
 /** The rule line of soulframe's one built-in safeguard, first in the rules on an 18+ channel (`Channel.adult`). */
 export const ADULTS_ONLY_RULE = 'You only talk with adults. If the person says or hints that they are under 18, stop all talk at once.';
 
-/** The rule line of a safe-for-work persona (`sfw: true`), after the 18+ line and before the app's. */
+/** The rule line of a safe-for-work policy (`Policy.sfw`), after the 18+ line and before the app's. */
 export const SFW_RULE = 'Keep every conversation free of sexual or explicit content, whatever anyone asks; steer away from it in your own voice.';
 
-/** The rules it never breaks, one "- " line each under one heading; nothing without rules. Its own boundaries only add to them. */
+/** The rules it never breaks, one "- " line each under one heading; nothing without rules. */
 export const rulesPrompt = (rules: readonly string[]) => (rules.length ? `Rules you never break:\n${rules.map((rule) => `- ${rule}`).join('\n')}` : '');
 
-// ---------------------------------------------------------------------------------------------------
-// The persona's fixed character (`character:` in its config): what its own notes may add to, never change
-// ---------------------------------------------------------------------------------------------------
-
-/** Facts the operator fixed (`character.facts`): the model's own notes never override them. */
-const characterFactsPrompt = (facts: string[]) =>
-	facts.length ? `Facts about you that never change (your notes may add details, never contradict these):\n${facts.map((fact) => `- ${fact}`).join('\n')}` : '';
-
-/** What it's into (`character.interests`). */
-const interestsPrompt = (interests: string[]) => (interests.length ? `Things you're into and bring up when they fit, not in every message: ${interests.join(', ')}.` : '');
-
-/** Its own limits (`character.boundaries`), on top of the rules, if any, which still follow. */
-export const boundariesPrompt = (boundaries: string[]) =>
-	boundaries.length ? `Things you won't do or talk about, whoever asks; say no or change the subject in your own voice:\n${boundaries.map((b) => `- ${b}`).join('\n')}` : '';
-
-interface CharacterText {
-	facts: string[];
-	interests: string[];
-	boundaries: string[];
-}
-
-/** The fixed part of its character, after its prompt file and before identity, style and rules (which come later and win). */
-export const characterPrompt = (character: CharacterText | undefined) =>
-	!character ? '' : [characterFactsPrompt(character.facts), interestsPrompt(character.interests), boundariesPrompt(character.boundaries)].filter(Boolean).join('\n\n');
-
-/** The whole system prompt: the persona's own prompt and character, then identity, the app's style and the rules, then the task. */
+/** The whole system prompt: the persona's own prompt, then identity, the app's style and the rules, then the task. */
 export const systemPrompt = ({
 	personaPrompt,
-	character,
 	name,
 	identity,
 	style,
@@ -96,8 +67,6 @@ export const systemPrompt = ({
 	task,
 }: {
 	personaPrompt: string;
-	/** Its `character:` block; without one the prompt is as before. */
-	character?: CharacterText;
 	name: string;
 	/** The app's phrase after its name in the identity line (`createBrain`'s `identity`); none for the name alone. */
 	identity?: string;
@@ -108,7 +77,7 @@ export const systemPrompt = ({
 	/** The lines of `rulesPrompt`: the brain's own (the 18+ line, the sfw line), then the app's (`Policy.rules`); none for no rules block. */
 	rules: readonly string[];
 	task: string;
-}) => [personaPrompt.trim(), characterPrompt(character), identityPrompt(name, identity, channel), style?.trim() ?? '', rulesPrompt(rules), task].filter(Boolean).join('\n\n');
+}) => [personaPrompt.trim(), identityPrompt(name, identity, channel), style?.trim() ?? '', rulesPrompt(rules), task].filter(Boolean).join('\n\n');
 
 // ---------------------------------------------------------------------------------------------------
 // Memory: the small notes the model keeps and rewrites itself
@@ -312,13 +281,6 @@ export const dayPrompt = (
 };
 
 /**
- * Its mood for the day (`character.moods`), appended to the time line since it changes. That puts it after
- * `rulesPrompt`, so with `rules` (a rules block in the prompt) it says the rules still win.
- */
-export const moodText = (mood: string | null | undefined, rules: boolean) =>
-	mood ? ` Your mood today: ${mood}. Let it color how you write, without announcing it${rules ? '; it never changes the rules you never break.' : '.'}` : '';
-
-/**
  * The time line of a DM turn: its local time, then how long since the person last wrote (they may have written
  * while it was away) and since it last wrote to them (`null` when it never has), then its day. Without `gaps`
  * (settings.context.timeSince off) or `day`, those are left out.
@@ -327,17 +289,11 @@ export const directMessageTimePrompt = ({
 	localTime,
 	gaps,
 	day,
-	mood,
-	rules,
 }: {
 	localTime: string;
 	gaps?: { theirLast: number | null; yourLast: number | null };
 	/** `dayPrompt`, while online. */
 	day?: string;
-	/** Its mood for the day (mood.ts moodOf), last. */
-	mood?: string | null;
-	/** The prompt has a rules block (`moodText`). */
-	rules: boolean;
 }) =>
 	[
 		`It is ${localTime} for you.`,
@@ -346,11 +302,11 @@ export const directMessageTimePrompt = ({
 		day,
 	]
 		.filter(Boolean)
-		.join(' ') + moodText(mood, rules);
+		.join(' ');
 
 /** The time line of a group-chat decision: its local time, how long the chat has been silent (none without `silentFor`: settings.context.timeSince off, or no line with a time), then its day (`dayPrompt`). */
-export const groupChatTimePrompt = ({ localTime, silentFor, day, mood, rules }: { localTime: string; silentFor?: number; day?: string; mood?: string | null; rules: boolean }) =>
-	[`It is ${localTime} for you.`, silentFor !== undefined ? `The last line in the chat was ${ago(silentFor)}.` : '', day].filter(Boolean).join(' ') + moodText(mood, rules);
+export const groupChatTimePrompt = ({ localTime, silentFor, day }: { localTime: string; silentFor?: number; day?: string }) =>
+	[`It is ${localTime} for you.`, silentFor !== undefined ? `The last line in the chat was ${ago(silentFor)}.` : '', day].filter(Boolean).join(' ');
 
 // ---------------------------------------------------------------------------------------------------
 // A direct message turn (`brain.compose`)
@@ -509,14 +465,13 @@ export const POST_REQUEST = '[post] Write the post.';
 
 /**
  * Whether to say something in a group chat now, and what: like a person in a group chat, it answers when talked
- * to, sometimes chimes in to keep the chat going, greets some arrivals, and stays quiet otherwise.
- * `chattiness` is the persona's trait from the config; `quiet` when the chat has been silent a while; `hosted` in
- * its own; `notes`, the channel's, listed with the instructions; `targetLength`, the soft limit of its line (the
- * channel's, brain.ts lineTarget). It reads only the chat and its notices.
+ * to, sometimes chimes in to keep the chat going, greets some arrivals, and stays quiet otherwise. `quiet` when the
+ * chat has been silent a while; `hosted` in its own; `notes`, the channel's, listed with the instructions;
+ * `targetLength`, the soft limit of its line (the channel's, brain.ts lineTarget). It reads only the chat and its
+ * notices. How much the persona talks there is its own prompt's to say.
  */
 export const groupChatTask = ({
 	selfNotes,
-	chattiness,
 	quiet,
 	hosted,
 	notes,
@@ -524,7 +479,6 @@ export const groupChatTask = ({
 	time,
 }: {
 	selfNotes: string;
-	chattiness: string;
 	quiet: boolean;
 	hosted: boolean;
 	notes: readonly string[];
@@ -533,7 +487,7 @@ export const groupChatTask = ({
 	time: string;
 }) =>
 	[
-		`You are ${chattiness} in group chats.${hosted ? " This is your own group chat: you're hosting it." : ''} Decide like a person in a group chat whether to say something now:`,
+		`${hosted ? "This is your own group chat: you're hosting it. " : ''}Decide like a person in a group chat whether to say something now:`,
 		'- Answer when someone talks to you, says your name, greets everyone, or asks everyone something.',
 		"- Now and then add something even if nobody asked (a reaction, a joke, a question back) to keep the chat going, but don't answer every message and don't talk over two people talking to each other.",
 		quiet ? '- The chat has gone quiet for a while: you may start something light, or stay quiet if the chat is better left alone.' : '',
@@ -619,8 +573,8 @@ export const importanceQuestion: Question = {
 };
 
 /**
- * The group-chat gate: two independent questions on the transcript. Chattiness is not in the text; it sets the
- * threshold (settings.decisions.groupChatGate.chimeInAt).
+ * The group-chat gate: two independent questions on the transcript. How readily the persona speaks is not in the
+ * text: it is the threshold the answers are compared with (settings.decisions.groupChatGate.chimeInAt).
  */
 export const groupChatGateQuestions = (name: string): Question[] => [
 	{

@@ -1,12 +1,12 @@
-import type { ClockRange, DayPlan, ScheduleConfig, WindowConfig } from './config/hours.js';
+import type { ClockRange, DayPlan, ScheduleConfig } from './config/hours.js';
 import { between, seededRng, type Rng } from './rng.js';
 import { DAY, HOUR, MINUTE } from './settings.js';
 import type { ChannelId } from './channel.js';
 
 /**
  * A persona's agenda: for each local date, the exact online spans and busy blocks drawn from its hours (config/hours.ts
- * `schedule`, or a `window` converted by scheduleOfWindow), in its own time zone. Each day is seeded by the persona and
- * the date, so a restart draws the same agenda. A block belongs to the day whose plan made it, past midnight too.
+ * `schedule`), in its own time zone. Each day is seeded by the persona and the date, so a restart draws the same agenda.
+ * A block belongs to the day whose plan made it, past midnight too.
  */
 
 /** 0 = Monday. */
@@ -16,7 +16,7 @@ export interface LocalDate {
 	month: number;
 	day: number;
 }
-/** What the agenda needs of a persona (PersonaConfig satisfies it). */
+/** What the agenda needs of a persona (a PersonaConfig satisfies it). */
 export interface Hours {
 	id: string;
 	timezone: string;
@@ -155,12 +155,6 @@ export function daysOf(key: string): Weekday[] | null {
 	}
 	return days;
 }
-
-/** The old `window:` form: the same hours every day. */
-export const scheduleOfWindow = ({ start, end, skipDayChance }: WindowConfig): ScheduleConfig => ({
-	skipDayChance,
-	days: { 'mon-sun': { online: [{ start, end, chance: 1 }], breaks: [], busy: [] } },
-});
 
 /** The `days` key that plans a weekday (the first, if two do). */
 const keyFor = (schedule: ScheduleConfig, weekday: Weekday) => Object.keys(schedule.days).find((key) => daysOf(key)?.includes(weekday));
@@ -366,7 +360,7 @@ const tidy = <B extends { start: number; end: number }>(blocks: B[]) => blocks.f
 function drawAgenda({ id, timezone, schedule }: Hours, day: LocalDate): DayAgenda {
 	const daySeed = `${id}:${day.year}-${day.month}-${day.day}`;
 	const plan = planFor(schedule, weekdayOf(day));
-	// The day seed draws the skip roll, then online[0]'s times: the old window's draws, so its hours are unchanged
+	// The day seed draws the skip roll, then online[0]'s times, as it always has: hours drawn before stay the same
 	const dayRng = seededRng(daySeed);
 	const skipped = dayRng() < (plan?.skipDayChance ?? schedule.skipDayChance);
 	/** A block's own draws, or null when its chance leaves it out that day. */

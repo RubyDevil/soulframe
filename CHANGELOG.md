@@ -7,6 +7,75 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **A persona is its config and its prompt.** `parsePersona({ config, prompt, channels })` checks a persona from
+  wherever the application keeps it (its own loader, a database, values in code) and answers `{ persona?, issues }`,
+  never throwing. The config (`PersonaConfig`) holds only what the code computes with: `id`, `name`, `timezone` and
+  `schedule`; everything else about the persona is its prompt, free Markdown. A loaded persona is a
+  `Persona` (`PersonaConfig` with its `prompt`).
+- **Persona files with frontmatter**, the one file format the package reads, and only if you want it: `<id>.md`, its
+  config as YAML frontmatter between two `---` lines, its prompt the rest. `parsePersonaMarkdown(text, { id, channels })`
+  reads one file's text (a YAML error points at the file's own line); `loadPersonas({ dir, channels })` reads a folder
+  of them. [`examples/personas/robin.md`](./examples/personas/robin.md) is one, loaded by the tests.
+- `parseSettings(raw, { source })`: the settings a brain runs with, read from wherever the application keeps them,
+  every default filled in, every problem returned with its path (an unknown key with the nearest known one).
+- `createBrain({ settings })` (required: `parseSettings({})` gives every default), and `brain.persona` and
+  `brain.settings`, which the reply queue reads.
+- `settingsWarnings(settings)`: the warnings about settings that `personaWarnings` used to give (`pacing.burst.maxRestarts`
+  above 1, no text provider).
+- `Policy.sfw`: the safe-for-work rule, now the application's policy (`createBrain({ policy: { sfw: true } })`), in the
+  same place in the rules block, after the 18+ line.
+- A key that a 0.1 beta persona file read (`window`, `prompt`, `chattiness`, `sfw`, `character`, `settings`) is refused
+  with where it went, not only as unknown; a `_shared.yaml` or `<id>.yaml` left in the folder is reported by
+  `loadPersonas`, which then loads no persona it may have set something for (a shared `sfw` or limit is never lost
+  without a word).
+- `llmsFor` refuses settings that disagree on the budget every persona shares (`llm.dailyTokens`,
+  `directMessageReserve`, `concurrency`), naming each value.
+
+### Changed
+
+- **BREAKING: settings are the brain's, never a persona's.** Give them to `createBrain({ persona, settings })`
+  (required: `parseSettings({})` gives every default), the same object for every persona or one of their own, and the same settings to `llmsFor`
+  (whose `{ id, settings }` entries are unchanged). `createReplyQueue({ brain, runtime, act })` takes no `persona`: it
+  answers with its brain's persona and settings, so the two can't differ.
+- **BREAKING: `decisions.groupChatGate.chimeInAt` is one number** (default `1.7`), no longer one per chattiness: give a
+  quieter persona's brain a higher one (`2.2` was `quiet`'s, `1.2` `talkative`'s). The old shape is refused with a
+  message that says so.
+- **BREAKING: the group-chat task says nothing of how much the persona talks.** "You are easygoing in group chats." (or
+  quiet, or talkative, by `chattiness`) was in every persona's group-chat prompt; it is gone. Say in the persona's
+  prompt how much it talks in group chats.
+- **BREAKING: `loadPersonas` reads `<dir>/<id>.md`** (frontmatter and prompt in one file) and answers
+  `{ issues, personas }`, without `shared`.
+- **BREAKING: `personaReport(persona, { settings, now, status? })`** takes the settings its brain runs with in place
+  of `shared`: no `overrides` lines; `prompt:` gives the prompt's length; no `character:`
+  line.
+- `personaWarnings` warns only about the persona (its time zone, hours and channels); `samplePrompt` takes `settings`.
+
+### Removed
+
+- **BREAKING: `_shared.yaml` and the layering of persona files.** Each persona's config is its own. Settings shared by
+  every persona are one settings object given to every brain; a limit every persona keeps belongs in the
+  `policy.rules` you give each brain, after the persona's prompt, where no persona can drop it.
+- **BREAKING: the `window` form of the hours.** Write the same hours every day as a schedule:
+  `schedule: { skipDayChance, days: { mon-sun: { online: [{ start, end }] } } }`, which draws exactly the hours the
+  window did.
+- **BREAKING: `chattiness`, `sfw` and `character` in a persona's config.** `chattiness` is gone (say in the prompt how
+  much it talks in group chats; the gate's threshold is `chimeInAt`) and `sfw` moved to `Policy.sfw`; write the
+  persona's facts, interests and boundaries in its prompt, in your words (the fixed "Facts about you that never change…",
+  "Things you're into…" and "Things you won't do…" blocks are gone).
+- **BREAKING: the mood of the day** (`character.moods`): the seeded daily pick and the "Your mood today: …" sentence
+  that ended DM and group-chat time lines are gone, and so is `personaReport`'s mood. A mood that follows what happens,
+  shared by everyone the persona talks with, is on the roadmap.
+- **BREAKING: `settings:` in a persona's file**, and the split of settings into per-persona and global groups.
+- **BREAKING: `parsePersonas`** (use `parsePersona` per persona), the `Chattiness` type, the
+  `prompt:` path key (the prompt is the file's body), and `PersonaConfig`'s `promptText`, `source` and `settings`.
+
+### Fixed
+
+- A config key named like a built-in member of every object (`constructor`, `toString`, `valueOf`) was taken as known
+  and dropped without a word; it is refused as unknown like any other (`unknownKeys` too).
+
 ## [0.1.0-beta.1] - 2026-11-08
 
 ### Added

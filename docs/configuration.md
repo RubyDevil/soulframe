@@ -1,57 +1,41 @@
 # Configuration
 
-A persona folder holds:
+A persona is two things: its **config**, the data the code computes with (its id, name, time zone and hours),
+and its **prompt**, free Markdown: who it is, how it talks, what it knows. `parsePersona({ config, prompt, channels })`
+checks the two, from wherever your app keeps them. The one file format soulframe reads, and only if you want it, is
+a Markdown file per persona with its config as YAML frontmatter (`loadPersonas`, `parsePersonaMarkdown`).
+
+What a brain runs with (models, token limits, memory, pacing, the typed checks) is its **settings**, never part of a
+persona: you give them to `createBrain({ persona, settings })` and read them with `parseSettings`.
+
+Everything below is taken from the package's schemas (`src/config/personas.ts`, `src/config/hours.ts`,
+`src/settings.ts`).
+
+- [A persona file](#a-persona-file)
+- [The config](#the-config)
+- [The prompt](#the-prompt)
+- [`schedule`](#schedule)
+- [Your own loader](#your-own-loader)
+- [`settings`](#settings): [`llm`](#llm), [`models`](#models), [`perception`](#perception), [`decisions`](#decisions),
+  [`memory`](#memory), [`relationship`](#relationship), [`pacing`](#pacing), [`context`](#context), [`retries`](#retries)
+- [Errors and warnings](#errors-and-warnings)
+- [Check helpers](#check-helpers)
+- [Coming from 0.1.0-beta.1](#coming-from-010-beta1)
+
+## A persona file
 
 ```text
 personas/
-├── _shared.yaml     optional: what every persona has unless its own file sets it
-├── robin.yaml       one file per persona; the file name (without .yaml) is its id
-├── robin.md         its prompt: voice and background, in Markdown
-├── kai.yaml
+├── robin.md     one file per persona; the file name (without .md) is its id
 └── kai.md
 ```
 
-`loadPersonas({ dir, channels })` reads `<dir>/_shared.yaml` when it exists and `<dir>/<id>.yaml` for each key of
-`channels`, whose value lists the channel ids that persona is on. `parsePersonas` does the same from values already
-read. Both take `adult: true` for personas used in 18+ conversations: a busy reason about school is then refused (see
-[schedule](#schedule)). Everything below is taken from the package's schemas (`src/settings.ts`, `src/config/personas.ts`,
-`src/config/hours.ts`).
+[`examples/personas/robin.md`](../examples/personas/robin.md):
 
-- [Layering](#layering)
-- [The persona file](#the-persona-file-idyaml)
-- [`_shared.yaml`](#_sharedyaml)
-- [Hours: `window` and `schedule`](#hours-window-and-schedule)
-- [`character`](#character)
-- [`settings`](#settings): [`llm`](#llm), [`models`](#models), [`decisions`](#decisions), [`memory`](#memory),
-  [`relationship`](#relationship), [`pacing`](#pacing), [`context`](#context), [`retries`](#retries)
-- [Errors and warnings](#errors-and-warnings)
-- [Check helpers](#check-helpers)
-
-## A complete example
-
-`_shared.yaml`:
-
-```yaml
-timezone: Europe/Lisbon
-chattiness: easygoing
-character:
-  boundaries:
-    - no talk about politics or religion
-settings:
-  llm:
-    baseUrl: https://api.provider.example/v1
-    apiKeyEnv: LLM_API_KEY
-    model: provider-chat-large
-    dailyTokens: 400000
-  models:
-    groupChat:
-      model: provider-chat-small
-```
-
-`robin.yaml`:
-
-```yaml
+```markdown
+---
 name: Robin
+timezone: Europe/Lisbon
 schedule:
   days:
     mon-fri:
@@ -72,84 +56,57 @@ schedule:
           chance: 0.7
         - start: ["20:00", "21:00"]
           end: ["00:30", "01:30"]
-character:
-  facts:
-    - You are 29 and live in a small coastal town.
-    - You have a ginger cat called Biscuit.
-  interests: [board games, baking, indie music]
-  moods:
-    - cheerful
-    - mood: a little sleepy
-      weight: 0.5
-settings:
-  pacing:
-    glance:
-      medianSeconds: 90   # checks its messages less often than most
-      p90Seconds: 300
+---
+
+You are Robin, 29, living in a small coastal town with a ginger cat called Biscuit. You work in a bookshop and
+spend your evenings on board games, baking and whatever indie record a friend sent you last.
+
+You are warm and curious, quick to ask a follow-up question and slow to give advice nobody asked for. You write in
+lowercase, in short messages, and you like a good story more than a clever one.
+
+You don't talk about politics or religion: you change the subject, kindly.
 ```
 
-`robin.md` holds Robin's voice and background in plain prose.
+The frontmatter is the YAML between the `---` line the file starts with and the next `---` line: the persona's
+config. The rest of the file, trimmed, is its prompt. `id` may be left out (the file's name gives it); written, it
+must be the file's name.
 
-## Layering
+`loadPersonas({ dir, channels })` reads `<dir>/<id>.md` for each key of `channels`, whose value lists the channel ids
+that persona is on (the names its hours' `on:` may use). `parsePersonaMarkdown(text, { id, channels })` reads one file's
+text, for files you read yourself (a bundler, remote storage). Both take `adult: true` for personas used in 18+
+conversations: a busy reason about school is then refused (see [`schedule`](#schedule)). Neither is required: see
+[your own loader](#your-own-loader).
 
-Each persona's values are built in three layers, each over the one before:
+## The config
 
-```text
-settings defaults  →  _shared.yaml  →  <id>.yaml
-```
-
-- **Plain objects merge key by key.** `settings.pacing.glance.medianSeconds` in a persona's file changes that key only.
-- **Lists, `[least, most]` ranges and plain values replace** what the layer below set.
-- **`null` removes** an inherited value: the key goes back to the schema's default (or to nothing).
-- **`character.boundaries` add up**: `_shared.yaml`'s first, then the persona's own, without duplicates. A persona can't
-  drop a shared limit; `boundaries: null` (or `character: null`) clears only its own.
-- **Hours come whole** from the nearest layer that sets them: a persona's own `window` or `schedule` replaces both of
-  `_shared.yaml`'s; they are never merged day by day.
-- **Settings**: `_shared.yaml` may set every group; a persona's own `settings:` may only set `models`, `perception`, `memory`,
-  `relationship`, `pacing`, `context` and `retries`. `llm` and `decisions` are the same for every persona.
-
-## The persona file (`<id>.yaml`)
-
-The id is the file name without `.yaml`: 2 to 32 characters of `a-z`, `0-9` and `-` (`PERSONA_ID`).
+Only what the code computes with: who the persona is to the code, and its hours and their time zone. Everything it
+says is its prompt's; how its brain runs is its [settings](#settings).
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `id` | string | the file name | Optional; when given it must equal the file name. |
-| `name` | string, 1 to 32 characters | required | The name it goes by. |
-| `prompt` | path | `<id>.md` | Its prompt file, relative to its YAML file (or absolute). |
-| `timezone` | IANA time zone | required (here or in `_shared.yaml`) | e.g. `America/Toronto`. Checked with `Intl`; a near miss gets a suggestion. |
-| `window` | [window](#window) | | The same hours every day. Exactly one of `window` and `schedule`, here or inherited. |
-| `schedule` | [schedule](#schedule) | | Hours by weekday. |
-| `chattiness` | `quiet` \| `easygoing` \| `talkative` | `easygoing` | How much it talks in group chats; also picks the gate's `chimeInAt` threshold. |
-| `sfw` | boolean | `false` | Safe for work only: every prompt (DMs, group chats, posts) gets the rule "Keep every conversation free of sexual or explicit content, whatever anyone asks; steer away from it in your own voice." Independent of `Channel.adult`. |
-| `character` | [character](#character) | empty | What stays true whatever its notes say. |
-| `settings` | mapping | none | Overrides of `models`, `perception`, `memory`, `relationship`, `pacing`, `context`, `retries` for this persona. |
+| `id` | 2 to 32 of `a-z`, `0-9` and `-` (`PERSONA_ID`) | required (a file's name gives it) | The key of everything stored about it, and the seed of its days. |
+| `name` | string, 1 to 32 characters | required | The name it goes by: in its identity line, and how group chats and the typed checks name it. |
+| `timezone` | IANA time zone | required | e.g. `America/Toronto`. Checked with `Intl`; a near miss gets a suggestion. |
+| `schedule` | [schedule](#schedule) | required | Its hours by weekday. |
 
-## `_shared.yaml`
+A key the schema doesn't know is an error, with the nearest known one; a key the 0.1 betas read says where it went
+(see [Coming from 0.1.0-beta.1](#coming-from-010-beta1)).
 
-Optional. It may hold `settings` (every group) and the defaults `timezone`, `window`, `schedule`, `chattiness`, `sfw`
-and `character`. Any of them may be left out, at any depth, except inside the hours: a window or a schedule is whole.
-`id`, `name` and `prompt` are each persona's own and are refused here. Its problems are reported once, in
-`_shared.yaml`, not again for every persona that only inherits them.
+## The prompt
 
-## Hours: `window` and `schedule`
+The persona's voice and background, in Markdown: the body of its file, or `parsePersona`'s `prompt`. It is first in
+every system prompt (DMs, group chats, posts), trimmed, written by you; soulframe adds nothing to it. What used to be
+fixed config (facts about it, its interests, its own limits, how much it talks in group chats) is written here, in
+your words. A limit every persona
+keeps belongs in your `policy.rules` ([concepts](./concepts.md#safeguards-and-policy)), which come after the prompt and
+win over it. See [system prompts](./prompts.md#the-persona-prompt).
 
-Times are local to the persona's `timezone`, written `"HH:MM"` on a 24-hour clock. A **clock range** is
+## `schedule`
+
+Its hours by weekday, local to its `timezone`. Times are written `"HH:MM"` on a 24-hour clock. A **clock range** is
 `[earliest, latest]`; an exact time is drawn in it each day. A latest before the earliest is on the next day
 (`["23:30", "00:30"]`), and an end whose earliest is at or before the start's earliest is on the next day too, so a
 block can run past midnight. It still belongs to the day whose plan made it.
-
-### `window`
-
-| Key | Type | Default |
-| --- | --- | --- |
-| `start` | clock range | required |
-| `end` | clock range | required |
-| `skipDayChance` | number, 0 to 0.9 | `0` |
-
-A window is loaded as a schedule with the same online block every day (`mon-sun`).
-
-### `schedule`
 
 | Key | Type | Default |
 | --- | --- | --- |
@@ -176,9 +133,8 @@ and both (`mon-wed,fri`). Every weekday must be in exactly one key; write `"sun:
 | `on` | list of channel ids, at least one | every channel | Online blocks and breaks only: the channels the span counts on. |
 | `reason` | string, 2 to 40 characters | required | Busy blocks: completes "you're ..." ("at work", "at the gym", "out with friends"). |
 
-**`on:`** may only name the persona's own channels, the ones `loadPersonas`' `channels` gives for it. A name that is
-not one of them is an error with a suggestion; in hours inherited from `_shared.yaml` it is reported there, once per
-name, with the personas it fails for.
+**`on:`** may only name the persona's own channels, the ones `parsePersona`'s `channels` gives for it (`loadPersonas`'
+`channels[id]`). A name that is not one of them is an error with a suggestion.
 
 **Checks**, made on the widest times the ranges allow so a valid schedule is valid on every date:
 
@@ -188,21 +144,72 @@ name, with the personas it fails for.
 - blocks that can overlap, within a day and into the next one (`sun` into `mon` too); blocks may touch;
 - a break must be inside one busy block's core (from its latest start to its earliest end: a break from it) or clear
   of it;
-- a busy reason may not be sleep ("bed", "nap", ...: the night is simply offline); loaded with `adult: true`, it may
+- a busy reason may not be sleep ("bed", "nap", ...: the night is simply offline); parsed with `adult: true`, it may
   not be about school or students either ("at an evening class" at most).
 
-## `character`
+The same hours every day are one online block under `mon-sun`:
 
-| Key | Type | Default | Notes |
-| --- | --- | --- | --- |
-| `facts` | list of up to 20 strings, 1 to 200 characters | `[]` | Facts that never change and its notes can't contradict, such as its age and where it lives. |
-| `interests` | list of up to 12 strings, 1 to 60 characters | `[]` | Things it brings up when they fit. |
-| `boundaries` | list of up to 20 strings, 1 to 200 characters | `[]` | Its own limits, on top of the rules, if any: they only add. Add up with `_shared.yaml`'s. |
-| `moods` | list of up to 12 moods | `[]` | One picked per day by weight; none for no mood line. |
+```yaml
+schedule:
+  skipDayChance: 0.1
+  days:
+    mon-sun:
+      online:
+        - start: ["19:00", "20:00"]
+          end: ["23:00", "00:30"]
+```
 
-A mood is a string of 1 to 80 characters (weight 1) or `{ mood, weight }`, `weight` a number of 0 or more (default 1).
+## Your own loader
+
+The file format is a convenience. Keep personas anywhere (a database, JSON, values in code) and hand each one to
+`parsePersona`:
+
+```ts
+import { parsePersona } from 'soulframe';
+
+const { persona, issues } = parsePersona({
+	config: { id: 'robin', name: 'Robin', timezone: 'Europe/Lisbon', schedule: { days: { 'mon-sun': { online: [{ start: ['19:00', '20:00'], end: ['23:00', '00:30'] }] } } } },
+	prompt: 'You are Robin, 29, living in a small coastal town...',
+	channels: ['chat'],
+	source: 'robin (database)', // named before each problem
+});
+if (!persona) throw new Error(issues.join('\n'));
+```
+
+It runs the same checks as the loaders: the schema, unknown keys, the hours and the `on:` channels.
 
 ## `settings`
+
+What a brain runs with, never part of a persona: `createBrain({ persona, settings })`, and the same settings to
+`llmsFor` for its model client. One settings object for every persona is the usual; a persona whose brain needs others
+(a slower typist, a cheaper model) gets its own. Keep them wherever your app keeps its config, and read them with
+`parseSettings(raw, { source })`: like the persona parsers it fills in every default, never throws, and answers every
+problem. `createBrain` needs them: `parseSettings({})` gives every default.
+
+The provider's budget is one for every persona, whatever their settings: `llm.dailyTokens`, `directMessageReserve` and
+`concurrency` must be the same in each (`llmsFor` refuses settings that disagree). The rest may differ by brain.
+
+`settings.yaml`, say:
+
+```yaml
+llm:
+  baseUrl: https://api.provider.example/v1
+  apiKeyEnv: LLM_API_KEY
+  model: provider-chat-large
+  dailyTokens: 400000
+models:
+  groupChat:
+    model: provider-chat-small
+```
+
+```ts
+import { readFileSync } from 'node:fs';
+import { parse } from 'yaml';
+import { ConfigError, parseSettings } from 'soulframe';
+
+const { settings, issues } = parseSettings(parse(readFileSync('settings.yaml', 'utf8')), { source: 'settings.yaml' });
+if (!settings) throw new ConfigError('settings.yaml', issues);
+```
 
 Every setting has a default; leave out what you don't change. Settings never hold secrets, only the names of the
 environment variables that hold them (`apiKeyEnv`): your code reads them (`apiKeyOf`).
@@ -221,15 +228,15 @@ Where it is a limit (`typingDurationSeconds`, `glance.delaySeconds`, …) a valu
 sets one:
 
 ```yaml
-settings:
-  pacing:
-    backlogGapSeconds: [20, 90]                              # still lognormal
-    typingCharsPerSecond: { range: [4, 8], shape: uniform }
+pacing:
+  backlogGapSeconds: [20, 90]                              # still lognormal
+  typingCharsPerSecond: { range: [4, 8], shape: uniform }
 ```
 
 ### `llm`
 
-The text provider, for text generation only (never read by `decisions`). Global: `_shared.yaml` only.
+The text provider, for text generation only (never read by `decisions`). `dailyTokens` and `concurrency` are for every
+persona together: they apply where your code builds the meter and the model clients (`createTokenMeter`, `llmsFor`).
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
@@ -244,7 +251,7 @@ The text provider, for text generation only (never read by `decisions`). Global:
 
 ### `models`
 
-A model per kind of task, so the frequent cheap ones can use a cheaper model. Per persona.
+A model per kind of task, so the frequent cheap ones can use a cheaper model.
 
 | Task | `maxTokens` default | `temperature` default |
 | --- | --- | --- |
@@ -272,7 +279,7 @@ here too.
 
 ### `perception`
 
-What comes with a message in a DM (see [attention](./attention.md#perception-photos-and-links)). Per persona.
+What comes with a message in a DM (see [attention](./attention.md#perception-photos-and-links)).
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
@@ -284,7 +291,7 @@ What comes with a message in a DM (see [attention](./attention.md#perception-pho
 ### `decisions`
 
 Optional typed checks by a Decisions API (see [concepts](./concepts.md#decisions-optional-typed-checks)). This
-block is its only configuration: nothing falls back to `llm` or `models`. Global: `_shared.yaml` only. Off by default:
+block is its only configuration: nothing falls back to `llm` or `models`. Off by default:
 turning it on sends people's messages, the personas' replies and group-chat lines to `baseUrl`. Before you turn it
 on, check that the endpoint and model you use (the defaults below, or your own) answer `{baseUrl}/decisions`: any
 failure behaves as if the checks were off, so a wrong endpoint would only show in the `decisions_failed` log.
@@ -307,14 +314,10 @@ failure behaves as if the checks were off, so a wrong endpoint would only show i
 | `importance.enabled` | boolean | `true` | How much their new messages matter (0 small talk to 3 something big), asked with the other DM checks, and ahead of a turn that comes due while others wait (alone when no other check is on), so the reply queue can weigh it (`pacing.priority`). Off, or on any failure, the model's own rating of their last turn is used. |
 | `groupChatGate.enabled` | boolean | `true` | Whether to gate group chats (`brain.wantsToSpeak`). |
 | `groupChatGate.addressedAt` | number, 0 to 1 | `0.5` | Speaks when the newest lines are addressed to it at or above this (0 always speaks). |
-| `groupChatGate.chimeInAt.quiet` | number, 0 to 3 | `2.2` | "Chime in" score (0 intrude, 1 optional, 2 opening, 3 expected) at or above which a `quiet` persona speaks. |
-| `groupChatGate.chimeInAt.easygoing` | number, 0 to 3 | `1.7` | For an `easygoing` persona. |
-| `groupChatGate.chimeInAt.talkative` | number, 0 to 3 | `1.2` | For a `talkative` persona. |
+| `groupChatGate.chimeInAt` | number, 0 to 3 | `1.7` | "Chime in" score (0 intrude, 1 optional, 2 opening, 3 expected) at or above which it speaks: higher for a persona that rarely speaks unasked (about `2.2` waits for a clear opening), lower for a chatty one (about `1.2` takes even an optional remark). Give such a persona's brain its own. |
 | `groupChatGate.perHour` | integer, 1 or more | `120` | The most gate checks per group chat in any hour, counted by `wantsToSpeak` per its `chatId`; past it, it answers `null` without asking and the model decides. |
 
 ### `memory`
-
-Per persona.
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
@@ -325,7 +328,7 @@ Per persona.
 
 ### `relationship`
 
-Per persona; explained in full, with the reply timing and who goes first, in
+Explained in full, with the reply timing and who goes first, in
 [attention, timing and relationships](./attention.md#relationship-getting-to-know-and-like-each-person). How it comes to know and like each person, kept for each of them in the store (`Person.familiarity`,
 `Person.affinity`), and how the DM prompt describes it. Unknown keys here are refused.
 
@@ -344,22 +347,21 @@ The levels are set when a conversation starts (`memory.conversationGapHours`) an
 with thresholds of your own:
 
 ```yaml
-settings:
-  relationship:
-    familiarity:
-      levels:
-        - { from: 0, text: "{name} is new here; you're still a bit formal." }
-        - { from: 0.25, text: "You and {name} chat often and easily." }
-        - { from: 0.6, text: "{name} is a friend: you joke around and check in on each other." }
-    affinity:
-      enabled: false
+relationship:
+  familiarity:
+    levels:
+      - { from: 0, text: "{name} is new here; you're still a bit formal." }
+      - { from: 0.25, text: "You and {name} chat often and easily." }
+      - { from: 0.6, text: "{name} is a friend: you joke around and check in on each other." }
+  affinity:
+    enabled: false
 ```
 
 ### `pacing`
 
 What the timing settings mean together, in plain terms: [attention, timing and relationships](./attention.md).
 
-Per persona. Unknown keys here are refused.
+Unknown keys here are refused.
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
@@ -396,16 +398,15 @@ Per persona. Unknown keys here are refused.
 | `returnOnlineReplyDelayMinutes` | drawn range, lognormal | `[0, 0]` | Extra wait after a span opens, before its first backlog reply; `[0, 0]` for none. |
 | `backlogGapSeconds` | drawn range, lognormal | `[30, 150]` | Before each backlog conversation. |
 
-How a persona types is its own, like the rest of `pacing`: a quick typist gets `typingCharsPerSecond: [6, 9]` in its
-file, a slow and careful one `[2.5, 4]` with a few thinking pauses:
+How a persona types is its brain's settings, like the rest of `pacing`: a quick typist's brain gets
+`typingCharsPerSecond: [6, 9]`, a slow and careful one's `[2.5, 4]` with a few thinking pauses:
 
 ```yaml
-settings:
-  pacing:
-    typingCharsPerSecond: [2.5, 4]
-    thinkingPauses:
-      chance: 0.4
-      seconds: [3, 8]
+pacing:
+  typingCharsPerSecond: [2.5, 4]
+  thinkingPauses:
+    chance: 0.4
+    seconds: [3, 8]
 ```
 
 How soon it answers depends on what it is doing, not on a roll per message. While it chats with anyone it is on its
@@ -420,13 +421,12 @@ conversation calms down (`holdAtImportance`, `calmMinutes`). Going offline at th
 and comes whatever the conversation.
 
 ```yaml
-settings:
-  pacing:
-    watching:
-      halfLifeSeconds: 180    # stays on a chat longer
-    interruptions:
-      meanMinutes: 20         # easily distracted
-      minutes: [1, 4]
+pacing:
+  watching:
+    halfLifeSeconds: 180    # stays on a chat longer
+  interruptions:
+    meanMinutes: 20         # easily distracted
+    minutes: [1, 4]
 ```
 
 A persona answers one person at a time, always: while it writes or sends a reply to someone, the others' turns wait,
@@ -436,11 +436,10 @@ after their newest message, and a message that lands while the reply is being wr
 once, with that message read:
 
 ```yaml
-settings:
-  pacing:
-    burst:
-      settleSeconds: [3, 6]       # a slower reader of bursts
-      restartOnNewMessage: false  # never drop a draft: a late message gets its own reply
+pacing:
+  burst:
+    settleSeconds: [3, 6]       # a slower reader of bursts
+    restartOnNewMessage: false  # never drop a draft: a late message gets its own reply
 ```
 
 Each message is typed for its length at a speed drawn from `typingCharsPerSecond`, plus 0.4 to 1.5 seconds, kept
@@ -449,7 +448,7 @@ within `typingDurationSeconds`; a message of `thinkingPauses.minChars` or more t
 
 ### `context`
 
-Per persona. `false` leaves that text out of the prompt; nothing else changes (hours, presence and pacing included).
+`false` leaves that text out of the prompt; nothing else changes (hours, presence and pacing included).
 
 | Key | Type | Default | What the model is told |
 | --- | --- | --- | --- |
@@ -461,8 +460,6 @@ Per persona. `false` leaves that text out of the prompt; nothing else changes (h
 
 ### `retries`
 
-Per persona.
-
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `attempts` | integer, 1 to 10 | `3` | Failed tries at one answer before giving up (the person can write again). A spent budget or a provider outage counts none. |
@@ -471,24 +468,30 @@ Per persona.
 
 ## Errors and warnings
 
-`loadPersonas` and `parsePersonas` never throw on a config problem. They answer a `LoadedPersonas`:
+None of `parsePersona`, `parsePersonaMarkdown`, `loadPersonas` and `parseSettings` throws on a config problem:
 
-- `issues`: every problem, as text. A persona with a problem of its own is left out of `personas`; while
-  `_shared.yaml`'s settings have problems, no persona is loaded.
-- `personas`: the valid personas, in the order asked for.
-- `shared`: `_shared.yaml`'s settings over the defaults, when they have no problem.
+- `parsePersona` and `parsePersonaMarkdown` answer `{ persona?, issues }`: no persona while there is any problem;
+- `loadPersonas` answers `{ personas, issues }`: a persona with a problem is left out, the others are loaded, in the
+  order asked for;
+- `parseSettings` answers `{ settings?, issues }`: no settings while there is any problem.
 
-What is valid but probably wrong is not their concern: [`personaWarnings`](#check-helpers) gives those warnings.
+A file the 0.1 betas read, left in the folder (`_shared.yaml`, an `<id>.yaml` beside its `<id>.md`), is a problem too:
+`loadPersonas` then loads no persona it may have set something for, so a shared `sfw` or limit is never quietly lost.
 
-Each issue names its file and path, and the value it got when that helps:
+What is valid but probably wrong is not their concern: [`personaWarnings` and `settingsWarnings`](#check-helpers) give
+those warnings.
+
+Each issue names its source and path, and the value it got when that helps: `<source> › <path>: …` for a key,
+`<source>: …` for the whole of it (a file with no frontmatter, a YAML error, a config that is no mapping):
 
 ```text
-robin.yaml › settings.pacing.replySplitChance: Number must be less than or equal to 1 (got 1.5)
-robin.yaml › settings.pacng: not a setting (did you mean "pacing"?)
-robin.yaml › settings.llm: cannot be set per persona: the text provider and its daily cap are shared (a persona may name its own models in settings.models)
-robin.yaml › schedule.days: no plan for sat, sun (add them, or "sat,sun: {}" for days with nothing)
-_shared.yaml › name: is each persona's own, not a default
-no file personas/kai.yaml
+personas/robin.md › schedule.days: no plan for sat, sun (add them, or "sat,sun: {}" for days with nothing)
+personas/robin.md › nmae: unknown key (did you mean "name"?)
+personas/robin.md › sfw: is the brain's policy now: createBrain({ policy: { sfw: true } })
+personas/kai.md: no frontmatter: a persona file starts with its config between two --- lines
+settings.yaml › pacing.replySplitChance: Number must be less than or equal to 1 (got 1.5)
+settings.yaml › pacng: unknown key (did you mean "pacing"?)
+no file personas/sky.md
 ```
 
 A key the schema doesn't know is always an error, with the nearest known key (an edit distance of 2 at most). To stop
@@ -498,12 +501,32 @@ on problems, throw a `ConfigError(file, issues, warnings)`: its message lists th
 
 For a config check command (none of them starts anything or touches the network):
 
-- **`personaWarnings(persona, channels)`**: what is valid but probably wrong: a time zone that is no city's (an
-  abbreviation or a fixed offset), a weekday over 20 hours online, under an hour a day on average, more than every
-  other day skipped, one of `channels` that no span ever includes (its DMs would wait forever), and no text provider.
-- **`personaReport(persona, { shared, now, status? })`**: lines describing what is in effect: its prompt file, what it
-  is doing now (or `status`), today's and tomorrow's agenda, its settings that differ from `shared`, its models, its
-  character and today's mood.
-- **`samplePrompt({ persona, identity?, style?, channel, extraLines?, now, policy? })`**: the system prompt of a sample DM turn on
-  `channel`, built by the brain itself on a throwaway in-memory store. Offline at `now`, it is taken a minute into the
-  next span on that channel, so the lines about its day show.
+- **`personaWarnings(persona, channels)`**: what is valid but probably wrong in a persona: a time zone that is no
+  city's (an abbreviation or a fixed offset), a weekday over 20 hours online, under an hour a day on average, more than
+  every other day skipped, and one of `channels` that no span ever includes (its DMs would wait forever).
+- **`settingsWarnings(settings)`**: the same for settings: a reply that may be written again more than once
+  (`pacing.burst.maxRestarts`), and no text provider.
+- **`personaReport(persona, { settings, now, status? })`**: lines describing what is in effect: its prompt's length,
+  what it is doing now (or `status`), today's and tomorrow's agenda, today's
+  interruptions and its models.
+- **`samplePrompt({ persona, settings, identity?, style?, channel, extraLines?, now, policy? })`**: the system prompt of
+  a sample DM turn on `channel`, built by the brain itself on a throwaway in-memory store. Offline at `now`, it is
+  taken a minute into the next span on that channel, so the lines about its day show.
+
+## Coming from 0.1.0-beta.1
+
+| Before | Now |
+| --- | --- |
+| `<id>.yaml`, its prompt in `<id>.md` | `<id>.md`: the YAML as its frontmatter, the prompt after it |
+| `_shared.yaml` | Gone: each persona's config is its own. Settings go to each brain (one object for all, or one of their own); a limit every persona keeps goes in `policy.rules` |
+| `prompt: robin.md` | The file's body, or `parsePersona`'s `prompt` |
+| `window: { start, end, skipDayChance }` | `schedule: { skipDayChance, days: { mon-sun: { online: [{ start, end }] } } }` (the same hours drawn) |
+| `chattiness: quiet` | Gone: say in the prompt how much it talks in group chats; with the group-chat gate on, how readily it speaks is its brain's `decisions.groupChatGate.chimeInAt` (`2.2` was quiet's, `1.7` easygoing's, `1.2` talkative's) |
+| `sfw: true` | `createBrain({ policy: { sfw: true } })` |
+| `character.facts`, `interests`, `boundaries` | In the prompt, in your words |
+| `character.moods` | Gone: soulframe picks no mood. A mood that follows what happens is planned ([roadmap](./roadmap.md)) |
+| `settings:` in a persona's file or `_shared.yaml` | `parseSettings`, then `createBrain({ settings })` and `llmsFor` |
+| `parsePersonas({ shared, personas, channels, readPrompt })` | `parsePersona({ config, prompt, channels })` per persona |
+| `createReplyQueue({ persona, brain, runtime, act })` | `createReplyQueue({ brain, runtime, act })`: the persona and settings are the brain's |
+| `personaReport(persona, { shared, now })` | `personaReport(persona, { settings, now })` |
+| The provider and budget warnings of `personaWarnings` | `settingsWarnings(settings)` |
