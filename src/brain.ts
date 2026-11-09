@@ -181,6 +181,13 @@ export interface Brain {
 	 */
 	incoming(channel: Channel, externalId: string, name: string, message: string | IncomingMessage, at?: number): Decision;
 	/**
+	 * A message its account sent them on `channel` from outside the reply queue (typed by hand, say), now unless `at`
+	 * says when, so later turns read it in the history as its own. Creates the person if this is the first message
+	 * between them. It changes nothing in the reply queue: a turn already owed still goes ahead. The queue records what
+	 * it sends itself: don't pass those here. Answers the person, or undefined (nothing recorded) when they are denied.
+	 */
+	outgoing(channel: Channel, externalId: string, name: string, text: string, at?: number): Person | undefined;
+	/**
 	 * What to do now in the conversation with the person on `channel`. Stores nothing it says (the reply queue records
 	 * each message once sent), nor what it wrote and decided until the turn's `keep` is called. `invitation`: a pending
 	 * group-chat invitation's name, heeded only where `channel.invitations`; `extraLines`: the app's lines for this turn
@@ -519,6 +526,13 @@ export function createBrain({
 				return { kind: 'final', person, messages: [STOP_ACK] };
 			}
 			return { kind: 'reply', person: store.personById(person.id) };
+		},
+
+		outgoing({ id: channel }, externalId, name, text, at = now()) {
+			if (store.isDenied(channel, externalId)) return undefined;
+			const person = store.person(persona.id, channel, externalId) ?? store.createPerson(persona.id, channel, externalId, name);
+			store.addMessage(person.id, channel, 'out', text, at);
+			return person;
 		},
 
 		async compose(personId, channel, options = {}) {

@@ -418,6 +418,7 @@ The application's content policy: soulframe applies none of its own beyond `Chan
 ```ts
 interface Brain {
 	incoming(channel: Channel, externalId: string, name: string, message: string | IncomingMessage, at?: number): Decision;
+	outgoing(channel: Channel, externalId: string, name: string, text: string, at?: number): Person | undefined;
 	compose(personId: number, channel: Channel, options?: {
 		invitation?: string;
 		extraLines?: (person: Person) => readonly string[];
@@ -436,6 +437,10 @@ interface Brain {
   `memory.conversationGapHours` of silence, and runs the code's stop check (and, where `channel.adult`, its under-18
   check), on their own words only. Answers a `Decision`. `message` may carry photos and link cards
   (`IncomingMessage`): they are looked at in the turn, by `compose` or `assess`, once.
+- **`outgoing`**: a message its account sent them from outside the reply queue (typed by hand, say), now unless `at`
+  says when. Later turns read it in the history as the persona's own. Creates the person on a first message. It does
+  not touch the reply queue, so a turn already owed still goes ahead, and it is not for what the queue sends, which the
+  queue records itself. Answers the person, or `undefined` (nothing recorded) when they are denied.
 - **`compose`**: the DM turn for the person, now. Runs the typed checks when enabled, builds the prompt and calls the
   model with `task: 'directMessage'`. It stores nothing it says (the reply queue records each message once sent), nor,
   until the turn's `keep()` is called, what it wrote and decided: the rewritten notes on the person and on itself, a
