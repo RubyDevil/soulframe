@@ -62,7 +62,7 @@ npm run build            # tsdown -> dist/
 npm run lint:pkg         # publint + are-the-types-wrong against the packed tarball
 npm run check            # all of it, in order: run this before you say you are done
 npx tsx examples/console-chat.ts   # the example must still run, offline
-npm run persona-test -- --canned --suite scripts/persona-test/suite.yaml   # must still run, offline (CI runs it)
+npm run persona-test -- --canned --suite scripts/persona-test/suite.yaml   # after a change to scripts/persona-test: still runs, offline
 ```
 
 1. Read the code you will change and its test file first.

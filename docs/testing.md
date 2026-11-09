@@ -215,8 +215,8 @@ suite from the repository's Actions tab, with the repository secret `LLM_API_KEY
 and `LLM_MODEL` (optionally `LLM_JUDGE_MODEL`). Its inputs choose the suite, the scenarios, the runs, the personas,
 the models and the settings; `baseline_run` is the id of an earlier run of the workflow (from its URL), whose results
 it compares with. Run it on `main`, then on your branch with that run's id. The summary is the job's summary, and the
-results are kept as the `persona-test` artifact for 90 days. CI runs the suite with `--canned` on every change, so it
-keeps working.
+results are kept as the `persona-test` artifact for 90 days. It never runs on its own: CI only type-checks the
+script; `--canned` checks that it still runs, offline.
 
 ## The example
 

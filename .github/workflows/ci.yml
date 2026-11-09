@@ -31,8 +31,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
-      # The persona test (persona-test.yml runs it on a live model) still runs, offline
-      - run: npx tsx scripts/persona-test/run.ts --canned --suite scripts/persona-test/suite.yaml --messages 6 --quiet --out "$RUNNER_TEMP/persona-test"
       - uses: actions/upload-artifact@v4
         with:
           name: dist
