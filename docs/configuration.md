@@ -1,6 +1,6 @@
 # Configuration
 
-A persona is two things: its **config**, the data the code computes with (its id, name, time zone, hours and moods),
+A persona is two things: its **config**, the data the code computes with (its id, name, time zone and hours),
 and its **prompt**, free Markdown: who it is, how it talks, what it knows. `parsePersona({ config, prompt, channels })`
 checks the two, from wherever your app keeps them. The one file format soulframe reads, and only if you want it, is
 a Markdown file per persona with its config as YAML frontmatter (`loadPersonas`, `parsePersonaMarkdown`).
@@ -15,7 +15,6 @@ Everything below is taken from the package's schemas (`src/config/personas.ts`, 
 - [The config](#the-config)
 - [The prompt](#the-prompt)
 - [`schedule`](#schedule)
-- [`moods`](#moods)
 - [Your own loader](#your-own-loader)
 - [`settings`](#settings): [`llm`](#llm), [`models`](#models), [`perception`](#perception), [`decisions`](#decisions),
   [`memory`](#memory), [`relationship`](#relationship), [`pacing`](#pacing), [`context`](#context), [`retries`](#retries)
@@ -57,10 +56,6 @@ schedule:
           chance: 0.7
         - start: ["20:00", "21:00"]
           end: ["00:30", "01:30"]
-moods:
-  - cheerful
-  - mood: a little sleepy
-    weight: 0.5
 ---
 
 You are Robin, 29, living in a small coastal town with a ginger cat called Biscuit. You work in a bookshop and
@@ -84,8 +79,8 @@ conversations: a busy reason about school is then refused (see [`schedule`](#sch
 
 ## The config
 
-Only what the code computes with: who the persona is to the code, its hours and their time zone, and the moods it
-draws one of each day. Everything it says is its prompt's; how its brain runs is its [settings](#settings).
+Only what the code computes with: who the persona is to the code, and its hours and their time zone. Everything it
+says is its prompt's; how its brain runs is its [settings](#settings).
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
@@ -93,7 +88,6 @@ draws one of each day. Everything it says is its prompt's; how its brain runs is
 | `name` | string, 1 to 32 characters | required | The name it goes by: in its identity line, and how group chats and the typed checks name it. |
 | `timezone` | IANA time zone | required | e.g. `America/Toronto`. Checked with `Intl`; a near miss gets a suggestion. |
 | `schedule` | [schedule](#schedule) | required | Its hours by weekday. |
-| `moods` | list of up to 12 [moods](#moods) | `[]` | One picked per day by weight; none for no mood line. |
 
 A key the schema doesn't know is an error, with the nearest known one; a key the 0.1 betas read says where it went
 (see [Coming from 0.1.0-beta.1](#coming-from-010-beta1)).
@@ -163,20 +157,6 @@ schedule:
       online:
         - start: ["19:00", "20:00"]
           end: ["23:00", "00:30"]
-```
-
-## `moods`
-
-A mood is a string of 1 to 80 characters (weight 1) or `{ mood, weight }`, `weight` a number of 0 or more (default 1).
-One is picked per day by weight, seeded by the persona and the agenda day of its online time, so it holds through a
-night past midnight and after a restart. It ends the time line of a DM turn and a group-chat line ("Your mood today:
-...").
-
-```yaml
-moods:
-  - cheerful
-  - mood: a little sleepy
-    weight: 0.5
 ```
 
 ## Your own loader
@@ -528,7 +508,7 @@ For a config check command (none of them starts anything or touches the network)
   (`pacing.burst.maxRestarts`), and no text provider.
 - **`personaReport(persona, { settings, now, status? })`**: lines describing what is in effect: its prompt's length,
   what it is doing now (or `status`), today's and tomorrow's agenda, today's
-  interruptions, its models and its moods with today's.
+  interruptions and its models.
 - **`samplePrompt({ persona, settings, identity?, style?, channel, extraLines?, now, policy? })`**: the system prompt of
   a sample DM turn on `channel`, built by the brain itself on a throwaway in-memory store. Offline at `now`, it is
   taken a minute into the next span on that channel, so the lines about its day show.
@@ -544,7 +524,7 @@ For a config check command (none of them starts anything or touches the network)
 | `chattiness: quiet` | Gone: say in the prompt how much it talks in group chats; with the group-chat gate on, how readily it speaks is its brain's `decisions.groupChatGate.chimeInAt` (`2.2` was quiet's, `1.7` easygoing's, `1.2` talkative's) |
 | `sfw: true` | `createBrain({ policy: { sfw: true } })` |
 | `character.facts`, `interests`, `boundaries` | In the prompt, in your words |
-| `character.moods` | `moods` |
+| `character.moods` | Gone: soulframe picks no mood. A mood that follows what happens is planned ([roadmap](./roadmap.md)) |
 | `settings:` in a persona's file or `_shared.yaml` | `parseSettings`, then `createBrain({ settings })` and `llmsFor` |
 | `parsePersonas({ shared, personas, channels, readPrompt })` | `parsePersona({ config, prompt, channels })` per persona |
 | `createReplyQueue({ persona, brain, runtime, act })` | `createReplyQueue({ brain, runtime, act })`: the persona and settings are the brain's |

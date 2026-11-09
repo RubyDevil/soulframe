@@ -18,11 +18,11 @@ const CLASHING = { 'mon-sun': { online: [{ start: ['19:00', '19:30'], end: ['22:
 describe('a persona config', () => {
 	it('loads with its fields, its prompt trimmed, and the defaults filled in', () => {
 		const persona = personaOf(testPersona(), { prompt: '\n  A voice.\n\n' });
-		expect(persona).toEqual({ id: 'test', name: 'Test', timezone: 'UTC', schedule: ScheduleSchema.parse(everyDay(['19:00', '19:00'], ['23:00', '23:00'])), moods: [], prompt: 'A voice.' });
+		expect(persona).toEqual({ id: 'test', name: 'Test', timezone: 'UTC', schedule: ScheduleSchema.parse(everyDay(['19:00', '19:00'], ['23:00', '23:00'])), prompt: 'A voice.' });
 	});
 
-	it('holds only what the code computes with: no settings, no character, no file path', () => {
-		expect(Object.keys(test()).sort()).toEqual(['id', 'moods', 'name', 'prompt', 'schedule', 'timezone']);
+	it('holds only what the code computes with: no settings, no character, no moods, no file path', () => {
+		expect(Object.keys(test()).sort()).toEqual(['id', 'name', 'prompt', 'schedule', 'timezone']);
 	});
 
 	it('refuses a config that is not a mapping, and a prompt that is not text', () => {
@@ -49,10 +49,10 @@ describe('a persona config', () => {
 	});
 
 	it('refuses every key it does not know, the app\'s roster keys of the old layout too, with the nearest one', () => {
-		expect(issuesOf(testPersona({ nmae: 'Test', forum: { username: 'test_bot' }, mood: ['chill'] }))).toEqual([
+		expect(issuesOf(testPersona({ nmae: 'Test', forum: { username: 'test_bot' }, timezon: 'UTC' }))).toEqual([
 			'nmae: unknown key (did you mean "name"?)',
 			'forum: unknown key',
-			'mood: unknown key (did you mean "moods"?)',
+			'timezon: unknown key (did you mean "timezone"?)',
 		]);
 	});
 
@@ -63,26 +63,11 @@ describe('a persona config', () => {
 			"prompt: is no path any more: the prompt is the text after the frontmatter (parsePersona's `prompt`)",
 			"chattiness: no longer read: say how much it talks in group chats in its prompt (with the group-chat gate on, how readily it speaks is its brain's decisions.groupChatGate.chimeInAt)",
 			"sfw: is the brain's policy now: createBrain({ policy: { sfw: true } })",
-			'character: no longer read: write its facts, interests and boundaries in its prompt; its moods are `moods`',
+			'character: no longer read: write its facts, interests and boundaries in its prompt (moods are gone)',
 			"settings: are its brain's now, never part of a persona: createBrain({ settings }), read with parseSettings",
 		]);
 		// A window in place of a schedule: the schedule is missing, and the window says how to write it
 		expect(issuesOf(testPersona({ schedule: undefined, window: old.window }))).toEqual(['schedule: Required', expect.stringMatching(/^window: no longer read/)]);
-	});
-});
-
-describe('moods', () => {
-	it('take a word (weight 1) or a mood with its weight', () => {
-		expect(test({ moods: ['chill', { mood: 'sleepy', weight: 0.5 }, { mood: 'curious' }] }).moods).toEqual([
-			{ mood: 'chill', weight: 1 },
-			{ mood: 'sleepy', weight: 0.5 },
-			{ mood: 'curious', weight: 1 },
-		]);
-	});
-
-	it('refuses an empty mood, a negative weight and more than 12', () => {
-		expect(issuesOf(testPersona({ moods: [{ mood: 'chill', weight: -1 }] }))).toHaveLength(1);
-		expect(issuesOf(testPersona({ moods: Array.from({ length: 13 }, (_, i) => `mood ${i}`) }))).toEqual([expect.stringMatching(/^moods: Array must contain at most 12 element\(s\)/)]);
 	});
 });
 
@@ -95,9 +80,9 @@ describe('a persona file (parsePersonaMarkdown)', () => {
 	const parse = (text: string, source?: string) => parsePersonaMarkdown(text, { id: 'test', channels: ['forum'], ...(source && { source }) });
 
 	it('reads its config from the frontmatter and its prompt from the rest, its id from its name', () => {
-		const { persona, issues } = parse(markdown(fileConfig({ moods: ['chill'] }), 'You are Test.\n\nYou like *rain*.\n'));
+		const { persona, issues } = parse(markdown(fileConfig({ name: 'Tess' }), 'You are Tess.\n\nYou like *rain*.\n'));
 		expect(issues).toEqual([]);
-		expect(persona).toMatchObject({ id: 'test', name: 'Test', moods: [{ mood: 'chill', weight: 1 }], prompt: 'You are Test.\n\nYou like *rain*.' });
+		expect(persona).toMatchObject({ id: 'test', name: 'Tess', prompt: 'You are Tess.\n\nYou like *rain*.' });
 	});
 
 	it('takes an id in the frontmatter only when it is its own', () => {
@@ -198,7 +183,7 @@ describe('the example persona file', () => {
 	it('loads as written, from disk (examples/personas/robin.md, shown in docs/configuration.md)', () => {
 		const loaded = loadPersonas({ dir: fileURLToPath(new URL('../examples/personas', import.meta.url)), channels: { robin: ['chat'] }, adult: true });
 		expect(loaded.issues).toEqual([]);
-		expect(loaded.personas[0]).toMatchObject({ id: 'robin', name: 'Robin', timezone: 'Europe/Lisbon', moods: [{ mood: 'cheerful', weight: 1 }, { mood: 'a little sleepy', weight: 0.5 }] });
+		expect(loaded.personas[0]).toMatchObject({ id: 'robin', name: 'Robin', timezone: 'Europe/Lisbon' });
 		expect(loaded.personas[0]!.prompt).toMatch(/^You are Robin, 29,[^]*kindly\.$/);
 	});
 });

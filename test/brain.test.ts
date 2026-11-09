@@ -6,7 +6,7 @@ import { DEFAULT_SETTINGS, HOUR, MINUTE, type Settings } from '../src/settings.j
 import { ScheduleSchema } from '../src/config/hours.js';
 import type { Llm, LlmMessage } from '../src/llm.js';
 import type { IncomingMessage, PreviewLink } from '../src/perception.js';
-import { ADULTS_ONLY_RULE, AWARE_PROMPT, BREAK_INVITE_PROMPT, dateTimeText, directMessageTimePrompt, dmCheckInput, identityPrompt, MINOR_CAUTION_PROMPT, moodText, rulesPrompt, SFW_RULE } from '../src/prompts.js';
+import { ADULTS_ONLY_RULE, AWARE_PROMPT, BREAK_INVITE_PROMPT, dateTimeText, directMessageTimePrompt, dmCheckInput, identityPrompt, MINOR_CAUTION_PROMPT, rulesPrompt, SFW_RULE } from '../src/prompts.js';
 import { seededRng } from '../src/rng.js';
 import { MINOR_EXIT, STOP_ACK } from '../src/safety.js';
 import { addDays, parseClock, zonedToUtc } from '../src/schedule.js';
@@ -828,7 +828,7 @@ describe('typed checks (settings.decisions)', () => {
 	});
 });
 
-describe('settings, moods and relationship', () => {
+describe('settings and relationship', () => {
 	const turn = (reply: string, fields: Record<string, unknown> = {}) => JSON.stringify({ reply, notes: null, self: null, action: 'none', ...fields });
 	/**
 	 * A brain for a persona with these extra fields of its config, its `settings` (as written) given to the brain, and the
@@ -907,25 +907,6 @@ describe('settings, moods and relationship', () => {
 		expect(await posts.brain.composePost(postChannel(300), { rules: '', examples: [], recent: [] })).toBe('Happy to chat about music. https://example.org/chat');
 		expect(posts.seen[0]![0]!.content).not.toContain('No links in the post.');
 		expect(seen[0]![0]!.content).not.toContain(rulesPrompt(TEST_POLICY.rules));
-	});
-
-	it('keeps one mood through the night, at the end of the prompt, and none without moods', async () => {
-		const { dm } = withPersona({ moods: ['chill', 'playful', 'curious'] });
-		const first = (await dm('hey')).system;
-		const second = (await dm('you there?')).system;
-		const mood = /Your mood today: (\w+)\./.exec(first)?.[1];
-		expect(mood).toBeDefined();
-		expect(first.endsWith(moodText(mood, true))).toBe(true);
-		expect(second.endsWith(moodText(mood, true))).toBe(true);
-		expect((await withPersona({}).dm('hey')).system).not.toContain('Your mood today');
-	});
-
-	it('says the mood never changes the rules only when its prompt has rules', async () => {
-		const { dm, brain, seen } = withPersona({ moods: ['chill'] }, turn('hey you'), {});
-		expect((await dm('hey', OPEN_DM)).system.endsWith(moodText('chill', false))).toBe(true);
-		expect((await dm('hey')).system.endsWith(moodText('chill', true))).toBe(true);
-		await brain.composeGroupChatLine({ ...groupChannel('Trip planning'), adult: false }, [{ name: 'Sam', text: 'hi Robin', mine: false }], false, false);
-		expect(seen.at(-1)![0]!.content.endsWith(moodText('chill', false))).toBe(true);
 	});
 
 	it('counts conversations after a long silence, and tells the model how well they know each other', async () => {
@@ -1048,14 +1029,6 @@ describe('settings, moods and relationship', () => {
 		expect(await prompts({ timeSince: false })).toEqual({ dm: on.dm.replace(gaps, ''), chat: on.chat.replace(silence, '') });
 	});
 
-	it('gives a group chat the same mood as DMs that night', async () => {
-		const { dm, brain, seen } = withPersona({ moods: ['chill', 'playful', 'curious'] }, turn('hey'));
-		const mood = /Your mood today: (\w+)\./.exec((await dm('hey')).system)?.[1];
-		await brain.composeGroupChatLine(groupChannel('Trip planning'), [{ name: 'Sam', text: 'hi Robin', mine: false }], false, false);
-		expect(mood).toBeDefined();
-		expect(seen.at(-1)![0]!.content.endsWith(moodText(mood, true))).toBe(true);
-	});
-
 	it("tells it each channel's where-text and note in DMs and group chats, and no note where the channel has none", async () => {
 		const { dm, brain, seen } = withPersona({});
 		expect((await dm('hey', DM.forum)).system).toContain(identityPrompt('Robin', TEST_IDENTITY, DM.forum));
@@ -1122,7 +1095,6 @@ describe('the day, from its agenda', () => {
 		},
 	};
 	const zone = 'Europe/London';
-	const MOOD = moodText('quietly cheerful', true);
 	/** Local time on Sunday 1 November 2026 and the days after. */
 	const at = (days: number, clock: string) => zonedToUtc(addDays({ year: 2026, month: 11, day: 1 }, days), parseClock(clock), zone);
 	const [SUN, MON, TUE, WED] = [0, 1, 2, 3];
@@ -1131,7 +1103,7 @@ describe('the day, from its agenda', () => {
 
 	/** Lena with these settings, the clock the test sets, and `dm`: Sam writes at one time and it answers at another. */
 	const lena = (settings: Record<string, unknown> = {}) => {
-		const own = personaOf({ id: 'lena', name: 'Lena', timezone: zone, schedule: SCHEDULE, moods: ['quietly cheerful'] }, { prompt: 'You are dry and warm.' });
+		const own = personaOf({ id: 'lena', name: 'Lena', timezone: zone, schedule: SCHEDULE }, { prompt: 'You are dry and warm.' });
 		const clock = { now: 0 };
 		const store = memoryStore(() => clock.now);
 		const seen: LlmMessage[][] = [];
@@ -1174,11 +1146,11 @@ describe('the day, from its agenda', () => {
 
 	it('tells it about its break from work, and that their messages waited', async () => {
 		expect(timeLine(await onBreak())).toBe(
-			`It is Tuesday, November 3, 12:41 PM for you. Their last message was 25 minutes ago. You last wrote to them 2 days ago. These messages came in while you were at work (from 12:16 PM); you're only seeing them now. Right now you're at work, on a short break until about 12:55 PM, so you only have a few minutes. After that you're back at work until about 5:30 PM. You'll be online again today around 8:00 PM. ${AWARE_PROMPT}${MOOD}`,
+			`It is Tuesday, November 3, 12:41 PM for you. Their last message was 25 minutes ago. You last wrote to them 2 days ago. These messages came in while you were at work (from 12:16 PM); you're only seeing them now. Right now you're at work, on a short break until about 12:55 PM, so you only have a few minutes. After that you're back at work until about 5:30 PM. You'll be online again today around 8:00 PM. ${AWARE_PROMPT}`,
 		);
 	});
 
-	it('leaves out exactly the text each context setting turns off, and with all of them off only the time and the mood', async () => {
+	it('leaves out exactly the text each context setting turns off, and with all of them off only the time', async () => {
 		const on = await onBreak();
 		for (const part of [TIME, GAPS, AWAY, NOW, UPCOMING, RELATIONSHIP]) expect(on).toContain(part);
 		expect(await onBreak({ context: { awayContext: false } })).toBe(on.replace(AWAY, ''));
@@ -1188,7 +1160,7 @@ describe('the day, from its agenda', () => {
 		expect(await onBreak({ context: { awayContext: false, situation: false, upcoming: false } })).toBe(on.replace(`${AWAY}${NOW}${UPCOMING} ${AWARE_PROMPT}`, ''));
 		const none = await onBreak({ context: { awayContext: false, situation: false, upcoming: false, relationship: false, timeSince: false } });
 		expect(none).toBe(on.replace(RELATIONSHIP, '').replace(`${GAPS}${AWAY}${NOW}${UPCOMING} ${AWARE_PROMPT}`, ''));
-		expect(timeLine(none)).toBe(`${TIME}${MOOD}`);
+		expect(timeLine(none)).toBe(TIME);
 	});
 
 	it('says they waited while it was away when no busy block covers their message, with its day when that was another', async () => {
@@ -1212,7 +1184,7 @@ describe('the day, from its agenda', () => {
 
 	it('says nothing of its day outside its online time', async () => {
 		const now = at(TUE, '15:00');
-		expect(timeLine(await lena().dm(now))).toBe(directMessageTimePrompt({ rules: true, localTime: dateTimeText(now, zone), gaps: { theirLast: 0, yourLast: null }, mood: 'quietly cheerful' }));
+		expect(timeLine(await lena().dm(now))).toBe(directMessageTimePrompt({ localTime: dateTimeText(now, zone), gaps: { theirLast: 0, yourLast: null } }));
 	});
 
 	it('asks it to wrap up a DM in the last 10 minutes of a span (the last third of a shorter one), last, and not without what it is doing now', async () => {
@@ -1232,7 +1204,7 @@ describe('the day, from its agenda', () => {
 		expect(time.startsWith('It is Wednesday, November 4, 12:05 AM for you. The last line in the chat was 4 minutes ago.')).toBe(true);
 		expect(time).toContain("Today you're at work from 8:50 AM.");
 		expect(time).not.toContain(LOGGING_OFF);
-		expect(time.endsWith(`${AWARE_PROMPT}${MOOD}`)).toBe(true);
+		expect(time.endsWith(AWARE_PROMPT)).toBe(true);
 	});
 });
 

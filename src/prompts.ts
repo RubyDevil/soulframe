@@ -17,8 +17,6 @@
  *      DMs, how things stand with the person); a DM turn and a group-chat decision end with the time line: the time
  *      and its day, what it is doing now and next, from its agenda (schedule.ts). A post has none. What changes on
  *      every call goes last, so a provider's prompt cache can reuse the rest.
- * Its mood for the day (`moods` in its config, picked in mood.ts) ends the time line, since it changes from one day
- * to the next.
  *
  * The sizes and models these prompts use (notes, history, models per task) are in `settings.ts`.
  *
@@ -283,13 +281,6 @@ export const dayPrompt = (
 };
 
 /**
- * Its mood for the day (`moods`), appended to the time line since it changes. That puts it after
- * `rulesPrompt`, so with `rules` (a rules block in the prompt) it says the rules still win.
- */
-export const moodText = (mood: string | null | undefined, rules: boolean) =>
-	mood ? ` Your mood today: ${mood}. Let it color how you write, without announcing it${rules ? '; it never changes the rules you never break.' : '.'}` : '';
-
-/**
  * The time line of a DM turn: its local time, then how long since the person last wrote (they may have written
  * while it was away) and since it last wrote to them (`null` when it never has), then its day. Without `gaps`
  * (settings.context.timeSince off) or `day`, those are left out.
@@ -298,17 +289,11 @@ export const directMessageTimePrompt = ({
 	localTime,
 	gaps,
 	day,
-	mood,
-	rules,
 }: {
 	localTime: string;
 	gaps?: { theirLast: number | null; yourLast: number | null };
 	/** `dayPrompt`, while online. */
 	day?: string;
-	/** Its mood for the day (mood.ts moodOf), last. */
-	mood?: string | null;
-	/** The prompt has a rules block (`moodText`). */
-	rules: boolean;
 }) =>
 	[
 		`It is ${localTime} for you.`,
@@ -317,11 +302,11 @@ export const directMessageTimePrompt = ({
 		day,
 	]
 		.filter(Boolean)
-		.join(' ') + moodText(mood, rules);
+		.join(' ');
 
 /** The time line of a group-chat decision: its local time, how long the chat has been silent (none without `silentFor`: settings.context.timeSince off, or no line with a time), then its day (`dayPrompt`). */
-export const groupChatTimePrompt = ({ localTime, silentFor, day, mood, rules }: { localTime: string; silentFor?: number; day?: string; mood?: string | null; rules: boolean }) =>
-	[`It is ${localTime} for you.`, silentFor !== undefined ? `The last line in the chat was ${ago(silentFor)}.` : '', day].filter(Boolean).join(' ') + moodText(mood, rules);
+export const groupChatTimePrompt = ({ localTime, silentFor, day }: { localTime: string; silentFor?: number; day?: string }) =>
+	[`It is ${localTime} for you.`, silentFor !== undefined ? `The last line in the chat was ${ago(silentFor)}.` : '', day].filter(Boolean).join(' ');
 
 // ---------------------------------------------------------------------------------------------------
 // A direct message turn (`brain.compose`)

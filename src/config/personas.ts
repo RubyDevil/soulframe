@@ -6,8 +6,8 @@
  * of them).
  *
  * The config holds only what the code computes with: who it is to the code (its id and name), its hours and their
- * time zone, and the moods it draws one of each day. Everything it says is its prompt's; how its brain runs (models,
- * limits, pacing) is the brain's settings (settings.ts), never a persona's. The app says which channels each persona is on: the names
+ * time zone. Everything it says is its prompt's; how its brain runs (models, limits, pacing) is the brain's settings
+ * (settings.ts), never a persona's. The app says which channels each persona is on: the names
  * its hours' `on:` may use.
  *
  * Every problem is returned, never thrown, each with its path (after its source, when given); a key the schema
@@ -35,16 +35,6 @@ const isTimeZone = (timeZone: string) => {
 	}
 };
 
-const MoodSchema = z.union([
-	z
-		.string()
-		.trim()
-		.min(1)
-		.max(80)
-		.transform((mood) => ({ mood, weight: 1 })),
-	z.object({ mood: z.string().trim().min(1).max(80), weight: z.number().min(0).default(1) }),
-]);
-
 /** A persona's config: only what the code computes with. */
 const PersonaConfigSchema = z.object({
 	/** The key of everything stored about it and the seed of its days (`PERSONA_ID`); a persona file's name gives it. */
@@ -55,8 +45,6 @@ const PersonaConfigSchema = z.object({
 	timezone: z.string().refine(isTimeZone, (zone) => ({ message: `not an IANA time zone${suggest(zone, Intl.supportedValuesOf('timeZone'))}` })),
 	/** Its hours by weekday: online time, breaks and busy blocks (config/hours.ts). */
 	schedule: ScheduleSchema,
-	/** One picked per day (the agenda day of its online time), by weight, the same after a restart (mood.ts); none for no mood line. */
-	moods: z.array(MoodSchema).max(12).default([]),
 });
 
 /** With `adult`, refusing busy reasons about school too (config/hours.ts refuseSchool). */
@@ -77,7 +65,7 @@ const MOVED: Readonly<Record<string, string>> = {
 	prompt: "is no path any more: the prompt is the text after the frontmatter (parsePersona's `prompt`)",
 	chattiness: "no longer read: say how much it talks in group chats in its prompt (with the group-chat gate on, how readily it speaks is its brain's decisions.groupChatGate.chimeInAt)",
 	sfw: "is the brain's policy now: createBrain({ policy: { sfw: true } })",
-	character: 'no longer read: write its facts, interests and boundaries in its prompt; its moods are `moods`',
+	character: 'no longer read: write its facts, interests and boundaries in its prompt (moods are gone)',
 	settings: 'are its brain\'s now, never part of a persona: createBrain({ settings }), read with parseSettings',
 };
 

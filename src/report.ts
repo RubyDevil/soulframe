@@ -1,6 +1,6 @@
 /**
  * What an app's config check says of one persona and of the settings its brain runs with: their warnings, what is in
- * effect for it (what it is doing now, today's and tomorrow's agenda, its models and today's mood), and the
+ * effect for it (what it is doing now, today's and tomorrow's agenda, its models), and the
  * system prompt of a sample DM turn, built by the brain itself. Nothing is started and nothing touches the network.
  */
 
@@ -8,7 +8,6 @@ import { createBrain, type Policy } from './brain.js';
 import type { Channel, ChannelId } from './channel.js';
 import type { Persona, PersonaConfig } from './config/personas.js';
 import { providerSet, type Llm, type LlmMessage } from './llm.js';
-import { moodOf } from './mood.js';
 import { interruptionsOn } from './pacing.js';
 import { clockText } from './prompts.js';
 import { addDays, agendaOn, isOn, localDateOf, nextSpan, onlineMinutesByWeekday, spanAt, weekdayOf, WEEKDAYS, type DayAgenda, type LocalDate } from './schedule.js';
@@ -84,7 +83,7 @@ const nowText = (persona: PersonaConfig, now: number) => {
 /**
  * A config check's lines on one persona, after the app's header line, with the settings its brain runs with: its
  * prompt's length, now (`status` in place of what its hours say, when the app gives one), today, tomorrow, today's
- * interruptions (`pacing.interruptions`), its models and its moods with today's.
+ * interruptions (`pacing.interruptions`) and its models.
  */
 export function personaReport(persona: Persona, { settings, now, status }: { settings: Settings; now: number; status?: string }): string[] {
 	const today = localDateOf(now, persona.timezone);
@@ -100,7 +99,6 @@ export function personaReport(persona: Persona, { settings, now, status }: { set
 			.filter(([task, model]) => task !== 'vision' || model.model)
 			.map(([task, model]) => `${task} ${(provider && (model.model ?? settings.llm.model)) || '(canned)'}`)
 			.join(', ')}`,
-		`  moods: ${persona.moods.length}; today: ${moodOf(persona, now) ?? 'no mood'}`,
 	];
 }
 

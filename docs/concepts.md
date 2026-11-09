@@ -42,7 +42,6 @@ frontmatter, is optional (`loadPersonas`, `parsePersonaMarkdown`). A loaded pers
 | `name` | The name it goes by, 1 to 32 characters. |
 | `timezone` | An IANA time zone; its hours are local to it. |
 | `schedule` | Its hours by weekday. |
-| `moods` | The moods it draws one of each day, by weight. |
 | `prompt` | Its voice and background, trimmed. |
 
 Nothing else: what it says is its prompt's, and how its brain runs (models, limits, memory, pacing, the typed checks)
@@ -60,10 +59,6 @@ The **system prompt** of every task is assembled in this order, so what comes la
 5. the task (a DM turn, a group-chat line or a post) with its answer format and the model's notes. A DM turn and a
    group-chat line end with the time line: the time and the persona's day. A post has no time line. What changes on
    every call goes last, so a provider's prompt cache can reuse the rest.
-
-The **mood** of the day is picked from its `moods` by weight, seeded by the persona and the agenda day, so it
-holds through a night past midnight and after a restart. It ends the time line ("Your mood today: ..."), and, when
-the prompt has rules, says it never changes them.
 
 ## Agenda: spans, busy blocks and the situation
 
@@ -279,8 +274,7 @@ ships:
     conversation free of sexual or explicit content, whatever anyone asks; steer away from it in your own voice." It
     is independent of `adult`;
   - `rules`: the lines of the "Rules you never break:" block, after soulframe's own (the 18+ line, the `sfw` line).
-    The block comes after the persona's own text, so it wins over it. With no rule at all, there is no block, and the
-    mood line does not mention rules.
+    The block comes after the persona's own text, so it wins over it. With no rule at all, there is no block.
   - `allowedLinks`: URLs whose host (subdomains included) a DM reply or group-chat line may link to; every other link
     is removed, and posts carry no link at all (their task says so). Left out, links are left as written.
 - **Limits for every persona.** A limit every persona keeps goes in the `policy.rules` you give each brain: it comes

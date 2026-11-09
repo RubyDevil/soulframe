@@ -50,13 +50,12 @@ describe('the report on a persona', () => {
 		expect(reportOf({ schedule: daily({ start: ['11:00', '11:00'], end: ['13:00', '13:00'] }) }, 'paused')).toContain('  now: paused');
 	});
 
-	it('lists its prompt, its models and its moods', () => {
-		const lines = reportOf({ schedule: daily(evening), moods: ['chill'] });
+	it('lists its prompt and its models', () => {
+		const lines = reportOf({ schedule: daily(evening) });
 		expect(lines[0]).toBe('  prompt: 8 characters');
 		expect(lines).toContain('  models: directMessage chat-model, groupChat chat-model, post chat-model');
-		expect(lines.at(-1)).toBe('  moods: 1; today: chill');
+		expect(lines.at(-1)).toBe('  models: directMessage chat-model, groupChat chat-model, post chat-model');
 		expect(reportOf({ schedule: daily(evening) }, undefined, settingsOf())).toContain('  models: directMessage (canned), groupChat (canned), post (canned)');
-		expect(reportOf({ schedule: daily(evening) }).at(-1)).toBe('  moods: 0; today: no mood');
 	});
 });
 

@@ -45,7 +45,7 @@ package offers, a Markdown file per persona with its config as YAML frontmatter.
 
 ```ts
 function parsePersona(options: {
-	config: unknown;                    // id, name, timezone, schedule, moods?
+	config: unknown;                    // id, name, timezone, schedule
 	prompt: string;                     // the persona's voice and background, in Markdown
 	channels: readonly ChannelId[];     // the channels it is on: the names its hours' `on:` may use
 	adult?: boolean;                    // for 18+ conversations: busy reasons about school are refused
@@ -133,7 +133,6 @@ interface PersonaConfig {
 	name: string;
 	timezone: string;
 	schedule: ScheduleConfig;                     // its hours by weekday
-	moods: { mood: string; weight: number }[];
 }
 ```
 
@@ -332,8 +331,7 @@ function personaReport(persona: Persona, options: { settings: Settings; now: num
 ```
 
 Indented lines describing the persona, run with `settings` (its brain's): its prompt's length, now (or `status`),
-today's and tomorrow's agenda, today's
-interruptions, its models, and its moods with today's.
+today's and tomorrow's agenda, today's interruptions and its models.
 
 ### `samplePrompt`
 

@@ -11,8 +11,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **A persona is its config and its prompt.** `parsePersona({ config, prompt, channels })` checks a persona from
   wherever the application keeps it (its own loader, a database, values in code) and answers `{ persona?, issues }`,
-  never throwing. The config (`PersonaConfig`) holds only what the code computes with: `id`, `name`, `timezone`,
-  `schedule` and `moods`; everything else about the persona is its prompt, free Markdown. A loaded persona is a
+  never throwing. The config (`PersonaConfig`) holds only what the code computes with: `id`, `name`, `timezone` and
+  `schedule`; everything else about the persona is its prompt, free Markdown. A loaded persona is a
   `Persona` (`PersonaConfig` with its `prompt`).
 - **Persona files with frontmatter**, the one file format the package reads, and only if you want it: `<id>.md`, its
   config as YAML frontmatter between two `---` lines, its prompt the rest. `parsePersonaMarkdown(text, { id, channels })`
@@ -48,8 +48,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **BREAKING: `loadPersonas` reads `<dir>/<id>.md`** (frontmatter and prompt in one file) and answers
   `{ issues, personas }`, without `shared`.
 - **BREAKING: `personaReport(persona, { settings, now, status? })`** takes the settings its brain runs with in place
-  of `shared`: no `overrides` lines; `prompt:` gives the prompt's length; `moods:` replaces
-  `character:`.
+  of `shared`: no `overrides` lines; `prompt:` gives the prompt's length; no `character:`
+  line.
 - `personaWarnings` warns only about the persona (its time zone, hours and channels); `samplePrompt` takes `settings`.
 
 ### Removed
@@ -61,9 +61,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `schedule: { skipDayChance, days: { mon-sun: { online: [{ start, end }] } } }`, which draws exactly the hours the
   window did.
 - **BREAKING: `chattiness`, `sfw` and `character` in a persona's config.** `chattiness` is gone (say in the prompt how
-  much it talks in group chats; the gate's threshold is `chimeInAt`), `sfw` moved to `Policy.sfw`, `character.moods`
-  to `moods`; write the persona's facts, interests and boundaries in its prompt, in your words (the fixed "Facts about you that never change…",
+  much it talks in group chats; the gate's threshold is `chimeInAt`) and `sfw` moved to `Policy.sfw`; write the
+  persona's facts, interests and boundaries in its prompt, in your words (the fixed "Facts about you that never change…",
   "Things you're into…" and "Things you won't do…" blocks are gone).
+- **BREAKING: the mood of the day** (`character.moods`): the seeded daily pick and the "Your mood today: …" sentence
+  that ended DM and group-chat time lines are gone, and so is `personaReport`'s mood. A mood that follows what happens,
+  shared by everyone the persona talks with, is on the roadmap.
 - **BREAKING: `settings:` in a persona's file**, and the split of settings into per-persona and global groups.
 - **BREAKING: `parsePersonas`** (use `parsePersona` per persona), the `Chattiness` type, the
   `prompt:` path key (the prompt is the file's body), and `PersonaConfig`'s `promptText`, `source` and `settings`.

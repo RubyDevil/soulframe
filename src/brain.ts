@@ -2,7 +2,6 @@ import type { Channel, ChannelId } from './channel.js';
 import type { Persona } from './config/personas.js';
 import { DISABLED_DECISIONS, probabilityOf, scoreOf, type Decisions, type DecisionsUse, type Question } from './decisions.js';
 import type { Llm, LlmMessage } from './llm.js';
-import { moodOf } from './mood.js';
 import { splitReply } from './pacing.js';
 import { clip, lookedCard, mediaOf, seenIn, timeLimited, unseen, type IncomingMessage, type MessageMedia, type PreviewLink, type SeenImage, type SeenLink } from './perception.js';
 import { hostOf, isStopRequest, MINOR_EXIT, minorSignal, STOP_ACK, stripForeignLinks } from './safety.js';
@@ -607,8 +606,6 @@ export function createBrain({
 						? { theirLast: theirLast ? now() - theirLast.at : null, yourLast: yourLast ? now() - yourLast.at : null }
 						: undefined,
 					day: dayLines(channel.id, { firstNew: theirNew[0]?.at }),
-					mood: moodOf(persona, now()),
-					rules: rules.length > 0,
 				}),
 				minorCaution: caution,
 				// Counted by the code, never by the model; it changes nothing in the rules or the checks
@@ -694,7 +691,7 @@ export function createBrain({
 			// Nothing about timing when no line says when it was written
 			const silentFor = settings.context.timeSince && lastAt ? now() - lastAt : undefined;
 			const rules = rulesOn(chat);
-			const time = groupChatTimePrompt({ localTime: localTime(), silentFor, day: dayLines(chat.id), mood: moodOf(persona, now()), rules: rules.length > 0 });
+			const time = groupChatTimePrompt({ localTime: localTime(), silentFor, day: dayLines(chat.id) });
 			const transcript = groupChatTranscript(recent, persona.name);
 			// The group-chat gate, if any, ran before this (wantsToSpeak, settings.decisions.groupChatGate): here the model decides
 			const task = groupChatTask({
