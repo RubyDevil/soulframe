@@ -23,7 +23,7 @@ import type { ChannelId } from '../channel.js';
 import { isPlainObject } from '../merge.js';
 import { TRAITS, type Traits } from '../prompts.js';
 import { refuseSchool, ScheduleSchema, type ScheduleConfig } from './hours.js';
-import { describe, inFile, shownValue, suggest, unknownKeyIssues, unknownKeys } from './issues.js';
+import { schemaProblems, sourced, suggest, unknownKeyProblem, unknownKeys, type Problem } from './issues.js';
 
 /** A persona's id: the key of everything stored about it and the seed of its days; a persona file's name without .md. */
 export const PERSONA_ID = /^[a-z0-9-]{2,32}$/;
@@ -47,11 +47,15 @@ const MoodSchema = z.union([
 	z.object({ mood: z.string().trim().min(1).max(80), weight: z.number().min(0).default(1) }),
 ]);
 
-/** A trait's values (prompts.ts TRAITS): a scale's whole numbers, from its least to its most, else the names of its values. */
-export const traitSchema =(sentences: Readonly<Record<string, string>>) => {
+/** A trait's values (prompts.ts TRAITS): a scale's whole numbers when every key is one, else the names of its values. */
+export const traitSchema = (sentences: Readonly<Record<string, string>>) => {
 	const values = Object.keys(sentences);
-	const scale = values.map(Number);
-	return scale.every(Number.isInteger) ? z.number().int().min(Math.min(...scale)).max(Math.max(...scale)) : z.enum(values as [string, ...string[]]);
+	if (!values.every((value) => /^-?\d+$/.test(value))) return z.enum(values as [string, ...string[]]);
+	// Only the numbers it has a sentence for, so a gap in a scale is refused rather than saying nothing
+	return z
+		.number()
+		.int()
+		.refine((value) => Object.hasOwn(sentences, String(value)), { message: `one of ${values.join(', ')}` });
 };
 
 /** The optional traits, each one of its values (prompts.ts TRAITS, which this is built from); a trait left out says nothing. */
@@ -90,7 +94,7 @@ export interface Persona extends PersonaConfig {
 
 /** Keys that the persona files of the 0.1 betas held, each with where it went: an error saying so, rather than only "unknown key". */
 const MOVED: Readonly<Record<string, string>> = {
-	window: 'no longer read: write the same hours as a schedule, `schedule: { days: { mon-sun: { online: [{ start, end }] } } }`',
+	window: 'no longer read: write the same hours as a schedule, `schedule: { skipDayChance, days: { mon-sun: { online: [{ start, end }] } } }`',
 	prompt: "is no path any more: the prompt is the text after the frontmatter (parsePersona's `prompt`)",
 	chattiness: 'moved to traits.chattiness',
 	sfw: "is the brain's policy now: createBrain({ policy: { sfw: true } })",
@@ -130,19 +134,20 @@ export function parsePersona({
 	/** Where it came from, before each problem ("robin.md › schedule: Required"). */
 	source?: string;
 }): Parsed {
-	const where = (problem: string) => (source === undefined ? problem : inFile(source, problem));
-	if (!isPlainObject(config)) return { issues: [where(describe([], "the config must be a mapping (the persona's id, name, timezone, schedule…)", undefined))] };
+	const issues = (problems: Problem[]) => ({ issues: problems.map((problem) => sourced(source, problem)) });
+	if (!isPlainObject(config)) return issues([{ path: [], message: "the config must be a mapping (the persona's id, name, timezone, schedule…)" }]);
 	const parsed = (adult ? ADULT_SCHEMA : PersonaConfigSchema).safeParse(config);
-	const problems = parsed.success ? [] : parsed.error.issues.filter((issue) => issue.code !== 'unrecognized_keys').map((issue) => describe(issue.path, issue.message, shownValue(issue, config)));
+	const problems = schemaProblems(parsed.error, config);
+	// A key the 0.1 betas read says where it went
+	const movedTo = (path: (string | number)[]) => (path.length === 1 && Object.hasOwn(MOVED, path[0]!) ? MOVED[path[0]!] : undefined);
 	const unknown = unknownKeys(PersonaConfigSchema, config);
-	const movedTo = (path: (string | number)[]) => (path.length === 1 ? MOVED[path[0]!] : undefined);
-	problems.push(...unknown.flatMap(({ path }) => (movedTo(path) ? [describe(path, movedTo(path)!, undefined)] : [])), ...unknownKeyIssues(unknown.filter(({ path }) => !movedTo(path)), []));
-	if (typeof prompt !== 'string') problems.push(describe(['prompt'], "must be text: the persona's voice and background, in Markdown", undefined));
+	problems.push(...unknown.map((key) => ({ path: key.path, message: movedTo(key.path) ?? unknownKeyProblem(key).message })));
+	if (typeof prompt !== 'string') problems.push({ path: ['prompt'], message: "must be text: the persona's voice and background, in Markdown" });
 	// Its hours may only name its own channels
 	for (const { path, name } of parsed.success ? unknownChannels(parsed.data.schedule, channels) : []) {
-		problems.push(describe(path, `"${name}" is not one of this persona's channels (${channels.join(', ') || 'none'})${suggest(name, channels)}`, undefined));
+		problems.push({ path, message: `"${name}" is not one of this persona's channels (${channels.join(', ') || 'none'})${suggest(name, channels)}` });
 	}
-	if (!parsed.success || problems.length) return { issues: problems.map(where) };
+	if (!parsed.success || problems.length) return issues(problems);
 	return { persona: { ...parsed.data, prompt: prompt.trim() }, issues: [] };
 }
 
@@ -158,14 +163,14 @@ const splitFrontmatter = (text: string): { yaml: string; body: string } | string
 /**
  * A persona from the text of its Markdown file: its config as YAML frontmatter, between the `---` line the file starts
  * with and the next one, and its prompt the rest. `id` is its id (the file's name without .md): the frontmatter may
- * leave it out, and must not say another. Otherwise as `parsePersona`; problems of the file as a whole start
- * "<source>: ", those of a key "<source> › <path>: ".
+ * leave it out, and must not say another. Otherwise as `parsePersona`; as with every parser here, a problem of the file
+ * as a whole starts "<source>: ", one of a key "<source> › <path>: ".
  */
 export function parsePersonaMarkdown(
 	text: string,
 	{ id, channels, adult, source }: { id: string; channels: readonly ChannelId[]; adult?: boolean; source?: string },
 ): Parsed {
-	const whole = (problem: string) => ({ issues: [source === undefined ? problem : `${source}: ${problem}`] });
+	const whole = (message: string) => ({ issues: [sourced(source, { path: [], message })] });
 	const split = splitFrontmatter(text);
 	if (typeof split === 'string') return whole(split);
 	let config: unknown;
@@ -176,10 +181,7 @@ export function parsePersonaMarkdown(
 		return whole(error instanceof Error ? error.message : String(error));
 	}
 	if (!isPlainObject(config)) return whole("its frontmatter must be a mapping (the persona's config: name, timezone, schedule…)");
-	if (config.id !== undefined && config.id !== id) {
-		const problem = describe(['id'], `${JSON.stringify(config.id)} but its id is "${id}" (its file's name without .md)`, undefined);
-		return { issues: [source === undefined ? problem : inFile(source, problem)] };
-	}
+	if (config.id !== undefined && config.id !== id) return { issues: [sourced(source, { path: ['id'], message: `${JSON.stringify(config.id)} but its id is "${id}" (its file's name without .md)` })] };
 	return parsePersona({ config: { ...config, id }, prompt: split.body, channels, adult, source });
 }
 
@@ -198,9 +200,14 @@ export interface LoadedPersonas {
 	personas: Persona[];
 }
 
+/** What a 0.1 beta folder held beside the personas: what it may have set (sfw, limits, settings) is never quietly lost. */
+const SHARED_LEFT = "no longer read, and what it set applies to no persona: each persona's config is its own; settings go to createBrain({ settings }), sfw to its policy, a limit every persona keeps to policy.rules";
+
 /**
  * Reads <dir>/<id>.md for each key of `channels` (`parsePersonaMarkdown`), whose value lists the channel ids that
  * persona is on: the names its hours' `on:` may use. Never throws on a config problem: the caller reports `issues`.
+ * A file of the 0.1 betas' layout is a problem, so nothing it set is lost without a word: a `<id>.yaml` leaves its
+ * persona out, a `_shared.yaml` every persona.
  */
 export function loadPersonas({
 	dir,
@@ -216,26 +223,36 @@ export function loadPersonas({
 }): LoadedPersonas {
 	const issues: string[] = [];
 	const personas: Persona[] = [];
+	const shared = join(dir, '_shared.yaml');
+	const sharedLeft = files.exists(shared);
+	if (sharedLeft) issues.push(sourced(shared, { path: [], message: SHARED_LEFT }));
 	for (const [id, own] of Object.entries(channels)) {
 		const file = join(dir, `${id}.md`);
+		const old = join(dir, `${id}.yaml`);
 		if (!PERSONA_ID.test(id)) {
 			issues.push(`"${id}" is not a persona id: 2 to 32 of a-z, 0-9 and - (its file's name without .md)`);
 			continue;
 		}
+		const left = files.exists(old) ? `no longer read: write its config as the frontmatter of ${file}, its prompt after it` : undefined;
 		if (!files.exists(file)) {
-			issues.push(`no file ${file}`);
+			issues.push(`no file ${file}${left ? ` (${old} is ${left})` : ''}`);
+			continue;
+		}
+		if (left) {
+			issues.push(sourced(old, { path: [], message: left }));
 			continue;
 		}
 		let text: string;
 		try {
 			text = files.read(file);
 		} catch (error) {
-			issues.push(`${file}: can't read it (${(error as { code?: string }).code ?? String(error)})`);
+			issues.push(sourced(file, { path: [], message: `can't read it (${(error as { code?: string }).code ?? String(error)})` }));
 			continue;
 		}
 		const loaded = parsePersonaMarkdown(text, { id, channels: own, adult, source: file });
 		issues.push(...loaded.issues);
 		if (loaded.persona) personas.push(loaded.persona);
 	}
-	return { issues, personas };
+	// What _shared.yaml set may have applied to any of them
+	return { issues, personas: sharedLeft ? [] : personas };
 }

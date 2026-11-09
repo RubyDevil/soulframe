@@ -85,7 +85,9 @@ function loadPersonas(options: {
 ```
 
 Reads `<dir>/<id>.md` for each key of `channels` (`parsePersonaMarkdown`); `channels[id]` lists the channels that
-persona is on. Never throws on a config problem: the caller reports `issues`. `files` defaults to `nodeFiles`.
+persona is on. Never throws on a config problem: the caller reports `issues`. `files` defaults to `nodeFiles`. A file
+of the 0.1 betas' layout left in the folder is a problem, so nothing it set (`sfw`, shared limits, settings) is lost
+without a word: an `<id>.yaml` leaves its persona out, a `_shared.yaml` every persona.
 
 ### `nodeFiles`
 
@@ -361,7 +363,7 @@ interruptions, its models, and its moods with today's.
 ```ts
 function samplePrompt(options: {
 	persona: Persona;
-	settings?: Settings;
+	settings: Settings;
 	identity?: string;
 	style?: string;
 	channel: Channel;
@@ -431,7 +433,7 @@ over and you would rather not pick it up again' }` renders `"archive" when the c
 ```ts
 function createBrain(options: {
 	persona: Persona;
-	settings?: Settings;   // what it runs with (parseSettings); every default when left out
+	settings: Settings;    // what it runs with (parseSettings; parseSettings({}) for every default)
 	identity?: string;     // the phrase after its name in the identity line; none for the name alone
 	style?: string;        // a block on how it writes, after the identity line; none by default
 	runtime: Pick<Runtime, 'now' | 'rng' | 'store'>;  // its reply queue's runtime
@@ -955,7 +957,8 @@ One model client per persona id, each with the settings given for it (those its 
 `settings.llm`), against an
 OpenAI-compatible `/chat/completions` endpoint; the `meter` and the `concurrency` limit are shared by all. A persona in
 `keyless`, and in a dry run one without a provider, gets the canned model; without a provider outside a dry run it
-throws, naming every such persona. Requests time out after `llm.timeoutSeconds` and are retried once; past
+throws, naming every such persona. One meter and one limit spend one budget, so settings that disagree on
+`llm.dailyTokens`, `directMessageReserve` or `concurrency` throw too, naming each persona's value. Requests time out after `llm.timeoutSeconds` and are retried once; past
 `1 - llm.directMessageReserve` of the meter's limit only DMs and their photos are generated. A task left without a provider or a
 model rejects at once with a configuration error that the reply queue never retries: the person stays owed, for a
 start with the settings fixed (`reply_given_up` is audited with `reason: 'model_not_configured'`).

@@ -120,7 +120,7 @@ Then `POST_REQUEST` as one `user` message. A post has no time line: no local tim
 ### The persona prompt
 
 The persona's voice and background, in Markdown: the text after its persona file's frontmatter (`body`,
-config/personas.ts:155), or `parsePersona`'s `prompt` (`prompt.trim`, config/personas.ts:146). It (`Persona.prompt`) is
+config/personas.ts:160), or `parsePersona`'s `prompt` (`prompt.trim`, config/personas.ts:151). It (`Persona.prompt`) is
 first in every system prompt, trimmed. Written by the operator; soulframe adds nothing to it. An empty prompt leaves
 the part out. Facts about the persona, its interests and its own limits are written here, in the operator's words.
 
@@ -163,7 +163,7 @@ export const traitsPrompt = (traits: Traits | undefined) =>
 				.join(' ');
 ```
 
-From the persona's optional `traits` (`TraitsSchema`, config/personas.ts:58, :76), built from the table of their
+From the persona's optional `traits` (`TraitsSchema`, config/personas.ts:62, :80), built from the table of their
 sentences, `TRAITS` (prompts.ts:72-83): one fixed sentence for each value of each trait, in the table's order, as one
 paragraph. Nothing is drawn: the same traits always give the same text. All tasks, system prompt, part 2; empty, and
 left out, without traits. The one trait so far:
@@ -993,7 +993,7 @@ Everything else is inserted as it is, without quotes or delimiters:
 
 ## What switches parts on and off
 
-### `settings.context` (settings.ts:433-449)
+### `settings.context` (settings.ts:442-458)
 
 "false leaves that text out of the prompt, and nothing else changes". All default to `true`.
 
@@ -1007,7 +1007,7 @@ Everything else is inserted as it is, without quotes or delimiters:
 
 With `situation`, `upcoming` and (in a DM turn) the away line all absent, `AWARE_PROMPT` goes too.
 
-### `settings.memory` (settings.ts:239-289)
+### `settings.memory` (settings.ts:248-298)
 
 - `personNotes` (280), `selfNotes` (800): the numbers in the answer format's notes and self lines.
 - `historyMessages` (20): how many `user` and `assistant` messages follow a DM turn's system prompt.
@@ -1020,7 +1020,7 @@ With `situation`, `upcoming` and (in a DM turn) the away line all absent, `AWARE
 
 The model, provider, `maxTokens`, `temperature` and `jsonMode` per task. No text changes.
 
-### `settings.decisions` (settings.ts:163-236)
+### `settings.decisions` (settings.ts:163-245)
 
 Off by default (`enabled: false`). When on:
 
@@ -1059,8 +1059,8 @@ Off by default (`enabled: false`). When on:
 
 These three prompts were captured by running the package: a persona from `parsePersona` with only `id: robin`,
 `name: Robin`, `timezone: UTC` and a schedule online from 19:00 to 23:00 every day, whose prompt reads "Robin is warm,
-curious and a little dry, and writes short lowercase texts."; `createBrain({ persona, runtime: { store, rng, now },
-llm })` with no `settings` (every default), `identity`, `style`, `policy` or `decisions`; a model that records what it
+curious and a little dry, and writes short lowercase texts."; `createBrain({ persona, settings, runtime: { store, rng,
+now }, llm })` with every default setting (`parseSettings({})`) and no `identity`, `style`, `policy` or `decisions`; a model that records what it
 is sent; the clock at Saturday, November 7, 2026, 8:00 PM UTC. No channel is `adult`, no `policy.sfw`, no traits, no
 mood, no notes yet.
 

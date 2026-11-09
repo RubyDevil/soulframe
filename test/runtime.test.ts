@@ -75,7 +75,7 @@ describe('reply scheduling', () => {
 		vi.useFakeTimers();
 		const { runtime, store } = setUp();
 		const persona = config.personas[0]!;
-		const brain = createBrain({ persona, settings: config.settings.robin, identity: TEST_IDENTITY, runtime, llm: { complete: async () => 'hello' } });
+		const brain = createBrain({ persona, settings: config.settings.robin!, identity: TEST_IDENTITY, runtime, llm: { complete: async () => 'hello' } });
 		const queue = createReplyQueue({ brain, runtime, act: async () => undefined });
 		const log = vi.spyOn(runtime, 'log').mockImplementation(() => undefined);
 		const timer = vi.spyOn(globalThis, 'setTimeout');
@@ -109,7 +109,7 @@ describe('DM lifecycle logs', () => {
 		const store = memoryStore();
 		const runtime = createRuntime({ store, dryRun, haltFile: 'unused', rng: () => 0 });
 		vi.spyOn(runtime, 'log').mockImplementation(() => undefined);
-		const brain = createBrain({ persona, identity: TEST_IDENTITY, runtime, llm: { complete: async () => JSON.stringify({ reply: acceptInvite ? 'joining' : 'not now', acceptInvite, action }) } });
+		const brain = createBrain({ settings: DEFAULT_SETTINGS, persona, identity: TEST_IDENTITY, runtime, llm: { complete: async () => JSON.stringify({ reply: acceptInvite ? 'joining' : 'not now', acceptInvite, action }) } });
 		const queue = createReplyQueue({ brain, runtime, act: async () => undefined });
 		const join = vi.fn(async () => undefined);
 		const conversation = { channel: NOTED_DM, typing: vi.fn(async () => undefined), send: vi.fn(async () => undefined) };
@@ -137,7 +137,7 @@ describe('DM lifecycle logs', () => {
 		const store = memoryStore();
 		const runtime = createRuntime({ store, dryRun: false, haltFile: 'unused', rng: () => 0 });
 		vi.spyOn(runtime, 'log').mockImplementation(() => undefined);
-		const brain = createBrain({ persona, identity: TEST_IDENTITY, runtime, llm: { complete: async () => JSON.stringify({ reply: 'sure', acceptInvite: true }) } });
+		const brain = createBrain({ settings: DEFAULT_SETTINGS, persona, identity: TEST_IDENTITY, runtime, llm: { complete: async () => JSON.stringify({ reply: 'sure', acceptInvite: true }) } });
 		const compose = vi.spyOn(brain, 'compose');
 		const queue = createReplyQueue({ brain, runtime, act: async () => undefined });
 		const join = vi.fn(async () => undefined);
@@ -168,7 +168,7 @@ describe('DM lifecycle logs', () => {
 		const store = memoryStore();
 		const runtime = createRuntime({ store, dryRun: false, haltFile: 'unused', rng: () => 0 });
 		const log = vi.spyOn(runtime, 'log').mockImplementation(() => undefined);
-		const brain = createBrain({ persona, identity: TEST_IDENTITY, runtime, llm: { complete: async () => JSON.stringify({ reply: replies ? 'private reply' : null }) } });
+		const brain = createBrain({ settings: DEFAULT_SETTINGS, persona, identity: TEST_IDENTITY, runtime, llm: { complete: async () => JSON.stringify({ reply: replies ? 'private reply' : null }) } });
 		const queue = createReplyQueue({ brain, runtime, act: async () => undefined });
 		const conversation = { channel: NOTED_DM, typing: vi.fn(async () => undefined), send: vi.fn(async () => undefined) };
 		try {
@@ -215,7 +215,7 @@ const withBreak = (breakOn?: ChannelId[]): Persona => ({
  * A queue at `now` (in open hours unless given) with a real brain and store (a new one unless given); `message` hands
  * it what someone wrote, as a persona does, and `halt` flips the halt switch.
  */
-const start = ({ decisions, now = EVENING, persona = utc.personas[0]!, settings, rng = () => 0, dryRun = false, store = memoryStore() }: { decisions?: Decisions; now?: number; persona?: Persona; settings?: Settings; rng?: Rng; dryRun?: boolean; store?: Store } = {}) => {
+const start = ({ decisions, now = EVENING, persona = utc.personas[0]!, settings = DEFAULT_SETTINGS, rng = () => 0, dryRun = false, store = memoryStore() }: { decisions?: Decisions; now?: number; persona?: Persona; settings?: Settings; rng?: Rng; dryRun?: boolean; store?: Store } = {}) => {
 	vi.useFakeTimers();
 	vi.setSystemTime(now);
 	let halted = false;

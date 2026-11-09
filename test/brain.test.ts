@@ -31,7 +31,7 @@ const setUp = (reply: string | ((messages: LlmMessage[]) => string), decisions?:
 			return typeof reply === 'string' ? reply : reply(messages);
 		},
 	};
-	const brain = createBrain({ persona, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => NOW }, llm, ...(decisions && { decisions }) });
+	const brain = createBrain({ settings: DEFAULT_SETTINGS, persona, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => NOW }, llm, ...(decisions && { decisions }) });
 	return { store, brain, seen };
 };
 
@@ -102,7 +102,7 @@ describe('brain', () => {
 	it("runs on its runtime's clock, read at each use", () => {
 		const store = memoryStore(() => NOW);
 		const runtime = { store, rng: () => 0.99, now: () => NOW };
-		const brain = createBrain({ persona, identity: TEST_IDENTITY, runtime, llm: { complete: async () => 'hey' } });
+		const brain = createBrain({ settings: DEFAULT_SETTINGS, persona, identity: TEST_IDENTITY, runtime, llm: { complete: async () => 'hey' } });
 		runtime.now = () => NOW + MINUTE;
 		const decision = brain.incoming(DM.forum, 'u-sam', 'Sam', 'hello');
 		if (decision.kind !== 'reply') throw new Error('expected a reply');
@@ -132,7 +132,7 @@ describe('brain', () => {
 		};
 		// Only a break, around NOW (9 PM in Toronto)
 		const schedule = ScheduleSchema.parse({ days: { 'mon-sun': { breaks: [{ start: ['20:55', '20:55'], minutes: [10, 10] }] } } });
-		const brain = createBrain({ persona: { ...persona, schedule }, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => NOW }, llm });
+		const brain = createBrain({ settings: DEFAULT_SETTINGS, persona: { ...persona, schedule }, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => NOW }, llm });
 		const decision = brain.incoming(DM.forum, 'invite-user', 'Sam', '[invited you to a group chat]');
 		if (decision.kind !== 'reply') throw new Error('expected a reply');
 		const turn = await brain.compose(decision.person.id, DM.forum, { invitation: 'Weekend trip' });
@@ -166,7 +166,7 @@ describe('brain', () => {
 	it("ends it for every persona at once: another one's turn already waiting for them sends nothing", async () => {
 		const { brain, store } = setUp('never sent');
 		const asked: LlmMessage[][] = [];
-		const sky = createBrain({ persona: { ...persona, id: 'sky' }, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => NOW }, llm: { complete: async (messages) => (asked.push(messages), 'hey you') } });
+		const sky = createBrain({ settings: DEFAULT_SETTINGS, persona: { ...persona, id: 'sky' }, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => NOW }, llm: { complete: async (messages) => (asked.push(messages), 'hey you') } });
 		const waiting = sky.incoming(DM.chat, '222', 'Kid', 'hey');
 		if (waiting.kind !== 'reply') throw new Error('expected a reply');
 		brain.incoming(DM.chat, '222', 'Kid', "i'm 15");
@@ -245,7 +245,7 @@ describe('turns', () => {
 		expect(seen[0]![0]!.content).not.toContain(TEST_STYLE);
 		const store = memoryStore(() => NOW);
 		const asked: LlmMessage[][] = [];
-		const styled = createBrain({ persona, identity: TEST_IDENTITY, style: TEST_STYLE, runtime: { store, rng: () => 0.99, now: () => NOW }, llm: { complete: async (messages) => (asked.push(messages), 'hey') } });
+		const styled = createBrain({ settings: DEFAULT_SETTINGS, persona, identity: TEST_IDENTITY, style: TEST_STYLE, runtime: { store, rng: () => 0.99, now: () => NOW }, llm: { complete: async (messages) => (asked.push(messages), 'hey') } });
 		const decision = styled.incoming(DM.forum, 'p1', 'Sam', 'hey');
 		if (decision.kind !== 'reply') throw new Error('expected a reply');
 		await styled.compose(decision.person.id, DM.forum);
@@ -295,7 +295,7 @@ describe('turns', () => {
 		// A client that would answer "stay quiet" to anything: it must not be asked
 		const decisions = createScriptedDecisions(() => 0);
 		const brain = createBrain({
-			persona, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.5, now: Date.now }, decisions,
+			persona, settings: DEFAULT_SETTINGS, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.5, now: Date.now }, decisions,
 			llm: { async complete() { completions++; return JSON.stringify({ reply: 'hey all!' }); } },
 		});
 		expect(brain.settings.decisions.enabled).toBe(false);
@@ -413,7 +413,7 @@ describe('photos and links', () => {
 				return look();
 			},
 		};
-		const brain = createBrain({ persona, ...(vision && { settings: SEEING }), identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => NOW }, llm, ...(previewLink && { previewLink }), ...(decisions && { decisions }) });
+		const brain = createBrain({ persona, settings: vision ? SEEING : DEFAULT_SETTINGS, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => NOW }, llm, ...(previewLink && { previewLink }), ...(decisions && { decisions }) });
 		const person = (message: string | IncomingMessage) => (brain.incoming(DM.chat, 'd1', 'Sam', message) as { person: Person }).person;
 		const compose = (id: number) => brain.compose(id, DM.chat);
 		const lastTheirs = () => turns.at(-1)!.at(-1)!.content;
@@ -673,7 +673,7 @@ describe('typed checks (settings.decisions)', () => {
 				return turn('yo');
 			},
 		};
-		const other = createBrain({ persona: { ...persona, id: 'sam' }, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => NOW }, llm });
+		const other = createBrain({ settings: DEFAULT_SETTINGS, persona: { ...persona, id: 'sam' }, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => NOW }, llm });
 		const theirs = other.incoming(DM.chat, 'd1', 'Sam', 'hello');
 		if (theirs.kind !== 'reply') throw new Error('expected a reply');
 		await other.compose(theirs.person.id, DM.chat);
@@ -1320,7 +1320,7 @@ describe('sfw (Policy.sfw)', () => {
 				return JSON.stringify({ reply: 'hey you' });
 			},
 		};
-		const brain = createBrain({ persona, identity: TEST_IDENTITY, runtime: { store: memoryStore(() => NOW), rng: () => 0.99, now: () => NOW }, llm, policy: { ...policy, ...(sfw && { sfw }) } });
+		const brain = createBrain({ settings: DEFAULT_SETTINGS, persona, identity: TEST_IDENTITY, runtime: { store: memoryStore(() => NOW), rng: () => 0.99, now: () => NOW }, llm, policy: { ...policy, ...(sfw && { sfw }) } });
 		/** The system prompts of a DM turn, a group-chat line and a post on these channels. */
 		const prompts = async ({ dm, chat, post }: { dm: Channel; chat: Channel; post: Channel }) => {
 			const decision = brain.incoming(dm, 'p1', 'Sam', 'hey');

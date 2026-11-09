@@ -231,7 +231,10 @@ What a brain runs with, never part of a persona: `createBrain({ persona, setting
 `llmsFor` for its model client. One settings object for every persona is the usual; a persona whose brain needs others
 (a slower typist, a cheaper model) gets its own. Keep them wherever your app keeps its config, and read them with
 `parseSettings(raw, { source })`: like the persona parsers it fills in every default, never throws, and answers every
-problem. A brain given no settings runs on the defaults.
+problem. `createBrain` needs them: `parseSettings({})` gives every default.
+
+The provider's budget is one for every persona, whatever their settings: `llm.dailyTokens`, `directMessageReserve` and
+`concurrency` must be the same in each (`llmsFor` refuses settings that disagree). The rest may differ by brain.
 
 `settings.yaml`, say:
 
@@ -519,10 +522,14 @@ None of `parsePersona`, `parsePersonaMarkdown`, `loadPersonas` and `parseSetting
   order asked for;
 - `parseSettings` answers `{ settings?, issues }`: no settings while there is any problem.
 
+A file the 0.1 betas read, left in the folder (`_shared.yaml`, an `<id>.yaml` beside its `<id>.md`), is a problem too:
+`loadPersonas` then loads no persona it may have set something for, so a shared `sfw` or limit is never quietly lost.
+
 What is valid but probably wrong is not their concern: [`personaWarnings` and `settingsWarnings`](#check-helpers) give
 those warnings.
 
-Each issue names its source and path, and the value it got when that helps:
+Each issue names its source and path, and the value it got when that helps: `<source> › <path>: …` for a key,
+`<source>: …` for the whole of it (a file with no frontmatter, a YAML error, a config that is no mapping):
 
 ```text
 personas/robin.md › schedule.days: no plan for sat, sun (add them, or "sat,sun: {}" for days with nothing)
@@ -549,7 +556,7 @@ For a config check command (none of them starts anything or touches the network)
 - **`personaReport(persona, { settings, now, status? })`**: lines describing what is in effect: its prompt's length,
   the sentences its traits add, what it is doing now (or `status`), today's and tomorrow's agenda, today's
   interruptions, its models and its moods with today's.
-- **`samplePrompt({ persona, settings?, identity?, style?, channel, extraLines?, now, policy? })`**: the system prompt of
+- **`samplePrompt({ persona, settings, identity?, style?, channel, extraLines?, now, policy? })`**: the system prompt of
   a sample DM turn on `channel`, built by the brain itself on a throwaway in-memory store. Offline at `now`, it is
   taken a minute into the next span on that channel, so the lines about its day show.
 

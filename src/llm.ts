@@ -212,11 +212,15 @@ export function createCannedLlm(rng: Rng): Llm {
 /** Whether a text provider is set: `llm.baseUrl`, or a text task's own `baseUrl` (never `models.vision`'s or `decisions.baseUrl`). */
 export const providerSet = ({ llm, models: { vision: _vision, ...text } }: Settings) => !!(llm.baseUrl || Object.values(text).some((model) => model.baseUrl));
 
+/** The settings that are one budget for every persona, as one meter and one limit spend it: never one of their own. */
+const BUDGET = ['dailyTokens', 'directMessageReserve', 'concurrency'] as const;
+
 /**
  * One model client per persona, by id, with the settings given for it (those its brain is given: one object for
  * every persona, or one of their own), so its `settings.models` apply (the meter, `llm.dailyTokens`, and the
  * `concurrency` limit stay shared). Canned lines for a persona in `keyless`, and in a dry run for one without a
- * provider: otherwise that is an error, naming every such persona.
+ * provider: otherwise that is an error, naming every such persona. Settings that disagree on the shared budget
+ * (`llm.dailyTokens`, `directMessageReserve`, `concurrency`) are an error too, naming each value.
  */
 export function llmsFor(
 	personas: readonly { id: string; settings: Settings }[],
@@ -224,13 +228,19 @@ export function llmsFor(
 		dryRun: boolean;
 		apiKeyOf: (envName: string) => string;
 		meter?: TokenMeter;
-		/** The most requests in flight at once, for every persona together (the global `llm.concurrency`). */
+		/** The most requests in flight at once, for every persona together (`llm.concurrency`, the same in every persona's settings). */
 		concurrency: number;
 		/** Personas whose model key is unset (the caller gives them in a dry run only). */
 		keyless?: ReadonlySet<string>;
 		rng?: Rng;
 	},
 ): Map<string, Llm> {
+	// One meter and one limit spend one budget: what each persona's settings say of it must agree
+	const differ = BUDGET.filter((key) => new Set(personas.map(({ settings }) => settings.llm[key])).size > 1);
+	if (differ.length) {
+		const values = personas.map(({ id, settings }) => `${id} ${differ.map((key) => settings.llm[key]).join('/')}`).join(', ');
+		throw new Error(`settings.llm.${differ.join(', ')} are one budget for every persona: give every persona the same (${values})`);
+	}
 	const noProvider = personas.filter((persona) => !providerSet(persona.settings)).map((persona) => persona.id);
 	if (noProvider.length && !dryRun) {
 		throw new Error(`Set settings.llm.baseUrl and a model in the config (a dry run uses canned lines); no provider for: ${noProvider.join(', ')}`);

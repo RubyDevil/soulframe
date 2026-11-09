@@ -7,7 +7,7 @@ import { splitReply } from './pacing.js';
 import { clip, lookedCard, mediaOf, seenIn, timeLimited, unseen, type IncomingMessage, type MessageMedia, type PreviewLink, type SeenImage, type SeenLink } from './perception.js';
 import { hostOf, isStopRequest, MINOR_EXIT, minorSignal, STOP_ACK, stripForeignLinks } from './safety.js';
 import { busyAt, fullyOnline, situationAt } from './schedule.js';
-import { DAY, DEFAULT_SETTINGS, HOUR, MINUTE, SECOND, type Settings } from './settings.js';
+import { DAY, HOUR, MINUTE, SECOND, type Settings } from './settings.js';
 import {
 	ADDRESSED_QUESTION,
 	ADULTS_ONLY_RULE,
@@ -176,7 +176,7 @@ export interface GroupChatLine {
 export interface Brain {
 	/** The persona it is the brain of, as `createBrain` was given it. */
 	readonly persona: Persona;
-	/** The settings it runs with, as `createBrain` was given them (every default without them): its reply queue reads them here. */
+	/** The settings it runs with, as `createBrain` was given them: its reply queue reads them here. */
 	readonly settings: Settings;
 	/**
 	 * A message they wrote on `channel` as `name` (the name they go by there: the person keeps the one of their newest
@@ -277,7 +277,7 @@ export interface Policy {
 
 export function createBrain({
 	persona,
-	settings = DEFAULT_SETTINGS,
+	settings,
 	identity,
 	style,
 	runtime,
@@ -289,10 +289,10 @@ export function createBrain({
 	/** Its config and prompt (`parsePersona`, `loadPersonas`). */
 	persona: Persona;
 	/**
-	 * What it runs with: models, limits, memory, pacing, the typed checks (`parseSettings`); every default when left out.
-	 * Its reply queue reads them from the brain, and its model client should be made with the same (`llmsFor`).
+	 * What it runs with: models, limits, memory, pacing, the typed checks (`parseSettings`; `parseSettings({})` for every
+	 * default). Its reply queue reads them from the brain; make its model client with the same (`llmsFor`).
 	 */
-	settings?: Settings;
+	settings: Settings;
 	/** The app's phrase on what the persona is, after its name in the identity line ("You are Robin, <identity>, chatting by text in …"); none for the name alone. */
 	identity?: string;
 	/** The app's block on how the persona writes, word for word after the identity line; none by default. */

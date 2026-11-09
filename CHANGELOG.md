@@ -25,13 +25,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   shows the sentences next to the prompt's length).
 - `parseSettings(raw, { source })`: the settings a brain runs with, read from wherever the application keeps them,
   every default filled in, every problem returned with its path (an unknown key with the nearest known one).
-- `createBrain({ settings })`, and `brain.persona` and `brain.settings`, which the reply queue reads.
+- `createBrain({ settings })` (required: `parseSettings({})` gives every default), and `brain.persona` and
+  `brain.settings`, which the reply queue reads.
 - `settingsWarnings(settings)`: the warnings about settings that `personaWarnings` used to give (`pacing.burst.maxRestarts`
   above 1, no text provider).
 - `Policy.sfw`: the safe-for-work rule, now the application's policy (`createBrain({ policy: { sfw: true } })`), in the
   same place in the rules block, after the 18+ line.
 - A key that a 0.1 beta persona file read (`window`, `prompt`, `chattiness`, `sfw`, `character`, `settings`) is refused
-  with where it went, not only as unknown.
+  with where it went, not only as unknown; a `_shared.yaml` or `<id>.yaml` left in the folder is reported by
+  `loadPersonas`, which then loads no persona it may have set something for (a shared `sfw` or limit is never lost
+  without a word).
+- `llmsFor` refuses settings that disagree on the budget every persona shares (`llm.dailyTokens`,
+  `directMessageReserve`, `concurrency`), naming each value.
 
 ### Changed
 
@@ -67,6 +72,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **BREAKING: `settings:` in a persona's file**, and the split of settings into per-persona and global groups.
 - **BREAKING: `parsePersonas`** (use `parsePersona` per persona), the `Chattiness` type (`Traits['chattiness']`), the
   `prompt:` path key (the prompt is the file's body), and `PersonaConfig`'s `promptText`, `source` and `settings`.
+
+### Fixed
+
+- A config key named like a built-in member of every object (`constructor`, `toString`, `valueOf`) was taken as known
+  and dropped without a word; it is refused as unknown like any other (`unknownKeys` too).
 
 ## [0.1.0-beta.1] - 2026-11-08
 

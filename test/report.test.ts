@@ -101,7 +101,7 @@ describe('the warnings on settings', () => {
 
 describe('the sample prompt', () => {
 	/** The time line of its system prompt on a DM channel. */
-	const timeLineOf = async (hours: typeof evening) => (await samplePrompt({ persona: persona({ schedule: daily(hours) }), identity: TEST_IDENTITY, channel: NOTED_DM, now })).split('\n\n').at(-1);
+	const timeLineOf = async (hours: typeof evening) => (await samplePrompt({ settings: TEXT, persona: persona({ schedule: daily(hours) }), identity: TEST_IDENTITY, channel: NOTED_DM, now })).split('\n\n').at(-1);
 	const rest = "Their last message was just now. You haven't written to them before. Right now you're free and online";
 
 	it('is built at its next span on the channel when it is offline, so the lines on its day show', async () => {
@@ -114,19 +114,19 @@ describe('the sample prompt', () => {
 	});
 
 	it("gives the app's identity phrase and style, where, the channel's note, the app's lines and the persona's traits", async () => {
-		const system = await samplePrompt({ persona: persona({ schedule: daily(evening), traits: { chattiness: 'talkative' } }), identity: TEST_IDENTITY, style: TEST_STYLE, channel: NOTED_DM, extraLines: () => ['A line the app adds.'], now });
+		const system = await samplePrompt({ settings: TEXT, persona: persona({ schedule: daily(evening), traits: { chattiness: 'talkative' } }), identity: TEST_IDENTITY, style: TEST_STYLE, channel: NOTED_DM, extraLines: () => ['A line the app adds.'], now });
 		expect(system).toContain(`A voice.\n\nYou are talkative in group chats.\n\nYou are Test, a guide made by Forum (https://forum.example), chatting by text in Forum direct messages. Forum shows everyone your name marked [bot].\n\n${TEST_STYLE}`);
 		expect(system).toContain('A line the app adds.');
 	});
 
 	it("follows the app's policy, and has no app rules without one", async () => {
-		const sample = (policy?: typeof TEST_POLICY) => samplePrompt({ persona: persona({ schedule: daily(evening) }), identity: TEST_IDENTITY, channel: NOTED_DM, now, ...(policy && { policy }) });
+		const sample = (policy?: typeof TEST_POLICY) => samplePrompt({ settings: TEXT, persona: persona({ schedule: daily(evening) }), identity: TEST_IDENTITY, channel: NOTED_DM, now, ...(policy && { policy }) });
 		expect(await sample(TEST_POLICY)).toContain('- Respect a no at once.');
 		expect(await sample()).not.toContain('Respect a no at once.');
 	});
 
 	it("runs with the settings it is given: the brain's own", async () => {
-		const sample = (settings?: ReturnType<typeof settingsOf>) => samplePrompt({ persona: persona({ schedule: daily(evening) }), channel: NOTED_DM, now, ...(settings && { settings }) });
+		const sample = (settings?: ReturnType<typeof settingsOf>) => samplePrompt({ persona: persona({ schedule: daily(evening) }), settings: settings ?? TEXT, channel: NOTED_DM, now });
 		expect(await sample()).toContain('at most 280 characters');
 		expect(await sample(settingsOf({ memory: { personNotes: 120 } }))).toContain('at most 120 characters');
 	});

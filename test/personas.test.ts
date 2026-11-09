@@ -35,12 +35,17 @@ describe('a persona config', () => {
 		expect(issuesOf({})).toEqual(['id: Required', 'name: Required', 'timezone: Required', 'schedule: Required']);
 	});
 
+	it("refuses a key named like one of an object's own (constructor, toString), as any other it doesn't know", () => {
+		expect(issuesOf(testPersona({ constructor: 'x', toString: true, traits: { valueOf: 1 } }))).toEqual(['constructor: unknown key', 'toString: unknown key', 'traits.valueOf: unknown key']);
+	});
+
 	it('refuses an id that is not one', () => {
 		expect(issuesOf(testPersona({ id: 'Robin Bot' }))).toEqual(['id: a persona id: 2 to 32 of a-z, 0-9 and - (got "Robin Bot")']);
 	});
 
-	it('names its source before each problem when given one', () => {
+	it('names its source before each problem when given one: "<source> › <path>" for a key, "<source>:" for the whole', () => {
 		expect(issuesOf(testPersona({ name: '' }), { source: 'test.md' })).toEqual(['test.md › name: String must contain at least 1 character(s) (got "")']);
+		expect(issuesOf('oops', { source: 'test.md' })).toEqual(["test.md: the config must be a mapping (the persona's id, name, timezone, schedule…)"]);
 	});
 
 	it('refuses every key it does not know, the app\'s roster keys of the old layout too, with the nearest one', () => {
@@ -54,7 +59,7 @@ describe('a persona config', () => {
 	it('says where each key of the 0.1 betas went, rather than only that it is unknown', () => {
 		const old = { window: { start: ['19:00', '19:00'], end: ['23:00', '23:00'] }, prompt: 'test.md', chattiness: 'quiet', sfw: true, character: { facts: [] }, settings: { pacing: {} } };
 		expect(issuesOf(testPersona(old))).toEqual([
-			'window: no longer read: write the same hours as a schedule, `schedule: { days: { mon-sun: { online: [{ start, end }] } } }`',
+			'window: no longer read: write the same hours as a schedule, `schedule: { skipDayChance, days: { mon-sun: { online: [{ start, end }] } } }`',
 			"prompt: is no path any more: the prompt is the text after the frontmatter (parsePersona's `prompt`)",
 			'chattiness: moved to traits.chattiness',
 			"sfw: is the brain's policy now: createBrain({ policy: { sfw: true } })",
@@ -109,13 +114,12 @@ describe('traits', () => {
 		expect([-1, 3, 1.5, '1'].map((value) => scale.safeParse(value).success)).toEqual([false, false, false, false]);
 		const fromOne = traitSchema({ 1: 'a', 2: 'b', 3: 'c', 4: 'd', 5: 'e' });
 		expect([0, 1, 5, 6].map((value) => fromOne.safeParse(value).success)).toEqual([false, true, true, false]);
-	});
-
-	it('ship only scales whose values follow on from each other', () => {
-		for (const sentences of Object.values(TRAITS)) {
-			const values = Object.keys(sentences).map(Number);
-			if (values.every(Number.isInteger)) expect(values).toEqual(values.map((_, i) => values[0]! + i));
-		}
+		// Only the values with a sentence: a gap in a scale is refused, never a trait that says nothing
+		const gap = traitSchema({ 1: 'a', 3: 'c' });
+		expect([1, 2, 3].map((value) => gap.safeParse(value).success)).toEqual([true, false, true]);
+		expect(gap.safeParse(2).error?.issues[0]?.message).toBe('one of 1, 3');
+		// Names that only look like numbers are names
+		expect(traitSchema({ '': 'a', '0x1': 'b' }).safeParse('0x1').success).toBe(true);
 	});
 });
 
@@ -187,7 +191,7 @@ describe('the persona folder (loadPersonas)', () => {
 	});
 
 	it('says which persona has no file, refuses an id that is no file name, and says when a file cannot be read', () => {
-		const unreadable: ConfigFiles = { exists: () => true, read: () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); } };
+		const unreadable: ConfigFiles = { exists: (path) => path.endsWith('.md'), read: () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); } };
 		expect(loadPersonas({ dir, channels: { robin: ['forum'], 'Bad Id': ['forum'] }, files: virtual({}) }).issues).toEqual([
 			`no file ${at('robin.md')}`,
 			'"Bad Id" is not a persona id: 2 to 32 of a-z, 0-9 and - (its file\'s name without .md)',
@@ -202,6 +206,20 @@ describe('the persona folder (loadPersonas)', () => {
 		expect(loaded.issues[0]).toBe(`${at('robin.md')} › schedule.days.mon-sun.online.1: can overlap online.0 (19:00 to 23:00)`);
 		expect(loaded.issues[1]).toMatch(new RegExp(`^${at('sky.md').replace(/\\/g, '\\\\')}: `));
 		expect(loaded.personas.map((persona) => persona.id)).toEqual(['kai']);
+	});
+
+	it("reports a 0.1 beta file left in the folder, and loads nothing it may have set for (an <id>.yaml its persona, _shared.yaml every one)", () => {
+		const both = { [at('robin.md')]: markdown(fileConfig({ name: 'Robin' })), [at('kai.md')]: markdown(fileConfig({ name: 'Kai' })) };
+		const oldRobin = loadPersonas({ dir, channels: { robin: ['forum'], kai: ['forum'] }, files: virtual({ ...both, [at('robin.yaml')]: 'sfw: true' }) });
+		expect(oldRobin.issues).toEqual([`${at('robin.yaml')}: no longer read: write its config as the frontmatter of ${at('robin.md')}, its prompt after it`]);
+		expect(oldRobin.personas.map((persona) => persona.id)).toEqual(['kai']);
+		const shared = loadPersonas({ dir, channels: { robin: ['forum'], kai: ['forum'] }, files: virtual({ ...both, [at('_shared.yaml')]: 'sfw: true' }) });
+		expect(shared.issues).toEqual([expect.stringMatching(new RegExp(`^${at('_shared.yaml').replace(/\\/g, '\\\\')}: no longer read, and what it set applies to no persona: `))]);
+		expect(shared.personas).toEqual([]);
+		// Not migrated at all: the old file says where its config goes
+		expect(loadPersonas({ dir, channels: { sky: ['forum'] }, files: virtual({ [at('sky.yaml')]: 'name: Sky' }) }).issues).toEqual([
+			`no file ${at('sky.md')} (${at('sky.yaml')} is no longer read: write its config as the frontmatter of ${at('sky.md')}, its prompt after it)`,
+		]);
 	});
 
 	it('refuses school as a busy reason for 18+ conversations (adult)', () => {

@@ -11,7 +11,7 @@
  */
 
 import { z } from 'zod';
-import { describe, inFile, shownValue, unknownKeyIssues, unknownKeys } from './config/issues.js';
+import { schemaProblems, sourced, unknownKeyProblem, unknownKeys } from './config/issues.js';
 
 /** [least, most]: the bounds a value is kept within, or drawn from evenly (soulframe's own drawn ranges are `drawn`, with a shape). */
 export const range = (min: number, max: number, floor = 0) =>
@@ -227,7 +227,16 @@ export const SettingsSchema = z
 						 * persona that rarely speaks unasked (about 2.2 waits for a clear opening), lower for a chatty one (about
 						 * 1.2 takes even an optional remark).
 						 */
-						chimeInAt: z.number({ invalid_type_error: 'one number: a threshold per chattiness is gone (give a brain its own)' }).min(0).max(3).default(1.7),
+						chimeInAt: z
+							.number({
+								// The 0.1 betas' one per chattiness says where it went; any other wrong value gets the usual message
+								errorMap: (issue, ctx) => ({
+									message: issue.code === 'invalid_type' && issue.received === 'object' ? 'one number: a threshold per chattiness is gone (give a brain its own)' : ctx.defaultError,
+								}),
+							})
+							.min(0)
+							.max(3)
+							.default(1.7),
 						/** The most gate checks per group chat per hour (counted by `wantsToSpeak`, per its `chatId`); past it, the model decides as before. */
 						perHour: z.number().int().min(1).default(120),
 					})
@@ -486,13 +495,10 @@ export const DEFAULT_SETTINGS: Settings = SettingsSchema.parse(undefined);
  */
 export function parseSettings(raw: unknown, { source }: { source?: string } = {}): { settings?: Settings; issues: string[] } {
 	const value = raw === null ? undefined : raw;
-	const where = (problem: string) => (source === undefined ? problem : inFile(source, problem));
 	const parsed = SettingsSchema.safeParse(value);
-	const issues = [
-		...(parsed.success ? [] : parsed.error.issues.filter((issue) => issue.code !== 'unrecognized_keys').map((issue) => describe(issue.path, issue.message, shownValue(issue, value)))),
-		...unknownKeyIssues(unknownKeys(SettingsSchema, value), []),
-		...(parsed.success ? checkSettings(parsed.data).map((issue) => describe(issue.path, issue.message, undefined)) : []),
-	].map(where);
+	const issues = [...schemaProblems(parsed.error, value), ...unknownKeys(SettingsSchema, value).map(unknownKeyProblem), ...(parsed.success ? checkSettings(parsed.data) : [])].map((problem) =>
+		sourced(source, problem),
+	);
 	return parsed.success && !issues.length ? { settings: parsed.data, issues } : { issues };
 }
 

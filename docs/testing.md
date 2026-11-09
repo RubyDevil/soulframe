@@ -62,7 +62,7 @@ const runtime = createRuntime({ store, dryRun: false, haltFile: '/no/such/file',
 const brain = createBrain({ persona, settings: testSettings(), identity: 'a guide made by Example', runtime, llm });
 ```
 
-A brain tested without a queue needs only those three: `createBrain({ persona, runtime: { store, now, rng }, llm })`.
+A brain tested without a queue needs only those three: `createBrain({ persona, settings, runtime: { store, now, rng }, llm })`.
 
 The agenda is drawn from a seed of the persona id and the date, not from `rng`, so a fixed clock fixes the hours too:
 check the spans with `spanAt(persona, NOW, 'chat')`. A constant `rng` makes every random choice the same (delays,

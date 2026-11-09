@@ -12,7 +12,7 @@ import { moodOf } from './mood.js';
 import { interruptionsOn } from './pacing.js';
 import { clockText, traitsPrompt } from './prompts.js';
 import { addDays, agendaOn, isOn, localDateOf, nextSpan, onlineMinutesByWeekday, spanAt, weekdayOf, WEEKDAYS, type DayAgenda, type LocalDate } from './schedule.js';
-import { DAY, DEFAULT_SETTINGS, MINUTE, type Settings } from './settings.js';
+import { DAY, MINUTE, type Settings } from './settings.js';
 import { createStore, openDatabase, type Person } from './store.js';
 
 /** A city's zone follows its daylight saving; an abbreviation (EST) or a fixed offset (Etc/GMT+5) never does. UTC is meant as it is. */
@@ -113,7 +113,7 @@ export function personaReport(persona: Persona, { settings, now, status }: { set
  */
 export async function samplePrompt({
 	persona,
-	settings = DEFAULT_SETTINGS,
+	settings,
 	identity,
 	style,
 	channel,
@@ -122,8 +122,8 @@ export async function samplePrompt({
 	policy,
 }: {
 	persona: Persona;
-	/** As createBrain's. */
-	settings?: Settings;
+	/** As createBrain's: the settings its brain runs with. */
+	settings: Settings;
 	/** As createBrain's. */
 	identity?: string;
 	/** As createBrain's. */

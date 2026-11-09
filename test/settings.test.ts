@@ -52,9 +52,13 @@ describe('parseSettings', () => {
 		expect(parseSettings({ decisions: { groupChatGate: { chimeInAt: { quiet: 2.2 } } } }).issues).toEqual([
 			'decisions.groupChatGate.chimeInAt: one number: a threshold per chattiness is gone (give a brain its own) (got {"quiet":2.2})',
 		]);
+		// Any other wrong value is only that
+		expect(parseSettings({ decisions: { groupChatGate: { chimeInAt: '2' } } }).issues).toEqual(['decisions.groupChatGate.chimeInAt: Expected number, received string (got "2")']);
+		expect(parseSettings({ decisions: { groupChatGate: { chimeInAt: 4 } } }).issues).toEqual(['decisions.groupChatGate.chimeInAt: Number must be less than or equal to 3 (got 4)']);
 	});
 
-	it('refuses settings that are not a mapping', () => {
+	it('refuses settings that are not a mapping, "<source>:" before it as before any problem of the whole', () => {
 		expect(parseSettings(['a list']).issues).toEqual(['Expected object, received array (got ["a list"])']);
+		expect(parseSettings('oops', { source: 'settings.yaml' }).issues).toEqual(['settings.yaml: Expected object, received string (got "oops")']);
 	});
 });
