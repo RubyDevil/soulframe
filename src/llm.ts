@@ -69,6 +69,9 @@ const wireMessage = ({ role, content, images }: LlmMessage) =>
 /** Roughly what an image costs at a provider that reports no usage: its bytes would say nothing. */
 const IMAGE_TOKENS = 800;
 
+/** A 400 that names the temperature (a model that takes only its default): asked again without one. */
+const refusedTemperature = (error: unknown) => error instanceof Error && !(error instanceof ProviderUnavailableError) && /^LLM 400\b/.test(error.message) && /temperature/i.test(error.message);
+
 /** Statuses worth one more try: a timeout, a rate limit, a server error (here and in decisions.ts). */
 const RETRYABLE = new Set([408, 429, 500, 502, 503, 504]);
 
@@ -160,6 +163,8 @@ export function createConfiguredLlm({
 	limit?: Limiter;
 	rng?: Rng;
 }): Llm {
+	/** The models (by provider) that refused a temperature: never sent one again by this client. */
+	const noTemperature = new Set<string>();
 	return {
 		async complete(messages, { task, json = false }) {
 			const used = taskModel(settings, task);
@@ -173,13 +178,26 @@ export function createConfiguredLlm({
 			const text = await limit(async () => {
 				// A photo is looked at only in a DM, so it spends what is kept for them
 				if (meter?.exceeded(task === 'directMessage' || task === 'vision' ? 1 : 1 - budget.directMessageReserve)) throw new LlmBudgetError();
-				const body = (await postModelJson(`${baseUrl.replace(/\/+$/, '')}/chat/completions`, apiKey, {
-					model,
-					messages: messages.map(wireMessage),
-					...(openAi ? { max_completion_tokens: used.maxTokens } : { max_tokens: used.maxTokens }),
-					...(!(openAi && model.startsWith('gpt-5')) && { temperature: used.temperature }),
-					...(used.jsonMode && json && { response_format: { type: 'json_object' } }),
-				}, used.timeoutSeconds * 1000, () => between(rng, 2_000, 6_000), 'LLM')) as { choices?: { message?: { content?: string } }[]; usage?: { total_tokens?: number } };
+				const which = `${baseUrl} ${model}`;
+				const request = (temperature: boolean) =>
+					postModelJson(`${baseUrl.replace(/\/+$/, '')}/chat/completions`, apiKey, {
+						model,
+						messages: messages.map(wireMessage),
+						...(openAi ? { max_completion_tokens: used.maxTokens } : { max_tokens: used.maxTokens }),
+						...(temperature && { temperature: used.temperature }),
+						...(used.jsonMode && json && { response_format: { type: 'json_object' } }),
+					}, used.timeoutSeconds * 1000, () => between(rng, 2_000, 6_000), 'LLM');
+				// OpenAI's gpt-5 models take only their default temperature, and so do others: one that refuses it is asked again without, and remembered
+				const temperature = !(openAi && model.startsWith('gpt-5')) && !noTemperature.has(which);
+				let answered: unknown;
+				try {
+					answered = await request(temperature);
+				} catch (error) {
+					if (!temperature || !refusedTemperature(error)) throw error;
+					noTemperature.add(which);
+					answered = await request(false);
+				}
+				const body = answered as { choices?: { message?: { content?: string } }[]; usage?: { total_tokens?: number } };
 				const answer = body.choices?.[0]?.message?.content?.trim();
 				// A provider that reports no usage is counted at about four characters a token
 				const images = messages.reduce((sum, message) => sum + (message.images?.length ?? 0), 0);

@@ -155,10 +155,77 @@ tests fast:
   (`personaReport`) lists today's.
 - **Fake timers**: Vitest's `vi.useFakeTimers()` and `await vi.runAllTimersAsync()` (or `advanceTimersByTimeAsync`).
   Don't call `queue.start()` under `runAllTimersAsync`: its 30-second interval never ends.
+- **A step clock**: keep the real pacing and skip its waits. `createStepClock()` gives a `now` and `timers` for the
+  runtime (`createRuntime({ ..., now: clock.now, timers: clock.timers })`); wrap the model's calls in `clock.track`
+  and `await clock.run({ done })`. Each timer runs as the clock is stepped to it, the clock moved forward to when it
+  was due, so every stored message and prompt reads the time it would have live. Unlike fake timers it needs no test
+  framework and never skips a wait while a model call is under way, so it also runs against a live model.
 
 Call `queue.stop()` at the end of a test that started anything. A `Runtime` you write yourself
 (`{ now, rng, store, dryRun, halted: () => false, log }`) avoids the halt file and keeps the console quiet; with
 `createRuntime`, give a `haltFile` that doesn't exist, or create it to test the halt switch.
+
+## Two personas, live
+
+`npm run persona-test` ([`scripts/persona-test/run.ts`](../scripts/persona-test/run.ts)) is the whole stack against
+a live model, for improving the personas and the framework: two personas talk to each other through their own brains
+and reply queues, at the pace their settings give (glances, reading, typing, interruptions, their hours), on a step
+clock that skips every wait. Timestamps start at the real time and move on as they would live, so an evening's
+conversation runs in the time its model calls take, and the model calls' own time counts as the personas' reading
+time, as it does live. Then a model reviews each conversation against a rubric
+([`scripts/persona-test/analysis.md`](../scripts/persona-test/analysis.md)), given the transcript, the metrics, what
+each persona noted and the system prompt each was last sent: character, naturalness, coherence, memory, pacing,
+engagement, variety and, where texting first is on, initiative, each scored 1 to 5, and every problem quoted, with the area its fix belongs to (`persona`:
+the persona file; `framework`: soulframe's prompts and code; `pacing`; `memory`; `model`) and a suggestion.
+
+```sh
+export LLM_BASE_URL=https://api.provider.example/v1 LLM_MODEL=provider-chat-large LLM_API_KEY=...
+npm run persona-test -- --suite scripts/persona-test/suite.yaml --runs 3             # the suite, each scenario 3 times
+npm run persona-test -- --suite scripts/persona-test/suite.yaml --runs 3 --baseline persona-test-results/<earlier>
+npm run persona-test -- --a my-persona.md --opener "hey" --messages 40               # one conversation
+npm run persona-test -- --canned --suite scripts/persona-test/suite.yaml              # offline: canned lines, no review
+```
+
+**The suite** ([`scripts/persona-test/suite.yaml`](../scripts/persona-test/suite.yaml)) holds the same scenarios on
+every run, so two runs compare: `evening` (a first chat while both are free), `closing` (one of them has to go soon,
+and they pick it up the next day) and `away` (the other is offline when it starts and answers hours later); then
+texting first (`settings.initiative`): `follow-up` (one has an interview the next morning: does the other plan to ask
+how it went, and send it well), `check-in` (they got on well and have been quiet for five days: nobody writes until
+one checks in) and `sharing` (one tells the other about its day as it gets back from work). A scenario sets its
+personas, opener (`null` for none), start (`online`, `closing`, `away`, `now` or an ISO time), message and hour limits
+and channel, `settings` for both brains over the run's (texting first is off by default), and `past`: an earlier
+conversation, familiarity, affinity and notes written into the store as if they had happened. `--a`, `--b`,
+`--messages`, `--hours` and `--adult` override every scenario's, so the suite can test your own personas. `--only`
+picks scenarios, `--runs` repeats each. A conversation stops at its message limit (the opener included), its hour
+limit, or, with texting first off, once neither owes the other a reply (one left the other on read); with it on, a
+quiet spell is part of the test and it runs to its limits. Each report counts the openers each persona planned (by
+kind) and how they ended (sent, declined, dropped, expired), and the transcript marks each message sent texting first;
+the review scores `initiative` too. Texting first depends on the hours each persona's agenda draws for those days (a
+share needs it to come online within half an hour of a busy block), so a run where it never came up says so.
+
+**Improving with it.** A review varies from run to run as the conversations do: run each scenario a few times and
+read the means. Run the suite once before a change (on `main`, say) and once after, the second with `--baseline` on
+the first's results: the summary shows each mean's change. The issues are grouped by area; each conversation's
+`calls.jsonl` holds every prompt the models were sent and what they answered, to trace an issue to the instruction
+behind it. `--judge-model` gives the reviewer a model of its own (keep it the same across the runs you compare), and
+`--min-score` makes the run fail when the mean overall score is under it. `--settings` and `--service` take the same
+files as an application (models, pacing, budget, the Decisions client); without a service file there is no daily
+token limit. `--help` lists the rest.
+
+The results go to `--out` (default `persona-test-results/<time>/`): `summary.md` and `summary.json` (the scores by
+scenario, with the changes since the baseline; the issues by area; every conversation), and for each conversation, in
+`<scenario>/<run>/`, its `report.md` (its review, its metrics side by side, what each persona noted about the other),
+`transcript.md`, `calls.jsonl`, `events.jsonl` (every runtime event, timed), `run.json` and `conversation.db` (the
+store). A single conversation writes straight into `--out`. The run fails (exit code 1) when a persona gave up on a
+reply, when the other never answered, or under `--min-score`.
+
+The **Persona test** workflow ([`.github/workflows/persona-test.yml`](../.github/workflows/persona-test.yml)) runs the
+suite from the repository's Actions tab, with the repository secret `LLM_API_KEY` and the variables `LLM_BASE_URL`
+and `LLM_MODEL` (optionally `LLM_JUDGE_MODEL`). Its inputs choose the suite, the scenarios, the runs, the personas,
+the models and the settings; `baseline_run` is the id of an earlier run of the workflow (from its URL), whose results
+it compares with. Run it on `main`, then on your branch with that run's id. The summary is the job's summary, and the
+results are kept as the `persona-test` artifact for 90 days. It never runs on its own: CI only type-checks the
+script; `--canned` checks that it still runs, offline.
 
 ## The example
 

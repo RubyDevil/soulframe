@@ -651,11 +651,13 @@ function createRuntime(options: {
 	haltFile: string;
 	rng?: Rng;            // default Math.random
 	now?: () => number;   // default Date.now
+	timers?: Timers;      // default systemTimers
 }): Runtime;
 ```
 
 A `Runtime` whose `halted()` is whether `haltFile` exists, and whose `log` prints a timestamped header line
 (`[<ISO time>] <persona> | <event>`, the event's underscores shown as spaces) and one indented line per detail field to the console.
+Give it a step clock's `now` and `timers` (`createStepClock`) to run its queues without waiting.
 
 ### `Runtime`
 
@@ -667,6 +669,7 @@ interface Runtime {
 	dryRun: boolean;     // log instead of sending; mark nothing handled
 	halted: () => boolean; // while true: nothing is sent, nothing new is started
 	log: (persona: string, event: string, detail?: Record<string, unknown>) => void;
+	timers?: Timers;     // what the queues and watchSpans wait with; systemTimers when left out
 }
 ```
 
@@ -763,6 +766,83 @@ function watchSpans(hours: { id: string; timezone: string; schedule: ScheduleCon
 
 Calls `onChange(span)` right away and again whenever the span open on `channel` changes (checked every 30 seconds),
 logging `hours_open` or `hours_closed`. Pass a persona as `hours`. Answers a function that stops watching.
+
+### `Timers`
+
+```ts
+interface Timers {
+	setTimeout(callback: () => void, ms: number): unknown;
+	clearTimeout(timer: unknown): void;
+	setInterval(callback: () => void, ms: number): unknown;
+	clearInterval(timer: unknown): void;
+}
+```
+
+What a runtime's reply queues and `watchSpans` wait with (`Runtime.timers`): every delay, reading, typing and pause of
+a turn, the quiet after someone's message, the backlog's gaps and the 30-second tick. A timer is opaque: it is only
+handed back to the same `Timers` to clear it, and clearing `undefined` or one that already ran does nothing.
+
+### `systemTimers`
+
+```ts
+const systemTimers: Timers;
+```
+
+The system's `setTimeout` and `setInterval`, read as each is called (so test fake timers still apply): a runtime's
+timers unless given others.
+
+### `createStepClock`
+
+```ts
+function createStepClock(options?: {
+	now?: () => number;   // the real clock; default Date.now
+	start?: number;       // the time it reads at first; default the real time
+}): StepClock;
+```
+
+A clock that skips the waits but keeps the timestamps: give its `now` and `timers` to the runtime (`createRuntime`), wrap
+every real call in `track` (the model client, the Decisions client) and `run` it. Its timers never fire on their own:
+each runs as the clock is stepped to it, the clock moved forward to when it was due, so a turn's delay, reading and
+typing take no real time, and every stored message, log line and prompt reads the time it would have had live. It
+reads the real clock plus every wait skipped so far, so the real time a model call takes counts too, as the persona's
+reading time does live. Nothing is skipped while tracked work is under way, so a reply is never typed before its model
+answered. Timers due together run in the order they were set. `start` moves the clock first (to an evening when the
+personas are online, say). For runs against a live model (two personas talking to each other) and for tests that want
+the real order of a queue's timers without fake ones; [testing](./testing.md#two-personas-live) has both.
+
+```ts
+const clock = createStepClock({ start: Date.UTC(2026, 0, 15, 20, 0) });
+const runtime = createRuntime({ store, dryRun: false, haltFile: './HALT', now: clock.now, timers: clock.timers });
+const llm: Llm = { complete: (messages, options) => clock.track(live.complete(messages, options)) };
+// ...brains and queues on that runtime, the first message handled...
+await clock.run({ until: clock.now() + 6 * HOUR, done: () => replies >= 20 });
+```
+
+### `StepClock`
+
+```ts
+interface StepClock {
+	now: () => number;
+	timers: Timers;
+	track<T>(work: Promise<T>): Promise<T>;
+	settle(): Promise<void>;
+	step(): Promise<boolean>;
+	run(options?: { until?: number; done?: () => boolean }): Promise<'done' | 'until' | 'idle'>;
+	pending(): number;
+	skipped(): number;
+}
+```
+
+- **`now`**: the time it reads: the real clock's plus the waits skipped so far.
+- **`track(work)`**: marks real work under way; answers `work`. A rejection is the caller's to handle, as without it.
+- **`settle()`**: resolves once no tracked work is under way and what it set off ran as far as it can without a timer.
+- **`step()`**: settles, runs the timer due first (moving the clock forward to it), settles again; `false` when no timer
+  is set.
+- **`run({ until, done })`**: steps until `done()` holds (`'done'`), the next timer is due after `until` (`'until'`, the
+  clock then reads `until`), or no timer is left (`'idle'`). A started queue's 30-second tick never runs out: give a
+  `done` or an `until`.
+- **`pending()`**: timers set and not run or cleared (an interval until cleared); **`skipped()`**: the waits skipped
+  so far, in ms.
 
 ## Hours
 

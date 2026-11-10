@@ -10,3 +10,4 @@ Thumbs.db
 *.db-shm
 *.bak
 dist/
+persona-test-results/

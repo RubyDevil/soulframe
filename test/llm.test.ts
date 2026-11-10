@@ -99,6 +99,30 @@ describe('createConfiguredLlm', () => {
 		expect(body).not.toHaveProperty('temperature');
 	});
 
+	it('asks again without a temperature a model refuses, and never sends it one again', async () => {
+		const refused = () =>
+			new Response(JSON.stringify({ error: { message: "Unsupported value: 'temperature' does not support 0.9 with this model. Only the default (1) value is supported.", param: 'temperature', code: 'unsupported_value' } }), { status: 400 });
+		const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(refused()).mockImplementation(async () => answer('{"reply":"hi"}', 10));
+		const { llm } = setUp(0);
+		await expect(llm.complete([{ role: 'user', content: 'hi' }], { task: 'directMessage' })).resolves.toBe('{"reply":"hi"}');
+		expect(fetch).toHaveBeenCalledTimes(2);
+		expect(sent(fetch, 0).body).toMatchObject({ temperature: 0.9 });
+		expect(sent(fetch, 1).body).not.toHaveProperty('temperature');
+		await llm.complete([{ role: 'user', content: 'again' }], { task: 'directMessage' });
+		expect(fetch).toHaveBeenCalledTimes(3);
+		expect(sent(fetch, 2).body).not.toHaveProperty('temperature');
+		// Another model of the same client still gets its own
+		await llm.complete([{ role: 'user', content: 'hey' }], { task: 'groupChat' });
+		expect(sent(fetch, 3).body).toMatchObject({ model: 'cheap-model', temperature: 0.9 });
+	});
+
+	it('does not retry any other 400', async () => {
+		const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{"error":{"message":"max_tokens is too large","param":"max_tokens"}}', { status: 400 }));
+		const { llm } = setUp(0);
+		await expect(llm.complete([{ role: 'user', content: 'hi' }], { task: 'directMessage' })).rejects.toThrow('LLM 400');
+		expect(fetch).toHaveBeenCalledTimes(1);
+	});
+
 	it('uses each task\'s own model, and its own provider when it names one', async () => {
 		const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => answer('ok', 1));
 		const { llm } = setUp(0);

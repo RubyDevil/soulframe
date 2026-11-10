@@ -15,6 +15,8 @@ export type { Channel, ChannelAction, ChannelId } from './channel.js';
 // The brain, its reply queue, hours
 export { createBrain, type Brain, type Decision, type GroupChatLine, type PersonAction, type Policy } from './brain.js';
 export { createReplyQueue, createRuntime, watchSpans, UnreachableError, type Conversation, type ReplyQueue, type Runtime } from './runtime.js';
+// What the queue waits with, and a clock that skips the waits (a whole conversation in the time its model calls take)
+export { createStepClock, systemTimers, type StepClock, type Timers } from './clock.js';
 export { spanAt, fullyOnline, type Span } from './schedule.js';
 export type { IncomingImage, IncomingMessage, LinkPreview, PreviewLink } from './perception.js';
 

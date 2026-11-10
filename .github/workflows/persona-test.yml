@@ -1,0 +1,100 @@
+name: Persona test
+
+# Two personas talk to each other on a live model, their waits skipped (scripts/persona-test/run.ts), then a model
+# reviews each conversation: a suite of scenarios, each run several times, for scores to compare across changes.
+# Run by hand from the Actions tab. Needs the repository secret LLM_API_KEY and the variables LLM_BASE_URL and
+# LLM_MODEL (an OpenAI-compatible provider), unless the inputs or a settings file give them. See docs/testing.md.
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: The scenarios to run
+        default: scripts/persona-test/suite.yaml
+      only:
+        description: Only these scenarios, comma-separated (default all)
+        default: ''
+      runs:
+        description: Runs of each scenario (their scores are averaged)
+        default: '2'
+      baseline_run:
+        description: Compare with an earlier Persona test run (its run id, from its URL), optional
+        default: ''
+      persona_a:
+        description: The persona who opens, over the suite's (a persona file), optional
+        default: ''
+      persona_b:
+        description: The other persona, over the suite's, optional
+        default: ''
+      model:
+        description: The personas' model (default the LLM_MODEL variable)
+        default: ''
+      judge_model:
+        description: The reviewer's model (default LLM_JUDGE_MODEL, else the personas')
+        default: ''
+      settings:
+        description: A settings file for the brains (models, pacing...), optional
+        default: ''
+      min_score:
+        description: Fail when the mean overall score is under this (1 to 5), optional
+        default: ''
+
+permissions:
+  contents: read
+  actions: read # the baseline run's results
+
+concurrency:
+  group: persona-test
+  cancel-in-progress: false
+
+jobs:
+  converse:
+    name: Converse and review
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Fetch the baseline
+        if: inputs.baseline_run != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: persona-test
+          run-id: ${{ inputs.baseline_run }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/baseline
+      - name: Run the conversations and the reviews
+        # Every input reaches the script through the environment, never pasted into the command line
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
+          LLM_MODEL: ${{ inputs.model || vars.LLM_MODEL }}
+          LLM_JUDGE_MODEL: ${{ inputs.judge_model || vars.LLM_JUDGE_MODEL }}
+          SUITE: ${{ inputs.suite }}
+          ONLY: ${{ inputs.only }}
+          RUNS: ${{ inputs.runs }}
+          BASELINE: ${{ inputs.baseline_run != '' && format('{0}/baseline', runner.temp) || '' }}
+          PERSONA_A: ${{ inputs.persona_a }}
+          PERSONA_B: ${{ inputs.persona_b }}
+          SETTINGS: ${{ inputs.settings }}
+          MIN_SCORE: ${{ inputs.min_score }}
+        run: |
+          options=(--suite "$SUITE" --runs "$RUNS" --out "$RUNNER_TEMP/persona-test")
+          if [ -n "$ONLY" ]; then options+=(--only "$ONLY"); fi
+          if [ -n "$BASELINE" ]; then options+=(--baseline "$BASELINE"); fi
+          if [ -n "$PERSONA_A" ]; then options+=(--a "$PERSONA_A"); fi
+          if [ -n "$PERSONA_B" ]; then options+=(--b "$PERSONA_B"); fi
+          if [ -n "$SETTINGS" ]; then options+=(--settings "$SETTINGS"); fi
+          if [ -n "$MIN_SCORE" ]; then options+=(--min-score "$MIN_SCORE"); fi
+          npx tsx scripts/persona-test/run.ts "${options[@]}"
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: persona-test
+          path: ${{ runner.temp }}/persona-test
+          if-no-files-found: ignore
+          retention-days: 90

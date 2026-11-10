@@ -21,7 +21,7 @@ source as written, with its `${...}` slots; the `text` blocks are what the model
 
 The task names select the model settings (`settings.models.directMessage`, `.groupChat`, `.post`, `.vision`, `.initiative`, each over
 `models.default`: model, provider, `maxTokens`, `temperature`, `jsonMode`). They change no text. `json: true` asks the
-provider for a JSON object only when that task's `jsonMode` is on (`jsonMode`, llm.ts:181); a post never asks.
+provider for a JSON object only when that task's `jsonMode` is on (`jsonMode`, llm.ts:188); a post never asks.
 
 The typed checks go to the Decisions API (`settings.decisions`), not to the text model. A Decisions request has no
 system prompt and no messages: it is one input text and a list of typed questions (decisions.ts:49), and no text
@@ -239,8 +239,8 @@ The brain fills it in at brain.ts:651-674. Each slot:
 | `personNotes` | `person.summary`, written by the model |
 | `channel` | the `Channel` (its `invitations` and `actions`) |
 | `memory` | `settings.memory` (`personNotes`, `selfNotes`) |
-| `extraLines` | `options.extraLines?.(person) ?? []`: the reply queue passes `Conversation.extraLines` (runtime.ts:706) |
-| `invitation` | `options.invitation` where `channel.invitations`, else nothing (brain.ts:647); the queue passes the name of `Conversation.invitation` (runtime.ts:685, :706) |
+| `extraLines` | `options.extraLines?.(person) ?? []`: the reply queue passes `Conversation.extraLines` (runtime.ts:714) |
+| `invitation` | `options.invitation` where `channel.invitations`, else nothing (brain.ts:647); the queue passes the name of `Conversation.invitation` (runtime.ts:693, :714) |
 | `joinNow` | `fullyOnline(persona, channel.id, now())`: a full online span is open on the channel (brain.ts:646) |
 | `time` | `directMessageTimePrompt` |
 | `minorCaution` | `!!channel.adult && minorCautioned(person)` (brain.ts:644) |
@@ -409,7 +409,7 @@ Sam is one of your regulars: you're at ease with each other and pick up where yo
 
 ### Extra lines
 
-`Conversation.extraLines?(person)` (runtime.ts:81): the app's lines for each DM turn on that conversation, given the
+`Conversation.extraLines?(person)` (runtime.ts:87): the app's lines for each DM turn on that conversation, given the
 person as `compose` reads them. Each line is its own paragraph, after the notes block and before the invitation and
 the time. Written by the app, word for word; soulframe writes none. DM turn only.
 
@@ -424,8 +424,8 @@ export const BREAK_INVITE_PROMPT = "You're only on for a few minutes, so you can
 ```
 
 DM turn only. Present when the channel has `invitations` and a name is passed: the app attaches
-`Conversation.invitation` (`{ name, join }`, runtime.ts:83) to the conversation, the reply queue keeps it from the
-incoming message (runtime.ts:1037) and passes its `name` to `compose` where `channel.invitations` (runtime.ts:685, :706). The
+`Conversation.invitation` (`{ name, join }`, runtime.ts:89) to the conversation, the reply queue keeps it from the
+incoming message (runtime.ts:1045) and passes its `name` to `compose` where `channel.invitations` (runtime.ts:693, :714). The
 name is the app's data, quoted as a JSON string. With a full online span open on the channel (`joinNow`) the line asks
 for a decision; on a break `BREAK_INVITE_PROMPT` takes its place, and the turn reports `inviteWaits` (brain.ts:687).
 Rendered (`joinNow` true, name `Friday "movie" night`):
@@ -876,8 +876,8 @@ No links in the post.
 export const POST_REQUEST = '[post] Write the post.';
 ```
 
-The one `user` message of a post. The canned model (`createCannedLlm`, llm.ts:196-207) answers its fixed post when
-the last message is exactly this text (llm.ts:202); its other answers are fixed DM replies. Neither is prompt text.
+The one `user` message of a post. The canned model (`createCannedLlm`, llm.ts:214-225) answers its fixed post when
+the last message is exactly this text (llm.ts:220); its other answers are fixed DM replies. Neither is prompt text.
 
 ## Typed screening (Decisions)
 
@@ -1317,7 +1317,7 @@ other text.
 - `STOP_ACK` (safety.ts:9): "got it, I won't message you again. take care!" and `MINOR_EXIT` (safety.ts:10): "sorry,
   I only chat with adults, so I'm going to stop here. take care!" are sent to the person by the code, never to the
   model.
-- The canned model's answers (llm.ts:197, :202) are fixed replies, and a fixed photo description, for dry runs.
+- The canned model's answers (llm.ts:215, :220) are fixed replies, and a fixed photo description, for dry runs.
 - `report.ts` (`personaReport`, `personaWarnings`, `settingsWarnings`) writes config-check lines for the operator. Only `samplePrompt`
   shows a prompt, built by the brain itself.
 
