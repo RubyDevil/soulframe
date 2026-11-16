@@ -21,7 +21,7 @@ export { spanAt, fullyOnline, type Span } from './schedule.js';
 export type { IncomingImage, IncomingMessage, LinkPreview, PreviewLink } from './perception.js';
 
 // Memory: one SQLite file; the app opens it, and its own tables (and their migrations) live beside the package's
-export { openDatabase, createStore, inTransaction, type Database, type Store, type Person, type PersonState } from './store.js';
+export { openDatabase, createStore, inTransaction, type Database, type Store, type Person, type PersonState, type StoredEvent } from './store.js';
 
 // Text generation and the typed checks
 export { llmsFor, createTokenMeter, createLimiter, createCannedLlm, modelKeys, type Llm, type LlmMessage } from './llm.js';

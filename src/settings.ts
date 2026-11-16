@@ -544,6 +544,47 @@ export const SettingsSchema = z
 			})
 			.strict()
 			.default({}),
+
+		/**
+		 * Its calendar, off by default (calendar.ts): plans laid over the agenda its schedule draws, its own and the app's
+		 * (`store.addEvent`). A DM turn may make one (prompts.ts directMessageAnswerFormat's `plan`), which the code checks
+		 * against guardrails no setting relaxes; DM turns and openers list the coming ones. Off, no event is read and no
+		 * prompt says anything of it.
+		 */
+		calendar: z
+			.object({
+				enabled: z.boolean().default(false),
+				/** Plans of its own: somewhere it will be (busy, so offline then), or calling one of them off. */
+				plans: z
+					.object({
+						/** Whether a DM turn may make one (with `enabled`). */
+						enabled: z.boolean().default(true),
+						/** The furthest ahead one may be, in days (0: later today). */
+						maxDays: z.number().int().min(0).max(365).default(60),
+						/** The most it makes in any 7 days. */
+						perWeek: z.number().int().min(1).max(20).default(4),
+						/** The longest one, in hours. */
+						maxHours: z.number().min(1).max(24).default(12),
+					})
+					.strict()
+					.default({}),
+				/** Time it makes to chat with someone, at an hour it would be offline: online then, for everyone. */
+				makeTime: z
+					.object({
+						/** Whether a DM turn may make some (with `enabled`). */
+						enabled: z.boolean().default(true),
+						/** The longest, in minutes. */
+						maxMinutes: z.number().int().min(15).max(240).default(120),
+						/** Days at least between two made for the same person. */
+						perPersonDays: z.number().min(1).max(90).default(7),
+					})
+					.strict()
+					.default({}),
+				/** How many of its coming plans a DM turn and an opener list, with their numbers (to call one off). */
+				shown: z.number().int().min(1).max(20).default(6),
+			})
+			.strict()
+			.default({}),
 	})
 	.default({});
 

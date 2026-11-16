@@ -247,6 +247,35 @@ Off by default (`settings.initiative.enabled`). With it on, a persona may start 
   sends nothing). A plan never sent is closed as `expired`. Nothing is tried again: an opener is never owed. The halt
   switch keeps it waiting.
 
+## Its calendar
+
+Off by default (`settings.calendar.enabled`). With it on, a persona keeps its plans, so its days go the way it said:
+when it tells someone "it's my cousin's birthday on Saturday", it is at the birthday that evening, offline, its time
+lines say so, and afterwards it is back from it.
+
+- **What is in it.** Events laid over the agenda its schedule draws (`agendaOn`, schedule.ts:445): a **busy** plan
+  (somewhere it will be, offline then, its reason completing "you're ...") takes its time out of the day's spans and
+  busy blocks, a work day cut in two around a dentist's hour; **time made to chat** is online time for every channel,
+  joined to the online time it touches. The routine stays as drawn underneath (`routineOn`), and interruptions stay
+  the routine's.
+- **Who puts plans in it.** The persona, in a DM turn: its answer's `plan` is a plan of its own, time it makes to chat
+  with the person, or one of its plans called off by its number. The app, with `store.addEvent` (a holiday, a team
+  day): those are its own to check, and only it calls them off.
+- **The guardrails**, which no setting relaxes (`checkPlan`, calendar.ts:64): the model only proposes. A plan of its
+  own has a short reason of plain words, never sleep or school, over no other plan of its own, at most
+  `plans.perWeek` a week; time made to chat lies between 7 AM and midnight, over no busy block, never makes the day's
+  online time longer than its schedule's longest day and one such time, and comes once per person in
+  `makeTime.perPersonDays`. So nobody can talk it into being online all night, or into a day stacked with time made
+  for one person after another. A plan is only kept with the turn that made it (`Turn.keep`), and each outcome is
+  audited (`plan_added`, `plan_cancelled`, `plan_refused` with the reason).
+- **A plan it didn't keep.** The model may have promised what the code then refused ("sure, 3 tomorrow" while at
+  work): the next turn with that person is told, once, which plan its calendar didn't take and why ("you're at work
+  then"), so it can put it right ("oh wait, i'm at work at 3, after 7:30?").
+- **What the model sees.** DM turns and openers list its coming plans, with their numbers (`calendar.shown`), and
+  the plans are in its time lines (now, next, the coming days) like any other block.
+- **Reading it.** `brain.hours` is the persona's hours with its calendar: the reply queue reads them, and so should
+  your own `spanAt`, `fullyOnline` and `watchSpans`, so a plan moves your view of its online time too.
+
 ## Memory and identities
 
 The store (`createStore` on a database from `openDatabase`) keeps everything in one SQLite file, through Node's

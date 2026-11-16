@@ -9,10 +9,12 @@ import {
 	fullyOnline,
 	nextSpan,
 	onlineMinutesByWeekday,
+	routineOn,
 	situationAt,
 	spanAt,
 	usualWeek,
 	zonedToUtc,
+	type CalendarEvent,
 	type Hours,
 	type LocalDate,
 } from '../src/schedule.js';
@@ -526,5 +528,46 @@ describe('usualWeek', () => {
 		]);
 		expect(monday!.skipDayChance).toBe(0.2);
 		expect(sunday!.skipDayChance).toBe(0);
+	});
+});
+
+describe('calendar events over the agenda', () => {
+	// Lena in November: Monday the 16th works 9:00 to 17:30, a break at 12:30, online 20:00 to 00:15; Saturday the 21st is empty
+	const [MON, TUE, SAT] = [16, 17, 21];
+	const keyOf = (day: LocalDate) => day.year * 10_000 + day.month * 100 + day.day;
+	/** Lena with these events in her calendar. */
+	const withCalendar = (events: CalendarEvent[]): Hours => ({ ...LENA, events: (from, to) => events.filter((event) => keyOf(event.day) >= keyOf(from) && keyOf(event.day) <= keyOf(to)) });
+	const busy = (id: number, day: number, from: number, to: number, what: string): CalendarEvent => ({ id, kind: 'busy', day: date(day), from: from * 60, to: to * 60, what });
+	const online = (id: number, day: number, from: number, to: number): CalendarEvent => ({ id, kind: 'online', day: date(day), from: from * 60, to: to * 60, what: '' });
+	const times = (blocks: readonly { start: number; end: number }[]) => blocks.map(({ start, end }) => [new Date(start).toISOString().slice(11, 16), new Date(end).toISOString().slice(11, 16)]);
+
+	it('takes a busy plan out of the day: a work day cut in two around it, its own block in between', () => {
+		const hours = withCalendar([busy(1, MON, 10, 11, 'at the dentist')]);
+		const agenda = agendaOn(hours, date(MON));
+		expect(agenda.busy.map(({ reason, event }) => [reason, event])).toEqual([['at work', undefined], ['at the dentist', 1], ['at work', undefined]]);
+		expect(times(agenda.busy)).toEqual([['09:00', '10:00'], ['10:00', '11:00'], ['11:00', '17:30']]);
+		// The routine stays as drawn
+		expect(routineOn(hours, date(MON))).toEqual(agendaOn(LENA, date(MON)));
+		// An evening out cuts its online time
+		const out = agendaOn(withCalendar([busy(2, MON, 19, 21, 'out with friends')]), date(MON));
+		expect(times(out.spans.filter((span) => span.kind === 'online'))).toEqual([['21:00', '00:15']]);
+	});
+
+	it('adds time it made to chat, joined to the online time it touches, outside every busy block', () => {
+		expect(agendaOn(withCalendar([online(3, SAT, 15, 16)]), date(SAT)).spans).toEqual([{ kind: 'online', start: at(SAT, 15), end: at(SAT, 16), day: date(SAT), event: 3 }]);
+		expect(spanAt(withCalendar([online(3, SAT, 15, 16)]), at(SAT, 15, 30))?.event).toBe(3);
+		const before = agendaOn(withCalendar([online(4, MON, 19, 20)]), date(MON)).spans.filter((span) => span.kind === 'online');
+		expect(times(before)).toEqual([['19:00', '00:15']]);
+		// Over its work (one the app added without checking): only what is past it
+		const late = agendaOn(withCalendar([online(5, MON, 16, 18)]), date(MON)).spans.filter((span) => span.kind === 'online');
+		expect(times(late)).toEqual([['17:30', '18:00'], ['20:00', '00:15']]);
+	});
+
+	it("cuts the online time of the day before that runs past midnight into a plan's, and lists the plan on its own day", () => {
+		const hours = withCalendar([busy(6, TUE, 0, 2, 'out with friends')]);
+		expect(times(agendaOn(hours, date(MON)).spans.filter((span) => span.kind === 'online'))).toEqual([['20:00', '00:00']]);
+		expect(agendaOn(hours, date(MON)).busy.map((block) => block.reason)).toEqual(['at work']);
+		expect(agendaOn(hours, date(TUE)).busy.map((block) => block.reason)).toEqual(['out with friends', 'at work']);
+		expect(spanAt(hours, at(TUE, 0, 5))).toBeNull();
 	});
 });

@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { ChannelId } from './channel.js';
 import type { MessageMedia } from './perception.js';
+import type { CalendarEvent, LocalDate } from './schedule.js';
 
 // Loaded at run time, not imported: Vite (under the tests) doesn't know node:sqlite yet and fails to resolve it, and
 // getBuiltinModule works the same in the ESM and the CJS build (import.meta.url would not exist in CJS)
@@ -94,6 +95,54 @@ const toOpener = (row: OpenerRow): Opener => ({
 	outcome: row.outcome,
 });
 
+/** Who put a plan in a persona's calendar: `persona`, its own, made in a DM turn (calendar.ts checks each); `app`, the application's (`addEvent`). */
+export type EventSource = 'persona' | 'app';
+
+/** A plan in a persona's calendar (settings.calendar), as stored: what its agenda lays over the drawn days, and who made it. */
+export interface StoredEvent extends CalendarEvent {
+	persona: string;
+	/** The person it was made in a conversation with (whom time made to chat is for), if any; null once they are forgotten. */
+	personId: number | null;
+	source: EventSource;
+	createdAt: number;
+	/** When it was called off; null while it stands. */
+	cancelledAt: number | null;
+}
+
+interface EventRow {
+	id: number;
+	persona: string;
+	day: string;
+	from_minute: number;
+	to_minute: number;
+	kind: CalendarEvent['kind'];
+	what: string;
+	person_id: number | null;
+	source: EventSource;
+	created_at: number;
+	cancelled_at: number | null;
+}
+
+/** "2026-11-20": a local date as the events table keeps it, so the dates sort as text. */
+const dayKey = ({ year, month, day }: LocalDate) => `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
+const toEvent = (row: EventRow): StoredEvent => {
+	const [year, month, day] = row.day.split('-').map(Number) as [number, number, number];
+	return {
+		id: row.id,
+		persona: row.persona,
+		kind: row.kind,
+		day: { year, month, day },
+		from: row.from_minute,
+		to: row.to_minute,
+		what: row.what,
+		personId: row.person_id,
+		source: row.source,
+		createdAt: row.created_at,
+		cancelledAt: row.cancelled_at,
+	};
+};
+
 export interface StoredMessage {
 	id: number;
 	channel: ChannelId;
@@ -176,6 +225,20 @@ CREATE TABLE IF NOT EXISTS openers (
 	outcome TEXT
 );
 CREATE INDEX IF NOT EXISTS openers_person ON openers (person_id, closed_at);
+CREATE TABLE IF NOT EXISTS events (
+	id INTEGER PRIMARY KEY,
+	persona TEXT NOT NULL,
+	day TEXT NOT NULL,
+	from_minute INTEGER NOT NULL,
+	to_minute INTEGER NOT NULL,
+	kind TEXT NOT NULL,
+	what TEXT NOT NULL,
+	person_id INTEGER REFERENCES people(id) ON DELETE SET NULL,
+	source TEXT NOT NULL,
+	created_at INTEGER NOT NULL,
+	cancelled_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS events_day ON events (persona, day);
 `;
 
 /** A person's row and, in `ids`, their identities as one JSON object ({"<channel>": "<external id>"}). */
@@ -274,7 +337,7 @@ export function openDatabase(path: string): Database {
 export type Store = ReturnType<typeof createStore>;
 
 /**
- * soulframe's own state (people and their identities, their messages, the deny-list, kv, audit) in `db`, its tables
+ * soulframe's own state (people and their identities, their messages, the deny-list, kv, audit, openers, calendar events) in `db`, its tables
  * made if missing. A file in an older layout of the app's own is the app's to migrate first. Whoever opened `db` closes it.
  */
 export function createStore(db: Database, now: () => number = Date.now) {
@@ -294,6 +357,9 @@ export function createStore(db: Database, now: () => number = Date.now) {
 	}
 	// A database made before messages could carry photos and links
 	if (!(db.prepare('PRAGMA table_info(messages)').all() as unknown as { name: string }[]).some((column) => column.name === 'media')) db.exec('ALTER TABLE messages ADD COLUMN media TEXT');
+
+	// Prepared once: every agenda read of a persona with a calendar asks it (schedule.ts agendaOn)
+	const standingEvents = db.prepare('SELECT * FROM events WHERE persona = ? AND day >= ? AND day <= ? AND cancelled_at IS NULL ORDER BY day, from_minute, id');
 
 	const byId = (id: number) => {
 		const row = db.prepare(`${PERSON_SELECT} WHERE p.id = ?`).get(id) as unknown as PersonRow | undefined;
@@ -400,11 +466,57 @@ export function createStore(db: Database, now: () => number = Date.now) {
 			) as unknown as { at: number; persona: string; kind: string; detail: string }[];
 			return rows.map((row) => ({ ...row, detail: JSON.parse(row.detail) as Record<string, unknown> }));
 		},
-		/** Deletes messages, audit lines and closed openers older than `before` (the app sweeps its own tables). */
+		/** Deletes messages, audit lines, closed openers and calendar events called off older than `before` (the app sweeps its own tables). */
 		sweep(before: number) {
 			db.prepare('DELETE FROM messages WHERE at < ?').run(before);
 			db.prepare('DELETE FROM audit WHERE at < ?').run(before);
 			db.prepare('DELETE FROM openers WHERE closed_at IS NOT NULL AND closed_at < ?').run(before);
+			db.prepare('DELETE FROM events WHERE cancelled_at IS NOT NULL AND cancelled_at < ?').run(before);
+		},
+		/**
+		 * Puts a plan in the persona's calendar (settings.calendar), laid over its agenda while the calendar is on: `busy`,
+		 * offline from `from` to `to` (minutes of its local `day`; `to` past 1440 runs past midnight, 24 hours at most) with
+		 * `what` as its reason ("at the dentist", completing "you're ..."), or `online`, time it is online for every
+		 * channel. The app's (`source` left out) are its own to check: only the persona's go through calendar.ts. Throws on
+		 * times that don't make a block, or a busy plan without `what`. Answers it.
+		 */
+		addEvent(
+			persona: string,
+			event: { kind: CalendarEvent['kind']; day: LocalDate; from: number; to: number; what?: string; personId?: number | null; source?: EventSource },
+		): StoredEvent {
+			const { kind, day, from, to, what = '', personId = null, source = 'app' } = event;
+			if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || from >= 1440 || to <= from || to - from > 1440) throw new Error(`Not a calendar block: ${from} to ${to} minutes`);
+			if (kind === 'busy' && !what.trim()) throw new Error('A busy plan needs what it is');
+			const id = Number(
+				db
+					.prepare('INSERT INTO events (persona, day, from_minute, to_minute, kind, what, person_id, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+					.run(persona, dayKey(day), from, to, kind, kind === 'busy' ? what.trim() : '', personId, source, now()).lastInsertRowid,
+			);
+			return toEvent(db.prepare('SELECT * FROM events WHERE id = ?').get(id) as unknown as EventRow);
+		},
+		/** Calls a plan off: it stays stored (it counts toward the persona's limits), but no agenda reads it. Answers whether it stood. */
+		cancelEvent(id: number): boolean {
+			return db.prepare('UPDATE events SET cancelled_at = ? WHERE id = ? AND cancelled_at IS NULL').run(now(), id).changes > 0;
+		},
+		/** A plan by its id, standing or called off. */
+		eventById(id: number): StoredEvent | undefined {
+			const row = db.prepare('SELECT * FROM events WHERE id = ?').get(id) as unknown as EventRow | undefined;
+			return row && toEvent(row);
+		},
+		/** The persona's standing plans from one local date to another, both included, in order. */
+		events(persona: string, from: LocalDate, to: LocalDate): StoredEvent[] {
+			const rows = standingEvents.all(persona, dayKey(from), dayKey(to)) as unknown as EventRow[];
+			return rows.map(toEvent);
+		},
+		/** How many plans the persona made itself (`source` persona) since `since`, called off or not: of `kind`, and with `personId`, when given. */
+		eventsMadeSince(persona: string, since: number, { kind, personId }: { kind?: CalendarEvent['kind']; personId?: number } = {}): number {
+			return (
+				db
+					.prepare(
+						`SELECT COUNT(*) AS n FROM events WHERE persona = ? AND source = 'persona' AND created_at >= ?${kind ? ' AND kind = ?' : ''}${personId !== undefined ? ' AND person_id = ?' : ''}`,
+					)
+					.get(persona, since, ...(kind ? [kind] : []), ...(personId !== undefined ? [personId] : [])) as unknown as { n: number }
+			).n;
 		},
 		/** Plans a first message to the person (one pending per person: a pending one is closed as `replaced`). Answers it. */
 		planOpener(persona: string, personId: number, plan: { kind: OpenerKind; about: string; dueAt: number; expiresAt: number }): Opener {
@@ -525,7 +637,7 @@ export function createStore(db: Database, now: () => number = Date.now) {
 		},
 		/**
 		 * Forgets one person: their messages, notes, familiarity and affinity, accounts, the relationship levels shown to
-		 * them and the audit lines about them. The deny list and minor flags (keyed by account, shared by every persona) are
+		 * them (and a plan its calendar didn't take, to tell them about) and the audit lines about them. The deny list and minor flags (keyed by account, shared by every persona) are
 		 * kept, so a forgotten account that was deny-listed stays so. Someone who asked to stop, was blocked or denied
 		 * (`state` not `active`) is kept too, since forgetting them would let the persona answer them again, unless
 		 * `includeEnded`. Answers whether anyone was forgotten (false: no such person, or they were kept).
@@ -536,7 +648,7 @@ export function createStore(db: Database, now: () => number = Date.now) {
 			inTransaction(db, () => {
 				db.prepare('DELETE FROM messages WHERE person_id = ?').run(personId);
 				db.prepare('DELETE FROM identities WHERE person_id = ?').run(personId);
-				db.prepare('DELETE FROM kv WHERE persona = ? AND key = ?').run(row.persona, `relationship:${personId}`);
+				db.prepare('DELETE FROM kv WHERE persona = ? AND key IN (?, ?)').run(row.persona, `relationship:${personId}`, `calendarRefused:${personId}`);
 				db.prepare("DELETE FROM audit WHERE persona = ? AND json_extract(detail, '$.personId') = ?").run(row.persona, personId);
 				db.prepare('DELETE FROM people WHERE id = ?').run(personId);
 			});
@@ -545,7 +657,7 @@ export function createStore(db: Database, now: () => number = Date.now) {
 		/**
 		 * Forgets everything one persona knows: all its people (as `forgetPerson`, so those who asked to stop, were blocked
 		 * or denied are kept unless `includeEnded`), with their messages, and its own kv (self notes, when it was last
-		 * online, the levels shown) and audit lines. Another persona's data, the deny list and the minor flags are untouched.
+		 * online, the levels shown), calendar and audit lines. Another persona's data, the deny list and the minor flags are untouched.
 		 * Answers how many people and messages were deleted. A persona with ended people kept keeps their audit lines too.
 		 */
 		resetPersona(persona: string, { includeEnded = false }: { includeEnded?: boolean } = {}): { people: number; messages: number } {
@@ -559,6 +671,7 @@ export function createStore(db: Database, now: () => number = Date.now) {
 					db.prepare('DELETE FROM people WHERE id = ?').run(id);
 				}
 				db.prepare('DELETE FROM kv WHERE persona = ?').run(persona);
+				db.prepare('DELETE FROM events WHERE persona = ?').run(persona);
 				if (includeEnded || kept === 0) db.prepare('DELETE FROM audit WHERE persona = ?').run(persona);
 				else {
 					// Those about people kept stay; so do none about anyone forgotten

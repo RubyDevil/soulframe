@@ -9,6 +9,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Its calendar, off by default** (`settings.calendar`): plans laid over the agenda its schedule draws, so its days go
+  the way it said. A DM turn may put a plan of its own in it (`plan` in the answer format: somewhere it will be, busy
+  and so offline then, "at a cousin's birthday"), make time to chat with the person at an hour it would be offline, or
+  call one of its plans off by its number; the app may add its own (`store.addEvent`). The model only proposes: the
+  code checks each plan against guardrails no setting relaxes (a short reason of plain words, never sleep or school;
+  time made to chat between 7 AM and midnight, over no busy block, never more online in a day than its schedule's
+  longest day and one such time, once per person a week; limits per week and days ahead) and audits the outcome
+  (`plan_added`, `plan_cancelled`, `plan_refused`). A plan it refused is told, once, to the next turn with that person,
+  so a promise the model made ("sure, 3 tomorrow" while at work) can be put right. A busy plan cuts the day's online
+  time and busy blocks (a dentist's hour splits a work day); time made to chat is online time for every channel. DM
+  turns and openers list the coming plans (`calendar.shown`), and its time lines include them. Interruptions stay the
+  routine's.
+- `brain.hours`: the persona's hours with its calendar (the persona itself while the calendar is off), which its reply
+  queue reads; give them to `spanAt`, `fullyOnline` and `watchSpans` so a plan moves your view of its online time too.
+- The store's calendar: `addEvent`, `cancelEvent`, `eventById`, `events`, `eventsMadeSince`, and the `StoredEvent`
+  type. Their `events` table is made when the store opens; `sweep` deletes the events called off, `resetPersona` a
+  persona's calendar, and a forgotten person's plans stay without them.
 - **Its week in the prompt.** Every prompt with a time line (DM turns, openers, group-chat lines) now gives its usual
   week, made from its `schedule` alone, every range at its middle ("Monday to Friday you're at work from about 9:00 AM
   to 5:15 PM and online from about 7:30 PM to 11:45 PM. Saturday and Sunday you're …"), after the identity line where a
@@ -149,6 +166,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- A model that now and then answers nothing at all (one in testing did, about one call in twenty) failed the turn into a
+  retry 1 to 4 minutes later, a long silence in a live chat: the model client now asks once more at once.
 - A model that takes only its default temperature (OpenAI's reasoning models, among others) failed every request with
   a 400: the model client now asks again without a `temperature` when a provider refuses one, and sends that model
   none from then on. OpenAI's `gpt-5` models still get none from the start.

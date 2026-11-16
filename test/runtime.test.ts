@@ -2342,3 +2342,35 @@ describe('on a step clock (Runtime.timers)', () => {
 		expect(robinsView.filter((message) => message.direction === 'in').map((message) => message.at)).toEqual(sent.filter((message) => message.from === 'sky').map((message) => message.at));
 	});
 });
+
+describe('its calendar (brain.hours)', () => {
+	const OCT_14 = { year: 2026, month: 10, day: 14 };
+	const settings = timelineOf({ calendar: { enabled: true } });
+
+	it('parks a message that comes in during a plan of its own, until the plan is over', async () => {
+		const store = memoryStore();
+		store.addEvent('test', { kind: 'busy', day: OCT_14, from: 19 * 60, to: 21 * 60, what: 'at the dentist' });
+		// 20:00: inside its usual hours, but at the dentist until 21:00
+		const { log, message, close } = start({ settings, store, now: at(20) });
+		try {
+			await message('hi');
+			expect(logged(log, 'reply_waiting')).toEqual([{ personId: 1, platform: 'forum', reason: 'offline', backlog: 1, nextOpenAt: '2026-10-14T21:00:00.000Z' }]);
+		} finally {
+			close();
+		}
+	});
+
+	it('answers in time it made to chat, outside its usual hours', async () => {
+		const store = memoryStore();
+		store.addEvent('test', { kind: 'online', day: OCT_14, from: 12 * 60, to: 13 * 60 });
+		const { log, message, conversation, close } = start({ settings, store, now: at(12, 15) });
+		try {
+			await message('hi');
+			expect(logged(log, 'reply_waiting')).toEqual([]);
+			await vi.advanceTimersByTimeAsync(MINUTE);
+			expect(conversation.send.mock.calls).toEqual([['hey you']]);
+		} finally {
+			close();
+		}
+	});
+});

@@ -391,3 +391,76 @@ describe('openers', () => {
 		expect(store.firstInAfter(sam.id, Date.UTC(2026, 9, 17))).toBeNull();
 	});
 });
+
+describe('calendar events', () => {
+	const friday = { year: 2026, month: 11, day: 20 };
+	const saturday = { year: 2026, month: 11, day: 21 };
+
+	it('keeps a plan with its day and times, lists the standing ones in order, and calls one off once', () => {
+		let at = 1_000;
+		const store = memoryStore(() => at);
+		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const dinner = store.addEvent('robin', { kind: 'busy', day: saturday, from: 18 * 60, to: 22 * 60, what: ' at a friend’s for dinner ', personId: sam.id, source: 'persona' });
+		const call = store.addEvent('robin', { kind: 'online', day: friday, from: 15 * 60, to: 16 * 60, what: 'ignored for online time' });
+		expect(dinner).toEqual({ id: dinner.id, persona: 'robin', kind: 'busy', day: saturday, from: 1080, to: 1320, what: 'at a friend’s for dinner', personId: sam.id, source: 'persona', createdAt: 1_000, cancelledAt: null });
+		// The app's by default, its online time with no reason
+		expect(call).toMatchObject({ kind: 'online', what: '', personId: null, source: 'app' });
+		expect(store.events('robin', friday, saturday).map((event) => event.id)).toEqual([call.id, dinner.id]);
+		expect(store.events('robin', saturday, saturday).map((event) => event.id)).toEqual([dinner.id]);
+		expect(store.events('kim', friday, saturday)).toEqual([]);
+		at = 2_000;
+		expect(store.cancelEvent(dinner.id)).toBe(true);
+		expect(store.cancelEvent(dinner.id)).toBe(false);
+		expect(store.eventById(dinner.id)?.cancelledAt).toBe(2_000);
+		expect(store.events('robin', friday, saturday).map((event) => event.id)).toEqual([call.id]);
+	});
+
+	it('refuses times that make no block, and a busy plan without what it is', () => {
+		const store = memoryStore();
+		for (const [from, to] of [[600, 600], [600, 500], [-10, 60], [1440, 1500], [0, 1441], [600.5, 700]]) {
+			expect(() => store.addEvent('robin', { kind: 'online', day: friday, from: from!, to: to! })).toThrow('Not a calendar block');
+		}
+		expect(() => store.addEvent('robin', { kind: 'busy', day: friday, from: 600, to: 700, what: '  ' })).toThrow('needs what it is');
+		// Past midnight, up to 24 hours
+		expect(store.addEvent('robin', { kind: 'online', day: friday, from: 1380, to: 1500 }).to).toBe(1500);
+	});
+
+	it("counts the plans it made itself since a time, called off or not, by kind and person; never the app's", () => {
+		let at = 1_000;
+		const store = memoryStore(() => at);
+		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const kim = store.createPerson('robin', 'chat', 'kim', 'Kim');
+		const plan = { day: friday, from: 600, to: 700, source: 'persona' as const };
+		store.cancelEvent(store.addEvent('robin', { ...plan, kind: 'busy', what: 'at the dentist', personId: sam.id }).id);
+		at = 2_000;
+		store.addEvent('robin', { ...plan, kind: 'online', personId: sam.id });
+		store.addEvent('robin', { ...plan, kind: 'online', personId: kim.id });
+		store.addEvent('robin', { kind: 'busy', day: friday, from: 600, to: 700, what: 'at work' });
+		expect(store.eventsMadeSince('robin', 0)).toBe(3);
+		expect(store.eventsMadeSince('robin', 1_500)).toBe(2);
+		expect(store.eventsMadeSince('robin', 0, { kind: 'busy' })).toBe(1);
+		expect(store.eventsMadeSince('robin', 0, { kind: 'online', personId: sam.id })).toBe(1);
+		expect(store.eventsMadeSince('kim', 0)).toBe(0);
+	});
+
+	it('keeps the plans of someone forgotten without them, sweeps those called off, and resets with the persona', () => {
+		let at = 1_000;
+		const store = memoryStore(() => at);
+		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const call = store.addEvent('robin', { kind: 'online', day: friday, from: 600, to: 700, personId: sam.id, source: 'persona' });
+		const off = store.addEvent('robin', { kind: 'busy', day: friday, from: 800, to: 900, what: 'at the dentist' });
+		store.addEvent('kim', { kind: 'busy', day: friday, from: 800, to: 900, what: 'at the gym' });
+		store.cancelEvent(off.id);
+		store.set('robin', `calendarRefused:${sam.id}`, '{"reason":"busy"}');
+		expect(store.forgetPerson(sam.id)).toBe(true);
+		expect(store.eventById(call.id)?.personId).toBeNull();
+		expect(store.get('robin', `calendarRefused:${sam.id}`)).toBeNull();
+		at = 5_000;
+		store.sweep(2_000);
+		expect(store.eventById(off.id)).toBeUndefined();
+		expect(store.eventById(call.id)).toBeDefined();
+		store.resetPersona('robin');
+		expect(store.events('robin', friday, friday)).toEqual([]);
+		expect(store.events('kim', friday, friday)).toHaveLength(1);
+	});
+});

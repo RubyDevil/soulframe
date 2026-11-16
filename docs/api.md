@@ -492,6 +492,7 @@ The application's content policy: soulframe applies none of its own beyond `Chan
 ```ts
 interface Brain {
 	readonly persona: Persona;     // as createBrain was given it
+	readonly hours: Hours;         // its persona's hours, with its calendar while settings.calendar is on
 	readonly settings: Settings;   // createBrain's, the persona's own pacing and relationship over them
 	incoming(channel: Channel, externalId: string, name: string, message: string | IncomingMessage, at?: number): Decision;
 	outgoing(channel: Channel, externalId: string, name: string, text: string, at?: number): Person | undefined;
@@ -510,6 +511,10 @@ interface Brain {
 }
 ```
 
+- **`hours`**: what its agenda is read from: the persona's hours (`{ id, timezone, schedule }`), with its calendar's
+  plans laid over them while `settings.calendar` is on ([concepts](./concepts.md#its-calendar)), the persona itself
+  while off. Its reply queue reads them; give them to `spanAt`, `fullyOnline` and `watchSpans` too, so a plan of its
+  own moves your view of its online time as well.
 - **`incoming`**: a message someone wrote on `channel` as `name`, now unless `at` says when (one read late).
   Synchronous, so a catch-up keeps its order. Records the message (creating the person on a first one; on a newer
   message under another name, the person takes that name), counts a new conversation after
@@ -854,7 +859,8 @@ interface StepClock {
 function spanAt(hours: { id: string; timezone: string; schedule: ScheduleConfig }, at: number, channel?: ChannelId): Span | null;
 ```
 
-The span open at `at` on `channel` (on any channel when left out), else `null`.
+The span open at `at` on `channel` (on any channel when left out), else `null`. Give it `brain.hours` for the agenda
+with its calendar's plans (`settings.calendar`), a persona for its routine alone.
 
 ### `fullyOnline`
 
@@ -874,6 +880,7 @@ interface Span {
 	end: number;
 	on?: readonly ChannelId[]; // undefined: every channel
 	day: { year: number; month: number; day: number }; // the agenda day it belongs to
+	event?: number; // the calendar event that made it (time it made to chat), if one did
 }
 ```
 
@@ -955,8 +962,15 @@ interface Store {
 	accountOpenedSince(personId: number, since: number): boolean;
 	firstInAfter(personId: number, after: number): number | null;
 	quietPeople(persona: string, quietSince: number): { person: Person; lastAt: number }[];
+	addEvent(persona: string, event: { kind: 'busy' | 'online'; day: LocalDate; from: number; to: number; what?: string; personId?: number | null; source?: 'persona' | 'app' }): StoredEvent;
+	cancelEvent(id: number): boolean;
+	eventById(id: number): StoredEvent | undefined;
+	events(persona: string, from: LocalDate, to: LocalDate): StoredEvent[];
+	eventsMadeSince(persona: string, since: number, only?: { kind?: 'busy' | 'online'; personId?: number }): number;
 }
 ```
+
+`LocalDate` is a date in the persona's time zone: `{ year: number; month: number; day: number }`.
 
 `Media` is what is stored with a message that had photos or links: `{ images: { url?: string; alt?: string; seen?: string;
 failed?: true }[]; links: (LinkPreview & { looked?: true })[] }`. A photo keeps its `url` until it was looked at, then
@@ -978,7 +992,8 @@ failed?: true }[]; links: (LinkPreview & { looked?: true })[] }`. A photo keeps 
 - **`get`**, **`set`**: small values by persona and key (`set` with `null` deletes). The package uses `selfNotes` and
   `lastOnlineAt` per persona, and the persona `'*'` for token counts and minor flags.
 - **`audit`**, **`auditLog`**: the audit log (newest first, default 50, for one persona or all).
-- **`sweep`**: deletes messages, audit lines and closed openers older than `before`. The application sweeps its own tables.
+- **`sweep`**: deletes messages, audit lines, closed openers and calendar events called off before `before`. The
+  application sweeps its own tables.
 - **`block`**, **`unblock`**: by hand, for an operator. `block` makes an active person `blocked`: the persona ignores
   what they write and cuts a reply under way. `unblock` makes someone `stopped` (they asked to stop) or `blocked`
   `active` again. Both are audited with `source: 'manual'`, answer whether anything changed, and only touch the store:
@@ -993,7 +1008,7 @@ failed?: true }[]; links: (LinkPreview & { looked?: true })[] }`. A photo keeps 
   who asked to stop, was blocked or denied is kept too, since forgetting them would let the persona answer them
   again; `{ includeEnded: true }` forgets them as well. Answers whether anyone was forgotten.
 - **`resetPersona`**: deletes everything one persona knows: its people and their messages (ended people kept, as
-  above), its kv (self notes, when it was last online) and its audit lines (kept for ended people kept). Other personas,
+  above), its kv (self notes, when it was last online), its calendar and its audit lines (kept for ended people kept). Other personas,
   the deny list and the minor flags are untouched. Answers how many people and messages went. For a fresh start in
   development, or a persona retired and brought back; nothing asks for confirmation, so guard it in your tooling.
 
@@ -1012,6 +1027,40 @@ OpenerOutcome | null }`, pending while `closedAt` is `null`. `OpenerKind` is `'f
 - **`firstInAfter`**: when the person first wrote after a time, or `null`. **`quietPeople`**: the persona's active people
   who wrote to it before, are owed no turn and whose last message either way (`lastAt`) is at `quietSince` or before,
   closest first: those it may check in with or share with.
+
+Calendar events are the plans in a persona's calendar (`settings.calendar`, [concepts](./concepts.md#its-calendar)),
+read only while it is on:
+
+- **`addEvent`**: puts a plan in the persona's calendar: `busy`, offline from `from` to `to` (minutes of its local
+  `day`; `to` past 1440 runs past midnight, 24 hours at most) with `what` as its reason, completing "you're ..." ("at
+  the team day"); or `online`, time it is online for every channel. `source` is `'app'` unless given: the app's plans
+  are its own to check (the persona's own go through the code's guardrails before they get here). Throws on times that
+  make no block, or a busy plan without `what`. Answers it.
+- **`cancelEvent`**: calls a plan off: it stays stored (a plan the persona made counts toward its limits) but no agenda
+  reads it. Answers whether it stood. **`eventById`**: one by id, standing or called off.
+- **`events`**: the persona's standing plans from one date to another, both included, in order: what its agenda lays
+  over each drawn day. **`eventsMadeSince`**: how many it made itself since a time, called off or not, by kind and
+  person when given: what its guardrails count. A forgotten person's plans stay, with `personId` `null`.
+
+### `StoredEvent`
+
+```ts
+interface StoredEvent {
+	id: number;
+	persona: string;
+	kind: 'busy' | 'online';
+	day: { year: number; month: number; day: number }; // its local date
+	from: number; // minutes of that day
+	to: number;   // past 1440: past midnight
+	what: string; // a busy plan's reason, completing "you're ..."; '' for online time
+	personId: number | null; // whom it was made with (time made to chat is for them); null once forgotten
+	source: 'persona' | 'app'; // the persona's own, made in a DM turn, or the app's (addEvent)
+	createdAt: number;
+	cancelledAt: number | null; // null while it stands
+}
+```
+
+A plan in a persona's calendar, as the store keeps it (`addEvent`, `events`).
 
 ### `Person`
 

@@ -1,5 +1,5 @@
 import { between, seededRng, type Rng } from './rng.js';
-import { addDays, agendaOn, localDateOf, type Hours, type LocalDate } from './schedule.js';
+import { addDays, localDateOf, routineOn, type Hours, type LocalDate } from './schedule.js';
 import { DEFAULT_SETTINGS, MINUTE, SECOND, type Settings, type Shape } from './settings.js';
 
 type Pacing = Settings['pacing'];
@@ -97,10 +97,13 @@ export interface Interruption {
 	end: number;
 }
 
-/** The online time of a day: its online spans (not its breaks), the ones that overlap (on different channels) merged. */
+/**
+ * The online time of a day as its routine draws it (its calendar left out, so a plan never moves the day's
+ * interruptions): its online spans (not its breaks), the ones that overlap (on different channels) merged.
+ */
 const onlineTimeOf = (hours: Hours, date: LocalDate) => {
 	const merged: { start: number; end: number }[] = [];
-	for (const span of agendaOn(hours, date).spans.filter((span) => span.kind === 'online')) {
+	for (const span of routineOn(hours, date).spans.filter((span) => span.kind === 'online')) {
 		const last = merged.at(-1);
 		if (last && span.start <= last.end) last.end = Math.max(last.end, span.end);
 		else merged.push({ start: span.start, end: span.end });

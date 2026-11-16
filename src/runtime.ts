@@ -164,6 +164,8 @@ export function createReplyQueue({
 	act: (personId: number, action: PersonAction) => Promise<void>;
 }) {
 	const { persona, settings } = brain;
+	/** Its hours with its calendar (brain.hours), what every agenda read below goes through; a brain written by hand without them reads its persona's. */
+	const hours = brain.hours ?? persona;
 	const { retries, pacing } = settings;
 	const timers = runtime.timers ?? systemTimers;
 	const sleep = (ms: number) => waitOn(timers, ms);
@@ -280,7 +282,7 @@ export function createReplyQueue({
 		const now = runtime.now();
 		if (away && now < away.end) return true;
 		away = null;
-		const scheduled = interruptionAt(persona, now, pacing);
+		const scheduled = interruptionAt(hours, now, pacing);
 		const fresh = scheduled && !met.has(scheduled.start) ? scheduled : null;
 		if (fresh) met.add(fresh.start);
 		// Those of the days before are long over
@@ -294,7 +296,7 @@ export function createReplyQueue({
 			}
 			return false;
 		}
-		const span = spanAt(persona, now);
+		const span = spanAt(hours, now);
 		const ms = held?.ms ?? fresh!.end - now;
 		held = null;
 		// Its online time is over: what was held is dropped
@@ -472,7 +474,7 @@ export function createReplyQueue({
 	 * reply). A turn due meanwhile waits for its end.
 	 */
 	const heard = (personId: number, channel: ChannelId) => {
-		if (stopped || !spanAt(persona, runtime.now(), channel)) return;
+		if (stopped || !spanAt(hours, runtime.now(), channel)) return;
 		const current = quiet.get(personId);
 		if (current && current.resets >= burst.maxSettleResets) return;
 		const ms = quietMs(runtime.rng, pacing);
@@ -502,7 +504,7 @@ export function createReplyQueue({
 	const due = (personId: number, conversation: Conversation, startNext = true) => {
 		pending.delete(personId);
 		if (runtime.halted()) return haltPark(personId, conversation);
-		if (!spanAt(persona, runtime.now(), conversation.channel.id)) return park(personId, conversation, 'offline');
+		if (!spanAt(hours, runtime.now(), conversation.channel.id)) return park(personId, conversation, 'offline');
 		// Still writing: due once they stop
 		if (quiet.has(personId)) return void settling.set(personId, conversation);
 		const since = firstDue.get(personId) ?? runtime.now();
@@ -559,7 +561,7 @@ export function createReplyQueue({
 		for (const [personId, { conversation, since }] of ready) {
 			// Their earlier turn, stuck past PRESENCE_LEASE, is still under way: this one waits for it to end
 			if (active.has(personId)) continue;
-			const leaving = runtime.halted() || !spanAt(persona, now, conversation.channel.id) || quiet.has(personId);
+			const leaving = runtime.halted() || !spanAt(hours, now, conversation.channel.id) || quiet.has(personId);
 			if (!leaving) {
 				due.push({ personId, conversation, since });
 				continue;
@@ -885,7 +887,7 @@ export function createReplyQueue({
 		if (stopped) return;
 		firstDue.delete(personId);
 		waiting.set(personId, conversation);
-		const next = nextSpan(persona, runtime.now(), { channel: conversation.channel.id });
+		const next = nextSpan(hours, runtime.now(), { channel: conversation.channel.id });
 		runtime.log(persona.id, 'reply_waiting', { personId, platform: conversation.channel.id, reason, backlog: waiting.size, nextOpenAt: next ? new Date(next.start).toISOString() : null });
 		release(personId);
 	};
@@ -895,7 +897,7 @@ export function createReplyQueue({
 		if (drainingId !== null || runtime.halted() || occupied() || (waiting.size && isAway())) return;
 		const now = runtime.now();
 		for (const [personId, conversation] of waiting) {
-			const span = spanAt(persona, now, conversation.channel.id);
+			const span = spanAt(hours, now, conversation.channel.id);
 			if (!span) continue;
 			// The first backlog reply of a span may wait longer, as someone just back
 			const first = span.start !== drainSpanStart ? drawIn(runtime.rng, pacing.returnOnlineReplyDelayMinutes) * MINUTE : 0;
@@ -953,7 +955,7 @@ export function createReplyQueue({
 			return;
 		}
 		const now = runtime.now();
-		const span = spanAt(persona, now, conversation.channel.id);
+		const span = spanAt(hours, now, conversation.channel.id);
 		if (!span) return park(personId, conversation, 'offline');
 		// On its phone while it writes a reply to anyone, and for a while after, unless it was away since; on a short break it is on it anyway
 		const since = occupied() ? 0 : lastActive !== undefined && !awaySince(lastActive) ? now - lastActive : null;
@@ -991,7 +993,7 @@ export function createReplyQueue({
 		!settling.size &&
 		!quiet.size &&
 		drainingId === null &&
-		![...waiting.values()].some((conversation) => spanAt(persona, now, conversation.channel.id)) &&
+		![...waiting.values()].some((conversation) => spanAt(hours, now, conversation.channel.id)) &&
 		!isAway();
 
 	/** The channel to text them first on: the one of the last message between them, else any of theirs, where allowed. */
@@ -1007,10 +1009,10 @@ export function createReplyQueue({
 	 * (initiative.ts planCheckIns, planShare).
 	 */
 	const plan = (now: number) => {
-		const span = [...initiating.keys()].map((channel) => spanAt(persona, now, channel)).find((open) => open?.kind === 'online');
+		const span = [...initiating.keys()].map((channel) => spanAt(hours, now, channel)).find((open) => open?.kind === 'online');
 		if (!span || runtime.store.get(persona.id, 'initiativeSpan') === String(span.start)) return;
 		runtime.store.set(persona.id, 'initiativeSpan', String(span.start));
-		const context = { store: runtime.store, persona, settings, span, now, rng: runtime.rng, reachable: (person: Person) => channelFor(person) !== undefined };
+		const context = { store: runtime.store, persona: hours, settings, span, now, rng: runtime.rng, reachable: (person: Person) => channelFor(person) !== undefined };
 		const planned = [...planCheckIns(context), planShare(context)].filter((opener) => opener !== null);
 		if (planned.length) runtime.log(persona.id, 'openers_planned', { openers: planned.map(({ personId, kind, dueAt }) => ({ personId, kind, dueAt: new Date(dueAt).toISOString() })) });
 	};
@@ -1039,7 +1041,7 @@ export function createReplyQueue({
 			}
 			if (blocked || chosen) continue;
 			const channel = channelFor(person);
-			const span = channel === undefined ? null : spanAt(persona, now, channel);
+			const span = channel === undefined ? null : spanAt(hours, now, channel);
 			if (channel !== undefined && span?.kind === 'online' && span.end - now >= initiative.spanEndMinutes * MINUTE) chosen = { opener, person, channel };
 		}
 		if (!chosen || !idle(now)) return;
@@ -1129,7 +1131,7 @@ export function createReplyQueue({
 			if (tick || stopped) return;
 			tick = timers.setInterval(() => {
 				const now = runtime.now();
-				if (!runtime.dryRun && spanAt(persona, now) && !runtime.halted()) runtime.store.set(persona.id, 'lastOnlineAt', String(now));
+				if (!runtime.dryRun && spanAt(hours, now) && !runtime.halted()) runtime.store.set(persona.id, 'lastOnlineAt', String(now));
 				isAway();
 				drain();
 				next();

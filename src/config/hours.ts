@@ -45,6 +45,25 @@ export const refuseSchool = ({ schedule }: { schedule?: { days: Record<string, {
 	}
 };
 
+/** Words of time spent talking: a busy plan is time away from the phone, never time with them in the chat it came from. */
+const TALK_WORDS = /\b(?:online|chat(?:ting)?|text(?:ing)?|messag(?:e|es|ing)|with (?:them|you))\b/i;
+
+/**
+ * Why the reason of a plan the persona made itself (calendar.ts) is refused, or null: it completes "you're ..." as a
+ * busy reason does, never sleep and never school (in any conversation: what the model writes is held to the strictest),
+ * never talking with them (`online`: a busy plan is offline time), and only words, in one short line (letters, digits,
+ * spaces, and , . ' ’ & -), so a plan can carry no instructions.
+ */
+export const planReasonProblem = (reason: string): string | null => {
+	const text = reason.trim();
+	if (text.length < 2 || text.length > 40) return 'length';
+	if (!/^[\p{L}\p{N} ,.'’&-]+$/u.test(text)) return 'characters';
+	if (SLEEP_WORDS.test(text)) return 'sleep';
+	if (SCHOOL_WORDS.test(text)) return 'school';
+	if (TALK_WORDS.test(text)) return 'online';
+	return null;
+};
+
 const addHoursIssues = (issues: HoursIssue[], ctx: z.RefinementCtx) => {
 	for (const { path, message } of issues) addQuietIssue(ctx, path, message);
 };

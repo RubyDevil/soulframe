@@ -5,8 +5,9 @@ import type { Llm, LlmMessage } from './llm.js';
 import { splitReply } from './pacing.js';
 import { clip, lookedCard, mediaOf, seenIn, timeLimited, unseen, type IncomingMessage, type MessageMedia, type PreviewLink, type SeenImage, type SeenLink } from './perception.js';
 import { hostOf, isStopRequest, MINOR_EXIT, minorSignal, STOP_ACK, stripForeignLinks } from './safety.js';
+import { calendarHours, checkPlan, comingPlans, type PlanProposal } from './calendar.js';
 import { followUpWindow } from './initiative.js';
-import { addDays, agendaOn, busyAt, fullyOnline, isOn, localDateOf, situationAt, usualWeek } from './schedule.js';
+import { addDays, agendaOn, busyAt, fullyOnline, isOn, localDateOf, situationAt, usualWeek, type Hours } from './schedule.js';
 import { DAY, HOUR, MINUTE, ownSettings, SECOND, taskModel, type Settings } from './settings.js';
 import {
 	ADDRESSED_QUESTION,
@@ -25,6 +26,9 @@ import {
 	OPENER_REQUEST,
 	openerTask,
 	shareReasonPrompt,
+	calendarPrompt,
+	clockText,
+	refusedPlanPrompt,
 	planDayText,
 	groupChatGateQuestions,
 	groupChatLineInput,
@@ -95,6 +99,8 @@ export interface ParsedTurn {
 	acceptInvite?: true;
 	/** A plan to text them first later (settings.initiative.followUps): `days` ahead and why, or false to drop the plan pending; `undefined` keeps it. */
 	followUp?: { days: number; about: string } | false;
+	/** A plan for its calendar (settings.calendar), as calendar.ts checks it; `undefined` for none. */
+	plan?: PlanProposal;
 }
 
 const textOrNull = (value: unknown) => (typeof value === 'string' && value.trim() && value.trim().toLowerCase() !== 'null' ? value.trim() : null);
@@ -132,12 +138,22 @@ const replyOnly = (text: string): ParsedTurn | null => {
 };
 
 /** A line that starts like one of the answer's fields ("notes: …", `"reply": …`): JSON that lost its braces. */
-const FIELD_LINE = /^\s*"?(?:reply|notes|self|importance|affinity|action|followUp|acceptInvite)"?\s*:/im;
+const FIELD_LINE = /^\s*"?(?:reply|notes|self|importance|affinity|action|followUp|plan|acceptInvite)"?\s*:/im;
 
 /** A number the model gave, written as one or as a numeric string; else null. */
 const numberOf = (value: unknown) => {
 	const number = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : Number.NaN;
 	return Number.isFinite(number) ? number : null;
+};
+
+/** A `plan` answer read as calendar.ts checks it, or undefined for none or one it can't read: the code checks the rest. */
+const planOf = (value: unknown): PlanProposal | undefined => {
+	if (typeof value !== 'object' || value === null) return undefined;
+	const { cancel, day, from, to, busy, online } = value as Record<string, unknown>;
+	if (typeof cancel === 'number') return { cancel };
+	if (typeof day !== 'number' || typeof from !== 'string' || typeof to !== 'string') return undefined;
+	if (online === true) return { day, from, to, online };
+	return typeof busy === 'string' ? { day, from, to, busy } : undefined;
 };
 
 /** A follow-up the model planned: `{ days, about }` with a whole number of days from 0 and a note, false (or "false") to drop it; else none. */
@@ -171,6 +187,7 @@ export function parseTurn(raw: string, actions: readonly string[] = []): ParsedT
 	const importance = numberOf(json.importance);
 	const affinity = numberOf(json.affinity);
 	const followUp = followUpOf(json.followUp);
+	const plan = planOf(json.plan);
 	return {
 		reply: textOrNull(json.reply),
 		action,
@@ -181,6 +198,7 @@ export function parseTurn(raw: string, actions: readonly string[] = []): ParsedT
 		...(affinity !== null && { affinity: Math.sign(affinity) as -1 | 0 | 1 }),
 		...(json.acceptInvite === true && { acceptInvite: true as const }),
 		...(followUp !== undefined && { followUp }),
+		...(plan !== undefined && { plan }),
 	};
 }
 
@@ -197,6 +215,12 @@ export interface GroupChatLine {
 export interface Brain {
 	/** The persona it is the brain of, as `createBrain` was given it. */
 	readonly persona: Persona;
+	/**
+	 * Its hours, with its calendar while `settings.calendar` is on (calendar.ts calendarHours; the persona itself while
+	 * off): what its agenda is read from (`spanAt`, `watchSpans`), so its plans move its online time. Its reply queue
+	 * reads them here.
+	 */
+	readonly hours: Hours;
 	/** The settings it runs with, the persona's own pacing and relationship over `createBrain`'s: its reply queue reads them here. */
 	readonly settings: Settings;
 	/**
@@ -369,9 +393,51 @@ export function createBrain({
 	const system = (channel: Channel, task: string, dated = false) =>
 		systemPrompt({ personaPrompt: persona.prompt, name: persona.name, identity, ...(dated && { week }), style, channel, rules: rulesOn(channel), task });
 
-	const { initiative } = settings;
+	const { initiative, calendar } = settings;
 	/** Whether a DM turn may plan a follow-up (settings.initiative.followUps): off, its prompt says nothing of it. */
 	const followingUp = initiative.enabled && initiative.followUps.enabled;
+	/** Its hours, with its calendar while that is on: every agenda read below, and its reply queue's, goes through them. */
+	const hours = calendar.enabled ? calendarHours(persona, store) : persona;
+	/** What a DM turn may put in its calendar (prompts.ts planField): none while it may put nothing. */
+	const planning = calendar.enabled && (calendar.plans.enabled || calendar.makeTime.enabled)
+		? { busy: calendar.plans.enabled, maxDays: calendar.plans.maxDays, makeTime: calendar.makeTime.enabled ? { maxMinutes: calendar.makeTime.maxMinutes } : null }
+		: undefined;
+	/** The plan its calendar didn't take at the last kept turn with them, as their next turn is told (prompts.ts refusedPlanPrompt), if any. */
+	const refusedPlan = (personId: number) => {
+		const kept = calendar.enabled ? store.get(persona.id, refusedKey(personId)) : null;
+		if (!kept) return undefined;
+		const { reason, start, end, clash, cancel } = JSON.parse(kept) as { reason: string; start?: number; end?: number; clash?: string; cancel?: number };
+		const when = start !== undefined && end !== undefined ? `${dateTimeText(start, persona.timezone)} to ${clockText(end, persona.timezone)}` : undefined;
+		return refusedPlanPrompt({ reason, ...(when && { when }), ...(clash !== undefined && { clash }), ...(cancel !== undefined && { cancel }) });
+	};
+	/** Its coming plans, as DM turns and openers list them (prompts.ts calendarPrompt); none while its calendar is off. */
+	const calendarLines = () =>
+		calendar.enabled ? calendarPrompt(comingPlans(store, hours, { now: now(), maxDays: calendar.plans.maxDays, shown: calendar.shown }), persona.timezone) : undefined;
+	/** Where the plan its calendar didn't take is kept for the next turn with them (kv), until a turn with them is kept. */
+	const refusedKey = (personId: number) => `calendarRefused:${personId}`;
+	/**
+	 * A plan a kept turn with the person made, if the code allows it (calendar.ts checkPlan): added, called off, or
+	 * refused, each audited. A refused one is kept for the next turn with them to hear about (`refusedPlanPrompt`), but
+	 * for time made to chat when it is online then anyway: no promise is broken.
+	 */
+	const applyPlan = (personId: number, proposal: PlanProposal) => {
+		const checked = checkPlan(proposal, { store, hours, settings: calendar, now: now(), personId });
+		if ('refused' in checked) {
+			store.audit(persona.id, 'plan_refused', { personId, reason: checked.refused });
+			if (checked.refused !== 'already_online') {
+				const told = { reason: checked.refused, ...(checked.block && { start: checked.block.start, end: checked.block.end }), ...(checked.clash !== undefined && { clash: checked.clash }), ...('cancel' in proposal && { cancel: proposal.cancel }) };
+				store.set(persona.id, refusedKey(personId), JSON.stringify(told));
+			}
+			return;
+		}
+		if ('cancel' in checked) {
+			store.cancelEvent(checked.cancel.id);
+			store.audit(persona.id, 'plan_cancelled', { personId, eventId: checked.cancel.id });
+			return;
+		}
+		const event = store.addEvent(persona.id, checked.add);
+		store.audit(persona.id, 'plan_added', { personId, eventId: event.id, kind: event.kind, day: event.day, from: event.from, to: event.to });
+	};
 	const lookLimit = settings.perception.timeoutSeconds * SECOND;
 	const seesImages = !taskModel(settings, 'vision').off;
 
@@ -556,18 +622,18 @@ export function createBrain({
 	 */
 	const dayLines = (channel: ChannelId, dm?: { firstNew: number | undefined }) => {
 		const at = now();
-		const situation = situationAt(persona, at, channel);
+		const situation = situationAt(hours, at, channel);
 		if (!situation) return '';
 		const { context } = settings;
 		const { start, end } = situation.span;
 		const firstNew = dm?.firstNew;
 		const waited = context.awayContext && firstNew !== undefined && firstNew < start;
-		const away = waited ? { since: firstNew, reason: busyAt(persona, firstNew)?.reason ?? null } : null;
+		const away = waited ? { since: firstNew, reason: busyAt(hours, firstNew)?.reason ?? null } : null;
 		const endingSoon = !!dm && end - at <= Math.min(WRAP_UP_MS, (end - start) / 3);
 		// The coming days as they are on this channel: a span only on others is no time to talk here
 		const today = localDateOf(at, persona.timezone);
 		const ahead = Array.from({ length: context.daysAhead }, (_, index) => {
-			const agenda = agendaOn(persona, addDays(today, index + 1));
+			const agenda = agendaOn(hours, addDays(today, index + 1));
 			return { ...agenda, spans: agenda.spans.filter((span) => isOn(span, channel)) };
 		});
 		return dayPrompt(situation, persona.timezone, { now: context.situation, upcoming: context.upcoming, away, endingSoon, ahead });
@@ -575,6 +641,7 @@ export function createBrain({
 
 	return {
 		persona,
+		hours,
 		settings,
 
 		incoming({ id: channel, adult }, externalId, name, message, at = now()) {
@@ -653,7 +720,7 @@ export function createBrain({
 			// Read whether or not the check ran now (another persona may have flagged them), on an 18+ channel only
 			const caution = !!channel.adult && minorCautioned(person);
 			// Group chats only in full online time: on a short break an invitation waits (inviteWaits)
-			const joinNow = fullyOnline(persona, channel.id, now());
+			const joinNow = fullyOnline(hours, channel.id, now());
 			const invitation = channel.invitations ? options.invitation : undefined;
 			const photos = history.some((m) => m.media?.images.length);
 			const links = history.some((m) => m.media?.links.length);
@@ -680,6 +747,9 @@ export function createBrain({
 				affinity: relationship.affinity.enabled,
 				...(photos || links ? { media: { photos, links } } : {}),
 				...(followingUp && { followUp: { maxDays: initiative.followUps.maxDays, pending: pendingPlan(person.id) } }),
+				...(planning && { plan: planning }),
+				calendar: calendarLines(),
+				refusedPlan: refusedPlan(person.id),
 			});
 			const messages: LlmMessage[] = [
 				{ role: 'system', content: system(channel, task, true) },
@@ -712,6 +782,9 @@ export function createBrain({
 					...(turn.importance !== undefined && { importance: turn.importance, importanceAt: now() }),
 				});
 				if (followingUp && turn.followUp !== undefined) planFollowUp(id, turn.followUp);
+				// Its last refused plan was told to this turn: a plan of this one may be refused in turn
+				if (calendar.enabled) store.set(persona.id, refusedKey(id), null);
+				if (planning && turn.plan !== undefined) applyPlan(id, turn.plan);
 				if (action === 'block') {
 					store.updatePerson(id, { state: 'blocked' });
 					store.audit(persona.id, 'blocked', { personId: id, platform: channel.id });
@@ -768,6 +841,7 @@ export function createBrain({
 				}),
 				relationship: settings.context.relationship ? relationshipNow(person) : undefined,
 				...(photos || links ? { media: { photos, links } } : {}),
+				calendar: calendarLines(),
 			});
 			const messages: LlmMessage[] = [
 				{ role: 'system', content: system(channel, task, true) },
