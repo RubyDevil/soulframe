@@ -125,6 +125,8 @@ interface TurnState {
 	keep?: () => void;
 	/** It is an opener (settings.initiative): a message of theirs meanwhile stops it (`superseded`) and gets a turn of its own. */
 	opener?: true;
+	/** Cuts the typing wait under way short once it is `superseded`, after the lag of noticing (`typingWait`). */
+	notice?: () => void;
 }
 
 /**
@@ -312,27 +314,51 @@ export function createReplyQueue({
 			paused() ?? (!stillWanted() ? 'ended' : state?.superseded && state.sent === 0 ? 'superseded' : 'done');
 
 	/**
+	 * Waits `ms` while a turn types, cut short once a newer message of theirs makes its draft start over (`notice`, when it
+	 * is `superseded`): after the lag of noticing it (`watching`), as someone typing sees a new message come in and stops,
+	 * rather than typing a draft out to its end first.
+	 */
+	const typingWait = (state: TurnState, ms: number) =>
+		new Promise<void>((resolve) => {
+			const end = runtime.now() + ms;
+			const done = () => {
+				timers.clearTimeout(timer);
+				if (state.notice === notice) state.notice = undefined;
+				resolve();
+			};
+			let timer = timers.setTimeout(done, ms);
+			const notice = () => {
+				const lag = watchingMs(runtime.rng, pacing);
+				if (runtime.now() + lag >= end) return;
+				timers.clearTimeout(timer);
+				timer = timers.setTimeout(done, lag);
+			};
+			state.notice = notice;
+		});
+
+	/**
 	 * Sends the messages in order, typing before each, and records each one once sent (a dry run only logs it); either
 	 * way the conversation is told it was `delivered`. With `markRead`, their messages are shown read first (the code's
 	 * goodbye: a turn shows them read while it writes). The rest is dropped once paused, no longer `stillWanted`, or the
 	 * draft is to start over (`state.superseded`, before its first message), checked again after each wait, or once a send
 	 * fails: that is never retried, since a send that timed out may still have landed. The first message sent keeps the
-	 * turn (`state.keep`). Typing always ends, sent or not. Answers how many went out and why it stopped.
+	 * turn (`state.keep`). With `typed`, typing already shows (`typingAhead`) and has for that many ms: the first message
+	 * takes that much less to type. Typing always ends, sent or not. Answers how many went out and why it stopped.
 	 */
 	const deliver = async (
 		conversation: Conversation,
 		messages: string[],
 		personId: number,
-		{ stillWanted = () => true, state, markRead = false }: { stillWanted?: () => boolean; state?: TurnState; markRead?: boolean } = {},
+		{ stillWanted = () => true, state, markRead = false, typed = 0 }: { stillWanted?: () => boolean; state?: TurnState; markRead?: boolean; typed?: number } = {},
 	) => {
 		const channel = conversation.channel.id;
 		const cut = cutFor(state, stillWanted);
-		/** Waits `ms`, then answers whether the reply goes on ('done') or why not. */
+		/** Waits `ms` (nothing for none: typing shown ahead may have taken it all), then answers whether the reply goes on ('done') or why not. */
 		const wait = async (ms: number) => {
-			await sleep(ms);
+			if (ms > 0) await (state ? typingWait(state, ms) : sleep(ms));
 			return cut();
 		};
-		let typingShown = false;
+		let typingShown = typed > 0;
 		const typing = async (on: boolean) => {
 			typingShown = on;
 			await conversation.typing(on);
@@ -348,11 +374,14 @@ export function createReplyQueue({
 			}
 			return wait(left);
 		};
-		/** Types `text` as `typingPlan` says: stretches of typing, with typing off for each thinking pause between them; answers as `wait`. */
-		const typeOut = async (text: string) => {
+		/**
+		 * Types `text` as `typingPlan` says: stretches of typing, with typing off for each thinking pause between them, the
+		 * first `ahead` ms shorter (shown already, while the model wrote); answers as `wait`.
+		 */
+		const typeOut = async (text: string, ahead: number) => {
 			const plan = typingPlan(text, runtime.rng, pacing);
-			await typing(true);
-			let reason: Stop = await typeFor(plan.typing[0]!);
+			if (!typingShown) await typing(true);
+			let reason: Stop = await typeFor(Math.max(0, plan.typing[0]! - ahead));
 			for (const [i, pause] of plan.pauses.entries()) {
 				if (reason !== 'done') break;
 				await typing(false);
@@ -370,7 +399,7 @@ export function createReplyQueue({
 			try {
 				// Once, before the first message is typed (nothing follows a failed one)
 				if (!sent && markRead) await conversation.markRead?.();
-				if ((stop = await typeOut(text)) !== 'done') break;
+				if ((stop = await typeOut(text, sent ? 0 : typed)) !== 'done') break;
 				// From here it goes out, and can't be taken back: a newer message gets a turn of its own
 				if (state) state.writing = false;
 				if (runtime.dryRun) runtime.log(persona.id, 'dry_send', { personId, platform: channel, text });
@@ -394,6 +423,8 @@ export function createReplyQueue({
 				if (typingShown) await typing(false);
 			}
 		}
+		// Typing shown ahead for a reply cut before its first message was typed
+		if (typingShown) await typing(false);
 		if (stop === 'halt_switch' || stop === 'stopped' || stop === 'ended') runtime.log(persona.id, 'reply_cancelled', { personId, platform: channel, sent, unsent: messages.length - sent, reason: stop });
 		else if (stop === 'done') {
 			if (!runtime.dryRun) runtime.store.audit(persona.id, 'sent', { personId, platform: channel, messages: messages.length });
@@ -415,6 +446,44 @@ export function createReplyQueue({
 		}
 		await sleep(readingMs(chars, runtime.rng, pacing) + lookingMs(images, runtime.rng, pacing));
 		return cut();
+	};
+
+	/**
+	 * Typing shown while the model still writes, once their messages are read, as a person starts typing once they have
+	 * read: the model's time counts as typing, so it is not dead air before it. `start` shows it (again every
+	 * `typingRefreshMs`) while the model writes, until `written`; `handOver` answers how long it showed, typing left on
+	 * for `deliver` (0 if it never started); `end` turns it off when no message follows (none written, a failure, a draft
+	 * started over). A refused `typing` call is left for `deliver`'s own calls to meet.
+	 */
+	const typingAhead = (conversation: Conversation) => {
+		let since: number | null = null;
+		let refresh: unknown;
+		let settled = false;
+		const show = () => void conversation.typing(true).catch(() => undefined);
+		const settle = () => {
+			settled = true;
+			timers.clearInterval(refresh);
+			return since === null ? 0 : runtime.now() - since;
+		};
+		return {
+			start() {
+				if (settled || since !== null) return;
+				since = runtime.now();
+				show();
+				const every = conversation.typingRefreshMs ?? 0;
+				if (every > 0) refresh = timers.setInterval(show, every);
+			},
+			/** The model is done: no typing starts ahead from now on. */
+			written() {
+				if (since === null) settled = true;
+			},
+			handOver: settle,
+			async end() {
+				const shown = since !== null && !settled;
+				settle();
+				if (shown) await conversation.typing(false).catch(() => undefined);
+			},
+		};
 	};
 
 	/** Resolves once they have been quiet for their `pacing.burst.settleSeconds` (at once when they are, or once stopped). */
@@ -707,17 +776,23 @@ export function createReplyQueue({
 			const photos = toRead.reduce((sum, m) => sum + (m.media?.images.length ?? 0), 0);
 			readUpTo = through;
 			runtime.log(persona.id, 'reply_processing', { personId, platform: channel });
-			// It reads them while the model writes
-			const reading = read(conversation, personId, readChars, photos, cut);
+			// It reads them while the model writes, and types once it has read them, the model still writing or not
+			const ahead = typingAhead(conversation);
+			const reading = read(conversation, personId, readChars, photos, cut).then((stop) => {
+				if (stop === 'done') ahead.start();
+				return stop;
+			});
 			let composed: Turn;
 			try {
 				composed = await brain.compose(personId, conversation.channel, { invitation: invitation?.name, extraLines: conversation.extraLines });
+				ahead.written();
 				failures.delete(personId);
 				providerWaits.delete(personId);
 			} catch (error) {
 				// The turn ends here, its reading left to finish on its own: the next try is timed from now, and the next person need not wait
 				state.writing = false;
 				void reading;
+				await ahead.end();
 				// A message that was to make it start over gets a turn of its own, if no retry answers it
 				if (state.superseded) owedAfter.set(personId, conversation);
 				// A stopped queue tries nothing again: they are still owed at the next start
@@ -726,6 +801,7 @@ export function createReplyQueue({
 			}
 			const readStop = await reading;
 			if (state.superseded && !composed.final) {
+				await ahead.end();
 				if (await restart(personId, conversation, state)) continue;
 				return;
 			}
@@ -743,7 +819,7 @@ export function createReplyQueue({
 				const { sent, stop } =
 					readStop === 'failed' || readStop === 'unreachable'
 						? { sent: 0, stop: readStop }
-						: await deliver(conversation, composed.messages, personId, { stillWanted: composed.final ? undefined : stillWanted, state });
+						: await deliver(conversation, composed.messages, personId, { stillWanted: composed.final ? undefined : stillWanted, state, typed: ahead.handOver() });
 				if (stop === 'superseded') {
 					if (await restart(personId, conversation, state)) continue;
 					return;
@@ -761,6 +837,7 @@ export function createReplyQueue({
 				}
 				commit();
 			} else {
+				await ahead.end();
 				commit();
 				runtime.store.audit(persona.id, 'left_on_read', { personId, platform: channel });
 				runtime.log(persona.id, 'reply_skipped', { personId, platform: channel, reason: 'no_reply' });
@@ -886,6 +963,7 @@ export function createReplyQueue({
 		if (during?.opener) {
 			if (!during.superseded) runtime.log(persona.id, 'opener_superseded_by_message', { personId, platform: conversation.channel.id });
 			during.superseded = true;
+			during.notice?.();
 			owedAfter.set(personId, conversation);
 			return;
 		}
@@ -893,6 +971,7 @@ export function createReplyQueue({
 			if (burst.restartOnNewMessage && during.writing && during.restarts < burst.maxRestarts) {
 				if (!during.superseded) runtime.log(persona.id, 'reply_superseded', { personId, platform: conversation.channel.id });
 				during.superseded = true;
+				during.notice?.();
 			} else {
 				owedAfter.set(personId, conversation);
 				runtime.log(persona.id, 'reply_after_turn', { personId, platform: conversation.channel.id });

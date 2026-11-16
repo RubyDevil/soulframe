@@ -29,6 +29,9 @@ differently.
   conversation matters right now, whether it still has their chat open, and how long they have waited.
 - **Now and then it is away** for a few minutes, never in the middle of a conversation that matters.
 - **Bursts.** It waits for someone who writes several messages in a row to stop, and answers them together.
+- **It types once it has read.** Its typing shows as soon as their messages are read, while the model may still be
+  writing the reply: the model's time counts as typing, so there is no silence before the indicator. With a model
+  slower than the typing, the message goes out as the model is done.
 - **Relationships.** It gets to know people (familiarity) and comes to like or dislike them (affinity), slowly, from
   what their conversations meant. The prompt describes both in sentences you can rewrite.
 
@@ -89,11 +92,12 @@ wait for the reply under way to be sent, since it answers one person at a time.
 
 | Key | Default | What it does |
 | --- | --- | --- |
-| `halfLifeSeconds` | `90` | How long it stays on its phone after its last reply to anyone. Right after it, certainly; after 90 seconds, half the time; after 3 minutes, a quarter. Raise it for a persona that keeps its phone in hand. An interruption since then means it put the phone down. |
+| `holdSeconds` | `60` | How long it certainly stays on its phone after its last reply to anyone, waiting for the answer, as someone who just texted does: an answer within a minute always finds it there. An interruption since then means it put the phone down. |
+| `halfLifeSeconds` | `90` | How fast it puts the phone down after that: 90 seconds past `holdSeconds` (2.5 minutes after its reply), half the time; after 4 minutes, a quarter. Raise both for a persona that keeps its phone in hand. |
 | `chatHalfLifeSeconds` | `90` | The same for one person's chat: the chance it still has their chat open. It changes no one's timing: it only gives that person up to three times the weight when several are waiting. |
-| `medianSeconds` | `4` | The lag before it notices a message while on its phone: half are shorter than this. |
-| `p90Seconds` | `8` | Nine in ten lags are shorter than this. |
-| `delaySeconds` | `[2, 20]` | The shortest and longest lag. |
+| `medianSeconds` | `1.5` | The lag before it notices a message while on its phone: half are shorter than this. |
+| `p90Seconds` | `4` | Nine in ten lags are shorter than this. |
+| `delaySeconds` | `[0.5, 10]` | The shortest and longest lag. |
 
 On a short break it is on its phone the whole time: this lag is the only delay there.
 
@@ -157,9 +161,9 @@ Decisions API on, a typed check can rate new messages before the model reads the
 
 | Key | Default | What it does |
 | --- | --- | --- |
-| `settleSeconds` | `[2, 5]`, lognormal | How long they must be quiet before it starts writing the reply. Each new message starts the wait again. `[0, 0]`: no wait. |
+| `settleSeconds` | `[0.5, 2]`, lognormal | How long they must be quiet before it starts writing the reply. Each new message starts the wait again. `[0, 0]`: no wait. |
 | `maxSettleResets` | `3` | How many messages may start that wait again; past them it starts anyway, so someone who never stops still gets a reply. |
-| `restartOnNewMessage` | `true` | A message that comes in while the reply is being written, before its first message goes out, drops the draft: it is written again with that message read. `false`: the reply goes out as planned, and the message gets a reply of its own after. Once the first message of a reply is being sent, it is never restarted. |
+| `restartOnNewMessage` | `true` | A message that comes in while the reply is being written, before its first message goes out, drops the draft: its typing stops once it notices the message (after the `watching` lag), and it is written again with that message read. `false`: the reply goes out as planned, and the message gets a reply of its own after. Once the first message of a reply is being sent, it is never restarted. |
 | `maxRestarts` | `1` | How many times in a row one reply may be dropped and written again. Each dropped draft cost a whole reply's tokens: the config check warns above 1. |
 
 Nothing of a dropped draft is sent or kept: its notes, block, action and the change it would have made to familiarity
@@ -212,11 +216,11 @@ least and the most:
 
 | Key | What is drawn | Default |
 | --- | --- | --- |
-| `pacing.typingCharsPerSecond` | typing speed | `[3.5, 7]`, normal |
+| `pacing.typingCharsPerSecond` | typing speed: a fast texter's, about 55 to 95 words a minute | `[4.5, 8]`, normal |
 | `pacing.readingCharsPerSecond` | reading speed | `[15, 25]`, normal |
 | `pacing.looking` | the time spent on each photo | `[1.5, 5]`, lognormal |
 | `pacing.thinkingPauses.seconds` | a pause while typing a long message | `[2, 6]`, lognormal |
-| `pacing.burst.settleSeconds` | the quiet waited for after their newest message | `[2, 5]`, lognormal |
+| `pacing.burst.settleSeconds` | the quiet waited for after their newest message | `[0.5, 2]`, lognormal |
 | `pacing.betweenReplyMessagesSeconds` | the pause between two messages of one reply | `[0.8, 3.5]`, lognormal |
 | `pacing.backlogGapSeconds` | the pause before each catch-up reply as it comes online | `[30, 150]`, lognormal |
 | `pacing.returnOnlineReplyDelayMinutes` | the extra wait before the first of them | `[0, 0]`, lognormal |

@@ -190,11 +190,14 @@ described above: one `typing(true)` per message, the typing time, the send, one 
   after its last signal, while a long message may be typed for up to `pacing.typingDurationSeconds` (45 seconds by
   default). Give how long one signal shows, or a little less, and the queue calls `typing(true)` again at that rhythm
   until the message is sent. It checks the halt switch, `queue.stop()` and the person's state at each one, so a reply
-  cut short stops typing then, not at the end of the typing time.
+  cut short stops typing then, not at the end of the typing time. A newer message of theirs that makes the draft start
+  over stops typing once it is noticed (the `pacing.watching` lag), with or without `typingRefreshMs`.
 - **`markRead()`**: shows the person their messages were read (a read receipt). The queue calls it as it starts
   writing a reply (again for a draft written again with a newer message), and reads what they wrote while the model
-  writes, as long as that takes (15 to 25 characters a second by default, 1 to 20 seconds, plus `pacing.looking` per photo): typing starts once both
-  are done. That reading happens without `markRead` too. A reply halted or cancelled before then types nothing. A
+  writes, as long as that takes (15 to 25 characters a second by default, 0.3 to 20 seconds, plus `pacing.looking` per photo): typing starts once it
+  has read them, while the model may still be writing, and the time it showed counts toward the first message's typing
+  time; if the model then writes nothing, fails or the draft starts over, that typing ends with one `typing(false)`.
+  That reading happens without `markRead` too. A reply halted or cancelled before then types nothing. A
   rejection counts as a failed delivery, as for `typing`: swallow it if a missing receipt doesn't matter. A turn the
   persona leaves on read shows their messages read too, as a person who read them and chose not to answer.
 - **Thinking pauses** are the brain's setting, not the adapter's (`pacing.thinkingPauses`, off by default): a long

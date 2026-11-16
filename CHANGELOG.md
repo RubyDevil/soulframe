@@ -47,6 +47,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   every default filled in, every problem returned with its path (an unknown key with the nearest known one).
 - `createBrain({ settings })` (required: `parseSettings({})` gives every default), and `brain.persona` and
   `brain.settings`, which the reply queue reads.
+- `pacing.watching.holdSeconds` (default 60): how long it certainly stays on its phone after its last reply, waiting
+  for the answer, before the chance that it still is starts to halve (`halfLifeSeconds`). It used to start halving at
+  once, so someone answering ten seconds later found it gone about one time in thirteen, and waited for its next look
+  at its messages (40 seconds typically, minutes now and then) in the middle of a live chat. `0` keeps the old curve.
 - `settingsWarnings(settings)`: the warnings about settings that `personaWarnings` used to give (`pacing.burst.maxRestarts`
   above 1, no text provider).
 - `Policy.sfw`: the safe-for-work rule, now the application's policy (`createBrain({ policy: { sfw: true } })`), in the
@@ -89,6 +93,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   it went), and `createConfiguredDecisions` takes the service settings' `decisions`, giving `DISABLED_DECISIONS` while
   it is off. A brain's `settings.decisions` keeps which checks it asks and their thresholds.
 - `vision` never takes the default model in the model client either (it already never did in the brain).
+- **Its typing shows while the model writes.** A DM reply's typing now starts once their messages are read, the model
+  still writing or not, and the time it showed counts toward the first message's typing time, so the person no longer
+  sees their message read and then nothing for as long as the model takes. If the model writes nothing, fails or the
+  draft starts over, that typing ends (one `typing(false)`).
+- **A draft that starts over stops typing once the newer message is noticed** (after the `pacing.watching` lag), not
+  when it would have been typed out: someone who adds a second text no longer watches the old draft being typed for
+  up to its whole typing time first.
+- **Faster defaults for a live chat**, measured on texting-style conversations against a live model:
+  `pacing.watching` noticing lag `medianSeconds` 1.5 (was 4), `p90Seconds` 4 (was 8), `delaySeconds` `[0.5, 10]` (was
+  `[2, 20]`); `pacing.burst.settleSeconds` `[0.5, 2]` (was `[2, 5]`); `pacing.typingCharsPerSecond` `[4.5, 8]` (was
+  `[3.5, 7]`), a fast texter's speed; `pacing.typingDurationSeconds` `[0.8, 45]` (was `[1.5, 45]`);
+  `pacing.readingDurationSeconds` `[0.3, 20]` (was `[1, 20]`). A short text in an active chat now shows typing about
+  3 to 4 seconds after theirs and arrives a few seconds later. Set the old values to keep the old pace.
 
 ### Removed
 

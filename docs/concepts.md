@@ -171,7 +171,8 @@ delivers:
   Each of these values is drawn from its range with a shape that fits it: speeds on a bell curve around the middle,
   waits and pauses skewed like the time people take (see [configuration](./configuration.md#settings)).
   While the model writes the reply, it reads what they wrote, as long as that takes at its reading speed
-  (`readingCharsPerSecond`, `readingDurationSeconds`, then `looking` per photo); typing starts once both are done. Three opt-in touches make it
+  (`readingCharsPerSecond`, `readingDurationSeconds`, then `looking` per photo); typing starts once it has read them,
+  the model still writing or not, and the model's time counts as typing, so the indicator comes without a silence first. Three opt-in touches make it
   look closer to a person typing: the conversation's `typingRefreshMs` keeps the
   indicator on while a long message is typed (platforms drop it after a few seconds), its `markRead()` shows their
   messages read as it starts writing the reply, and `thinkingPauses` lets typing

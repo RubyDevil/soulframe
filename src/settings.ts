@@ -293,23 +293,25 @@ export const SettingsSchema = z
 		pacing: z
 			.object({
 				/**
-				 * While it is on its phone, a new message from anyone is noticed after a short lag: right after a turn with
-				 * anyone the chance starts at 1 and halves every `halfLifeSeconds` (1 while it writes a reply), so a live
+				 * While it is on its phone, a new message from anyone is noticed after a short lag: after a turn with anyone the
+				 * chance is 1 for `holdSeconds`, then halves every `halfLifeSeconds` (1 while it writes a reply), so a live
 				 * conversation with one person doesn't leave another waiting for its next glance, and a pause of a few minutes
 				 * means it put the phone down. An interruption since then (`interruptions`) means it looked away.
 				 */
 				watching: z
 					.object({
-						/** Seconds after its last turn with anyone over which the chance that it is still on its phone halves. */
+						/** Seconds after its last turn with anyone that it is certainly still on its phone, waiting for the answer, before that chance starts to halve. */
+						holdSeconds: z.number().min(0).max(3600).default(60),
+						/** Seconds after `holdSeconds` over which the chance that it is still on its phone halves. */
 						halfLifeSeconds: z.number().min(1).max(3600).default(90),
 						/** Seconds after its last turn with someone over which the chance that it still has their chat open halves: their weight when several wait (`priority`). */
 						chatHalfLifeSeconds: z.number().min(1).max(3600).default(90),
 						/** The lag before it answers while watching (also every delay on a short break, when it is on its phone anyway): half are shorter than this, in seconds. */
-						medianSeconds: z.number().min(0.1).max(600).default(4),
+						medianSeconds: z.number().min(0.1).max(600).default(1.5),
 						/** …and nine in ten shorter than this (above the median): how far the slow ones go. */
-						p90Seconds: z.number().min(0.1).max(3600).default(8),
+						p90Seconds: z.number().min(0.1).max(3600).default(4),
 						/** The shortest and longest, in seconds. */
-						delaySeconds: range(2, 20),
+						delaySeconds: range(0.5, 10),
 					})
 					.strict()
 					.default({})
@@ -375,13 +377,13 @@ export const SettingsSchema = z
 					.strict()
 					.default({}),
 				/** Typing speed, in characters per second; the typing indicator shows for as long as the message would take. */
-				typingCharsPerSecond: drawn(3.5, 7, 'normal', 0.5),
+				typingCharsPerSecond: drawn(4.5, 8, 'normal', 0.5),
 				/** The shortest and longest the typing indicator shows for one message, in seconds (thinking pauses come on top). */
-				typingDurationSeconds: range(1.5, 45),
+				typingDurationSeconds: range(0.8, 45),
 				/** Reading speed, in characters per second: before it types, it spends as long as it takes to read what they wrote (the unread messages together). */
 				readingCharsPerSecond: drawn(15, 25, 'normal', 1),
 				/** The shortest and longest the reading takes, in seconds. */
-				readingDurationSeconds: range(1, 20),
+				readingDurationSeconds: range(0.3, 20),
 				/** Seconds it spends on each photo, on top of the reading. */
 				looking: drawn(1.5, 5, 'lognormal'),
 				/** Pauses while typing a long message: the indicator goes off a moment, as when someone stops to think, then on again. */
@@ -405,7 +407,7 @@ export const SettingsSchema = z
 				burst: z
 					.object({
 						/** Seconds of quiet after their newest message before it starts writing the reply; a message in that time starts the wait again. [0, 0] for none. */
-						settleSeconds: drawn(2, 5, 'lognormal'),
+						settleSeconds: drawn(0.5, 2, 'lognormal'),
 						/** The most messages that may start the wait again; past them it starts writing anyway, so someone who never stops still gets a reply. */
 						maxSettleResets: z.number().int().min(0).max(20).default(3),
 						/**

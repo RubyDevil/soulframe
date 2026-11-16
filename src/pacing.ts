@@ -67,11 +67,12 @@ export function skewedMs(rng: Rng, { medianSeconds, p90Seconds, delaySeconds: [l
 }
 
 /**
- * The chance that it is still on its phone `sinceMs` after its last turn with anyone: 1 at once, halving every
- * `watching.halfLifeSeconds` (or every `halfLifeSeconds` given, as `watching.chatHalfLifeSeconds` for one chat).
+ * The chance that it is still on its phone `sinceMs` after its last turn with anyone: 1 for `watching.holdSeconds`
+ * (someone who just texted waits a while for the answer), then halving every `watching.halfLifeSeconds` (or every
+ * `halfLifeSeconds` given, as `watching.chatHalfLifeSeconds` for one chat).
  */
 export const watchingChance = (sinceMs: number, pacing: Pacing = DEFAULT_SETTINGS.pacing, halfLifeSeconds = pacing.watching.halfLifeSeconds) =>
-	0.5 ** (Math.max(0, sinceMs) / (halfLifeSeconds * SECOND));
+	0.5 ** (Math.max(0, sinceMs - pacing.watching.holdSeconds * SECOND) / (halfLifeSeconds * SECOND));
 
 /** The lag before it answers while it is watching their chat (`watching`): the only delay on a short break. */
 export const watchingMs = (rng: Rng, pacing: Pacing = DEFAULT_SETTINGS.pacing) => skewedMs(rng, pacing.watching);

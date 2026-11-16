@@ -398,11 +398,12 @@ Unknown keys here are refused.
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `watching.halfLifeSeconds` | number, 1 to 3600 | `90` | While it writes a reply to anyone it is on its phone; after, the chance it still is starts at 1 and halves every this many seconds (an interruption since ends it). On its phone, a message from anyone is noticed after the short lag below. |
+| `watching.holdSeconds` | number, 0 to 3600 | `60` | While it writes a reply to anyone it is on its phone, and for this many seconds after, waiting for the answer (an interruption since ends it). On its phone, a message from anyone is noticed after the short lag below. |
+| `watching.halfLifeSeconds` | number, 1 to 3600 | `90` | After `holdSeconds`, the chance it is still on its phone halves every this many seconds. |
 | `watching.chatHalfLifeSeconds` | number, 1 to 3600 | `90` | The same for one person's chat: the chance it still has it open, which weighs who goes first when several wait (`priority`). |
-| `watching.medianSeconds` | number, 0.1 to 600 | `4` | The lag before it answers while watching (also every delay on a short break, when it is on its phone anyway): half are shorter. |
-| `watching.p90Seconds` | number, 0.1 to 3600 | `8` | Nine in ten are shorter; above `medianSeconds`. |
-| `watching.delaySeconds` | range | `[2, 20]` | The shortest and longest lag. |
+| `watching.medianSeconds` | number, 0.1 to 600 | `1.5` | The lag before it answers while watching (also every delay on a short break, when it is on its phone anyway): half are shorter. |
+| `watching.p90Seconds` | number, 0.1 to 3600 | `4` | Nine in ten are shorter; above `medianSeconds`. |
+| `watching.delaySeconds` | range | `[0.5, 10]` | The shortest and longest lag. |
 | `glance.medianSeconds` | number, 1 to 3600 | `40` | Off its phone: the time until it next looks at its messages, drawn when the first message comes in; everyone who writes before that look is noticed at it, together. Half its looks come sooner. |
 | `glance.p90Seconds` | number, 1 to 7200 | `150` | Nine in ten come sooner; above `medianSeconds`: how long the tail is. |
 | `glance.delaySeconds` | range | `[4, 900]` | The shortest and longest of those; the least is also the shortest time a reply must still fit in its span. |
@@ -413,18 +414,18 @@ Unknown keys here are refused.
 | `priority.weighted` | boolean | `true` | When several are due at once: picked at random by weight (closeness, how much their conversation matters now, whether it still watches their chat, how long they waited). `false`: in the order they came due. |
 | `priority.agingMinutes` | number, 0.1 to 120 | `2` | Minutes of waiting that add their whole weight again (1 + waited / agingMinutes): nobody waits forever. |
 | `priority.importanceHalfLifeMinutes` | number, 1 to 1440 | `30` | Minutes over which the importance of their conversation fades halfway back to an ordinary chat's. |
-| `typingCharsPerSecond` | drawn range, floor 0.5, normal | `[3.5, 7]` | The typing indicator shows for as long as the message would take. |
-| `typingDurationSeconds` | range | `[1.5, 45]` | The shortest and longest typing time for one message (thinking pauses come on top). |
+| `typingCharsPerSecond` | drawn range, floor 0.5, normal | `[4.5, 8]` | The typing indicator shows for as long as the message would take (a fast texter's speed). It starts once their messages are read, while the model may still be writing: the model's time counts as typing. |
+| `typingDurationSeconds` | range | `[0.8, 45]` | The shortest and longest typing time for one message (thinking pauses come on top). |
 | `readingCharsPerSecond` | drawn range, floor 1, normal | `[15, 25]` | How fast it reads: before typing it waits as long as their unread messages (together) take to read, with or without a `markRead` receipt (see [channels](./channels.md#typing-read-receipts-and-thinking-pauses)). |
-| `readingDurationSeconds` | range | `[1, 20]` | The shortest and longest that reading takes. |
+| `readingDurationSeconds` | range | `[0.3, 20]` | The shortest and longest that reading takes. |
 | `looking` | drawn | `[1.5, 5]`, lognormal | Seconds it spends on each photo, on top of the reading. |
 | `thinkingPauses.chance` | number, 0 to 1 | `0` | The chance of each pause while a long message is typed (typing off a moment, then on again); `0`: none. |
 | `thinkingPauses.minChars` | integer, 1 or more | `120` | The shortest message, in characters, that may have a pause. |
 | `thinkingPauses.max` | integer, 1 to 3 | `2` | The most pauses in one message. |
 | `thinkingPauses.seconds` | drawn range, lognormal | `[2, 6]` | How long each pause lasts; it adds to the typing time. Unknown keys under `thinkingPauses` are refused too. |
-| `burst.settleSeconds` | drawn range, lognormal | `[2, 5]` | Quiet after their newest message before it starts writing the reply: a message in that time starts the wait again. `[0, 0]` for none. |
+| `burst.settleSeconds` | drawn range, lognormal | `[0.5, 2]` | Quiet after their newest message before it starts writing the reply: a message in that time starts the wait again. `[0, 0]` for none. |
 | `burst.maxSettleResets` | integer, 0 to 20 | `3` | The most messages that may start that wait again; past them it starts writing anyway. |
-| `burst.restartOnNewMessage` | boolean | `true` | A message that comes in while it writes the reply, before the reply's first message is sent, drops the draft: it is written again with that message read. `false`: that message gets a turn of its own once this one is sent. |
+| `burst.restartOnNewMessage` | boolean | `true` | A message that comes in while it writes the reply, before the reply's first message is sent, drops the draft: typing stops once it notices (the `watching` lag), and it is written again with that message read. `false`: that message gets a turn of its own once this one is sent. |
 | `burst.maxRestarts` | integer, 1 to 5 | `1` | The most times in a row one reply may be written again so. Each dropped draft was paid for (a whole DM turn of tokens): `settingsWarnings` warns above 1 (`personaWarnings` for a persona's own). Unknown keys under `burst` are refused too. |
 | `betweenReplyMessagesSeconds` | drawn range, lognormal | `[0.8, 3.5]` | Between two messages of the same reply. |
 | `replySplitChance` | number, 0 to 1 | `0.35` | Chance that a single reply over 90 characters is sent as two messages. |

@@ -739,8 +739,9 @@ interface Conversation {
 Where a reply goes, implemented by a channel adapter: see [channels](./channels.md). Each stretch of typing is one
 `typing(true)` (repeated every `typingRefreshMs` ms when given, while the message is typed) and one `typing(false)`;
 a thinking pause (`pacing.thinkingPauses`) ends one stretch and starts the next. While the model writes a reply, the
-unread messages are read for as long as they take (`pacing.readingCharsPerSecond`, plus `pacing.looking` per photo), and `markRead()`, when given, is
-called as that starts (again for a draft written again: a turn left on read shows them read too); a rejection from it,
+unread messages are read for as long as they take (`pacing.readingCharsPerSecond`, plus `pacing.looking` per photo), then typing
+starts while the model may still be writing (that time counts toward the first message's typing), and `markRead()`, when given, is
+called as the reading starts (again for a draft written again: a turn left on read shows them read too); a rejection from it,
 as from `typing`, counts as a failed delivery. Without either, the calls are one `typing(true)`, the
 typing time, `send`, one `typing(false)` per message. `delivered(text)`, when given, is called after each message of
 a reply went out (once `send` resolved), and in a dry run after each message logged in place of sending; never for
