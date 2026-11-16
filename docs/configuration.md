@@ -482,12 +482,14 @@ within `typingDurationSeconds`; a message of `thinkingPauses.minChars` or more t
 
 ### `context`
 
-`false` leaves that text out of the prompt; nothing else changes (hours, presence and pacing included).
+`false` (or `0`) leaves that text out of the prompt; nothing else changes (hours, presence and pacing included).
 
 | Key | Type | Default | What the model is told |
 | --- | --- | --- | --- |
 | `situation` | boolean | `true` | What it is doing now; in a DM near the end of a span, the wrap-up. |
 | `upcoming` | boolean | `true` | What comes next and when it is online again. |
+| `week` | boolean | `true` | Its usual week, from its `schedule` (every range at its middle, rounded): "Monday to Friday you're at work from about 9:00 AM to 5:15 PM and online from about 7:30 PM to 11:45 PM. …", in DMs, openers and group chats, so it can say what it does on a Thursday or at the weekend. The same every day, early in the prompt, where a provider's prompt cache keeps it. |
+| `daysAhead` | integer, 0 to 7 | `3` | How many days after today it is told exactly, as its agenda drew them: "Tomorrow you're at work from about 9:10 AM to 5:20 PM and online from about 7:45 PM to 11:50 PM. …", a day off and a skipped one too. `0`: none. |
 | `awayContext` | boolean | `true` | In DMs, that their messages came in while it was offline. |
 | `relationship` | boolean | `true` | In DMs, how well it knows and likes the person, and how that went lately (`relationship`). |
 | `timeSince` | boolean | `true` | How long since each side wrote in DMs, and since the last line in a group chat. |

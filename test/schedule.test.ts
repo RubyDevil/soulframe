@@ -11,6 +11,7 @@ import {
 	onlineMinutesByWeekday,
 	situationAt,
 	spanAt,
+	usualWeek,
 	zonedToUtc,
 	type Hours,
 	type LocalDate,
@@ -490,5 +491,40 @@ describe('onlineMinutesByWeekday', () => {
 		expect(onlineMinutesByWeekday(ScheduleSchema.parse(everyDay(['19:00', '20:00'], ['01:00', '02:00'])))).toEqual(Array(7).fill(360));
 		// 20:00 to 00:15 and the 15-minute break on weekdays
 		expect(onlineMinutesByWeekday(LENA.schedule)).toEqual([270, 270, 270, 270, 270, 0, 0]);
+	});
+});
+
+describe('usualWeek', () => {
+	it('gives each weekday its blocks in order at the middle of their ranges, from the config alone', () => {
+		const [monday, , , , friday, saturday] = usualWeek(LENA.schedule);
+		expect(monday).toEqual({
+			weekday: 0,
+			blocks: [
+				{ kind: 'busy', reason: 'at work', from: 9 * 60, to: 17 * 60 + 30, chance: 1 },
+				{ kind: 'break', from: 12 * 60 + 30, to: 12 * 60 + 45, chance: 1 },
+				{ kind: 'online', from: 20 * 60, to: 24 * 60 + 15, chance: 1 },
+			],
+			skipDayChance: 0,
+		});
+		expect(friday).toEqual({ ...monday, weekday: 4 });
+		expect(saturday).toEqual({ weekday: 5, blocks: [], skipDayChance: 0 });
+	});
+
+	it('rounds a usual time to the quarter hour, and keeps chances and the skip chance', () => {
+		const schedule = ScheduleSchema.parse({
+			skipDayChance: 0.2,
+			days: {
+				'mon-sat': { online: [{ start: ['18:50', '19:20'], end: ['23:05', '23:35'], chance: 0.7 }], breaks: [{ start: ['12:07', '12:07'], minutes: [10, 20] }] },
+				sun: { skipDayChance: 0, online: [{ start: ['10:00', '10:00'], end: ['12:00', '12:00'] }] },
+			},
+		});
+		const [monday, , , , , , sunday] = usualWeek(schedule);
+		// The middles 19:05 and 23:20 round to 19:00 and 23:15; the break's 12:07 to 12:00, for its middle 15 minutes
+		expect(monday!.blocks).toEqual([
+			{ kind: 'break', from: 12 * 60, to: 12 * 60 + 15, chance: 1 },
+			{ kind: 'online', from: 19 * 60, to: 23 * 60 + 15, chance: 0.7 },
+		]);
+		expect(monday!.skipDayChance).toBe(0.2);
+		expect(sunday!.skipDayChance).toBe(0);
 	});
 });

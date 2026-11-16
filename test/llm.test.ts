@@ -352,7 +352,7 @@ describe('SettingsSchema', () => {
 		expect(parsed.relationship).toEqual({ familiarity: { growth: 0.012, fadeHalfLifeDays: 60 }, affinity: { enabled: true, step: 0.05, fadeHalfLifeDays: 0 }, hysteresis: 0.05 });
 		expect(parsed.pacing.priority).toEqual({ weighted: true, agingMinutes: 2, importanceHalfLifeMinutes: 30 });
 		expect(parsed.decisions.importance).toEqual({ enabled: true });
-		expect(parsed.context).toEqual({ situation: true, upcoming: true, awayContext: true, relationship: true, timeSince: true });
+		expect(parsed.context).toEqual({ situation: true, upcoming: true, week: true, daysAhead: 3, awayContext: true, relationship: true, timeSince: true });
 		expect(parsed.pacing.watching).toEqual({ holdSeconds: 60, halfLifeSeconds: 90, chatHalfLifeSeconds: 90, medianSeconds: 1.5, p90Seconds: 4, delaySeconds: [0.5, 10] });
 		expect(parsed.pacing.glance).toEqual({ medianSeconds: 40, p90Seconds: 150, delaySeconds: [4, 900] });
 		expect(parsed.pacing.interruptions).toEqual({ meanMinutes: 40, minutes: { range: [2, 8], shape: 'lognormal' }, holdAtImportance: 2, calmMinutes: 5 });

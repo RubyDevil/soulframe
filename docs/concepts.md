@@ -89,9 +89,17 @@ While a span is open, the brain tells the model its **situation**, each part beh
 
 - what it is doing now: free and online until about a time, or on a short break from a busy block;
 - what comes next: back to that busy block, the next busy block within 36 hours, when it will be online again;
+- the coming days, exactly as its agenda drew them (`daysAhead`, 3 by default): "Tomorrow you're at work from about
+  9:10 AM to 5:20 PM and online from about 7:45 PM to 11:50 PM. …", so "are you free Thursday?" gets the answer the
+  code will keep;
 - in a DM, that the person's messages came in while it was offline (and where it was);
 - in a DM near the end of a span (the last 10 minutes, or the last third of a shorter span), a nudge to wrap up and
   say bye rather than vanish.
+
+Every prompt with a time line (DM turns, openers, group-chat lines) also gives its **usual week** (`week`), made from
+the schedule alone, every range at its middle: "Monday to Friday you're at work from about 9:00 AM to 5:15 PM and
+online from about 7:30 PM to 11:45 PM. Saturday and Sunday you're …". It reads the same every day, early in the
+prompt, where a provider's prompt cache keeps it, and it never words the night as sleep: offline is offline.
 
 Times are rounded to 5 minutes ("until about 12:50 PM"): its day is only roughly planned. Outside its spans the
 reply queue keeps replies in the backlog; only the code's goodbyes (see [Safeguards and policy](#safeguards-and-policy))
@@ -391,6 +399,8 @@ they are):
 | --- | --- |
 | `situation` | What it is doing now, and near the end of a span in a DM, the wrap-up. |
 | `upcoming` | What comes next, and when it will be online again. |
+| `week` | Its usual week, from its schedule. |
+| `daysAhead` | The coming days (3 by default; 0 for none), as its agenda drew them. |
 | `awayContext` | In DMs, that their messages came in while it was offline. |
 | `relationship` | In DMs, how well it knows the person. |
 | `timeSince` | How long since each side wrote in DMs, and since the last line in a group chat. |

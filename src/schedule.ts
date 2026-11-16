@@ -474,6 +474,51 @@ export function situationAt(hours: Hours, now: number, channel: ChannelId): Situ
 /** Always the middle of a range. */
 const MIDDLE: Rng = () => 0.5;
 
+/** A block of a usual day: its kind, its times in minutes of the day (past 1440 for one that runs past midnight), how often it happens. */
+export interface UsualBlock {
+	kind: 'online' | 'break' | 'busy';
+	/** A busy block's reason, completing "you're ...". */
+	reason?: string;
+	from: number;
+	to: number;
+	/** Its `chance`: 1 every day it is planned. */
+	chance: number;
+}
+/** A weekday as its plan usually goes (`usualWeek`): its blocks in order, and the chance of a day with no online time. */
+export interface UsualDay {
+	weekday: Weekday;
+	blocks: readonly UsualBlock[];
+	skipDayChance: number;
+}
+
+/** Minutes rounded to the nearest quarter hour: a usual time is only ever roughly that. */
+const quarter = (minutes: number) => Math.round(minutes / 15) * 15;
+
+/**
+ * How each weekday usually goes, Monday first, from the config alone (never a drawn day, so it stays the same every
+ * day): every block at the middle of its ranges, rounded to the quarter hour, with its chance; a break at its middle
+ * start, as long as its middle length. What a prompt says of the persona's usual week (prompts.ts usualWeekPrompt).
+ */
+export function usualWeek(schedule: ScheduleConfig): UsualDay[] {
+	return WEEKDAYS.map((_, index) => {
+		const weekday = index as Weekday;
+		const plan = planFor(schedule, weekday);
+		const ranged = (kind: 'online' | 'busy', block: { start: ClockRange; end: ClockRange; chance: number }, reason?: string): UsualBlock => {
+			const [from, to] = timesOf(MIDDLE, block);
+			return { kind, ...(reason !== undefined && { reason }), from: quarter(from), to: quarter(to), chance: block.chance };
+		};
+		const blocks: UsualBlock[] = [
+			...(plan?.online ?? []).map((block) => ranged('online', block)),
+			...(plan?.busy ?? []).map((block) => ranged('busy', block, block.reason)),
+			...(plan?.breaks ?? []).map((block) => {
+				const from = quarter(pick(MIDDLE, rangeOf(block.start)));
+				return { kind: 'break' as const, from, to: from + between(MIDDLE, ...block.minutes), chance: block.chance };
+			}),
+		];
+		return { weekday, blocks: blocks.sort((a, b) => a.from - b.from), skipDayChance: plan?.skipDayChance ?? schedule.skipDayChance };
+	});
+}
+
 /** Online minutes on each weekday (0 = Monday), from the middle of every range, chances and skips aside: for a config check's warnings. */
 export function onlineMinutesByWeekday(schedule: ScheduleConfig): number[] {
 	return WEEKDAYS.map((_, weekday) => {

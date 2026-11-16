@@ -6,7 +6,7 @@ import { splitReply } from './pacing.js';
 import { clip, lookedCard, mediaOf, seenIn, timeLimited, unseen, type IncomingMessage, type MessageMedia, type PreviewLink, type SeenImage, type SeenLink } from './perception.js';
 import { hostOf, isStopRequest, MINOR_EXIT, minorSignal, STOP_ACK, stripForeignLinks } from './safety.js';
 import { followUpWindow } from './initiative.js';
-import { busyAt, fullyOnline, situationAt } from './schedule.js';
+import { addDays, agendaOn, busyAt, fullyOnline, isOn, localDateOf, situationAt, usualWeek } from './schedule.js';
 import { DAY, HOUR, MINUTE, ownSettings, SECOND, taskModel, type Settings } from './settings.js';
 import {
 	ADDRESSED_QUESTION,
@@ -44,6 +44,7 @@ import {
 	STOP_QUESTION,
 	stopQuestion,
 	systemPrompt,
+	usualWeekPrompt,
 	type Level,
 	type Trend,
 } from './prompts.js';
@@ -361,9 +362,12 @@ export function createBrain({
 	/** The rules on `channel`: the 18+ line on an adult one, the sfw line of an sfw policy, then the app's. */
 	const rulesOn = (channel: Channel) => [...(channel.adult ? [ADULTS_ONLY_RULE] : []), ...(policy.sfw ? [SFW_RULE] : []), ...(policy.rules ?? [])];
 
-	// Every prompt's text is in prompts.ts (and the channel's, in the app's Channel); this only fills in the persona
-	const system = (channel: Channel, task: string) =>
-		systemPrompt({ personaPrompt: persona.prompt, name: persona.name, identity, style, channel, rules: rulesOn(channel), task });
+	/** Its usual week (settings.context.week), the same in every prompt with a time line: drawn once from its schedule. */
+	const week = settings.context.week ? usualWeekPrompt(usualWeek(persona.schedule)) : undefined;
+	// Every prompt's text is in prompts.ts (and the channel's, in the app's Channel); this only fills in the persona.
+	// `dated`: a task with a time line, which its usual week goes with
+	const system = (channel: Channel, task: string, dated = false) =>
+		systemPrompt({ personaPrompt: persona.prompt, name: persona.name, identity, ...(dated && { week }), style, channel, rules: rulesOn(channel), task });
 
 	const { initiative } = settings;
 	/** Whether a DM turn may plan a follow-up (settings.initiative.followUps): off, its prompt says nothing of it. */
@@ -560,7 +564,13 @@ export function createBrain({
 		const waited = context.awayContext && firstNew !== undefined && firstNew < start;
 		const away = waited ? { since: firstNew, reason: busyAt(persona, firstNew)?.reason ?? null } : null;
 		const endingSoon = !!dm && end - at <= Math.min(WRAP_UP_MS, (end - start) / 3);
-		return dayPrompt(situation, persona.timezone, { now: context.situation, upcoming: context.upcoming, away, endingSoon });
+		// The coming days as they are on this channel: a span only on others is no time to talk here
+		const today = localDateOf(at, persona.timezone);
+		const ahead = Array.from({ length: context.daysAhead }, (_, index) => {
+			const agenda = agendaOn(persona, addDays(today, index + 1));
+			return { ...agenda, spans: agenda.spans.filter((span) => isOn(span, channel)) };
+		});
+		return dayPrompt(situation, persona.timezone, { now: context.situation, upcoming: context.upcoming, away, endingSoon, ahead });
 	};
 
 	return {
@@ -672,7 +682,7 @@ export function createBrain({
 				...(followingUp && { followUp: { maxDays: initiative.followUps.maxDays, pending: pendingPlan(person.id) } }),
 			});
 			const messages: LlmMessage[] = [
-				{ role: 'system', content: system(channel, task) },
+				{ role: 'system', content: system(channel, task, true) },
 				...history.map((m): LlmMessage => ({ role: m.direction === 'in' ? 'user' : 'assistant', content: messageWithMedia(m) })),
 			];
 			const turn = parseTurn(await llm.complete(messages, { task: 'directMessage', json: true }), channel.actions?.map(({ name }) => name));
@@ -760,7 +770,7 @@ export function createBrain({
 				...(photos || links ? { media: { photos, links } } : {}),
 			});
 			const messages: LlmMessage[] = [
-				{ role: 'system', content: system(channel, task) },
+				{ role: 'system', content: system(channel, task, true) },
 				...history.map((m): LlmMessage => ({ role: m.direction === 'in' ? 'user' : 'assistant', content: messageWithMedia(m) })),
 				{ role: 'user', content: OPENER_REQUEST },
 			];
@@ -813,7 +823,7 @@ export function createBrain({
 			});
 			const raw = await llm.complete(
 				[
-					{ role: 'system', content: system(chat, task) },
+					{ role: 'system', content: system(chat, task, true) },
 					{ role: 'user', content: transcript },
 				],
 				{ task: 'groupChat', json: true },

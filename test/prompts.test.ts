@@ -36,8 +36,9 @@ import {
 	rulesPrompt,
 	stopQuestion,
 	systemPrompt,
+	usualWeekPrompt,
 } from '../src/prompts.js';
-import { addDays, parseClock, situationAt, zonedToUtc, type Busy, type LocalDate, type Situation, type Span } from '../src/schedule.js';
+import { addDays, parseClock, situationAt, usualWeek, zonedToUtc, type Busy, type DayAgenda, type LocalDate, type Situation, type Span, type UsualBlock, type UsualDay } from '../src/schedule.js';
 import { DEFAULT_SETTINGS, MINUTE, SettingsSchema } from '../src/settings.js';
 import { NOTED_DM, PLAIN_DM, SNOOZE, TEST_IDENTITY, TEST_STYLE } from './fixtures.js';
 
@@ -355,10 +356,104 @@ describe('the day (dayPrompt)', () => {
 		expect(directMessageTimePrompt({ localTime: 'Tuesday 12:41 PM', day: '' })).toBe('It is Tuesday 12:41 PM for you.');
 	});
 
+	describe('the coming days (ahead)', () => {
+		/** Tuesday evening's span, with the agendas of `days` days from Wednesday. */
+		const agendaOf = (day: LocalDate, fields: Partial<DayAgenda> = {}): DayAgenda => ({ day, skipped: false, spans: [eveningOn(day)], busy: [workOn(day)], ...fields });
+		const ahead = (days: DayAgenda[]) => dayPrompt(inEvening, zone, { ...all, now: false, ahead: days });
+
+		it('says each day whole, and leaves what comes next on those days to it', () => {
+			expect(ahead([agendaOf(wed), agendaOf(addDays(wed, 1))])).toBe(
+				`Tomorrow you're at work from about 8:45 AM to 5:20 PM and online from about 8:05 PM to 11:40 PM. On Thursday you're at work from about 8:45 AM to 5:20 PM and online from about 8:05 PM to 11:40 PM. ${AWARE_PROMPT}`,
+			);
+			// What comes next on a day past the list is still said, after the list
+			const later = { ...inEvening, nextBusy: workOn(addDays(wed, 2)), nextOnline: eveningOn(addDays(wed, 2)) };
+			expect(dayPrompt(later, zone, { ...all, now: false, ahead: [agendaOf(wed, { spans: [], busy: [] })] })).toBe(
+				`Tomorrow you're offline all day. On Friday you're at work from 8:45 AM. You'll be online again on Friday around 8:05 PM. ${AWARE_PROMPT}`,
+			);
+		});
+
+		it('says a day without online time is not online, and gives its short breaks', () => {
+			const lunchOn = (day: LocalDate): Span => ({ kind: 'break', start: at(day, '12:38'), end: at(day, '12:52'), day });
+			expect(ahead([agendaOf(wed, { spans: [] }), agendaOf(addDays(wed, 1), { spans: [lunchOn(addDays(wed, 1))] }), agendaOf(addDays(wed, 2), { spans: [lunchOn(addDays(wed, 2)), eveningOn(addDays(wed, 2))] })])).toBe(
+				[
+					"Tomorrow you're at work from about 8:45 AM to 5:20 PM and not online.",
+					"On Thursday you're at work from about 8:45 AM to 5:20 PM, on your phone for a few minutes around 12:40 PM and not online otherwise.",
+					"On Friday you're at work from about 8:45 AM to 5:20 PM, on your phone for a few minutes around 12:40 PM and online from about 8:05 PM to 11:40 PM.",
+					AWARE_PROMPT,
+				].join(' '),
+			);
+			// Two online spans: the second without its "online"
+			expect(ahead([agendaOf(wed, { busy: [], spans: [online(wed, '10:58', '12:32'), eveningOn(wed)] })])).toBe(
+				`Tomorrow you're online from about 11:00 AM to 12:30 PM and from about 8:05 PM to 11:40 PM. ${AWARE_PROMPT}`,
+			);
+		});
+
+		it('is the only part with now and upcoming off, and nothing with none', () => {
+			expect(dayPrompt(inEvening, zone, { ...all, now: false, upcoming: false, ahead: [agendaOf(wed)] })).toBe(
+				`Tomorrow you're at work from about 8:45 AM to 5:20 PM and online from about 8:05 PM to 11:40 PM. ${AWARE_PROMPT}`,
+			);
+			expect(dayPrompt(inEvening, zone, { ...all, ahead: [] })).toBe(dayPrompt(inEvening, zone, all));
+		});
+	});
+
 	it('never words its day as sleep or school', () => {
 		const away = { since: at(tue, '06:12'), reason: null };
-		const texts = [...[onBreak, { ...onBreak, busy: null }, inEvening].map((situation) => dayPrompt(situation, zone, { ...all, away, endingSoon: true })), AWARE_PROMPT, BREAK_INVITE_PROMPT];
-		for (const text of texts) expect(text).not.toMatch(/sleep|school|student|homework/i);
+		const ahead = [{ day: wed, skipped: true, spans: [], busy: [] }];
+		const texts = [
+			...[onBreak, { ...onBreak, busy: null }, inEvening].map((situation) => dayPrompt(situation, zone, { ...all, away, endingSoon: true, ahead })),
+			usualWeekPrompt(usualWeek(ScheduleSchema.parse({ skipDayChance: 0.5, days: { 'mon-sun': {} } }))),
+			AWARE_PROMPT,
+			BREAK_INVITE_PROMPT,
+		];
+		for (const text of texts) expect(text).not.toMatch(/sleep|bed|school|student|homework/i);
+	});
+});
+
+describe('the usual week (usualWeekPrompt)', () => {
+	const block = (kind: UsualBlock['kind'], from: string, to: string, fields: Partial<UsualBlock> = {}): UsualBlock => ({ kind, from: parseClock(from), to: parseClock(to), chance: 1, ...fields });
+	const day = (weekday: number, blocks: UsualBlock[] = [], skipDayChance = 0): UsualDay => ({ weekday: weekday as UsualDay['weekday'], blocks, skipDayChance });
+	const OPEN = 'Your usual week, roughly (the times vary a little from day to day): ';
+	const CLOSE = " The rest of the time you're offline, going about your day or night. It's how your weeks go, not something to bring up unasked.";
+	const weekOf = (text: string) => `${OPEN}${text}${CLOSE}`;
+	const work = block('busy', '09:00', '17:15', { reason: 'at work' });
+	const evening = block('online', '19:30', '23:45');
+
+	it('puts the days that go the same way together, in the order of their first day', () => {
+		const week = [0, 1, 2, 3, 4].map((weekday) => day(weekday, [work, evening])).concat([5, 6].map((weekday) => day(weekday, [block('online', '20:30', '01:00')])));
+		expect(usualWeekPrompt(week)).toBe(
+			weekOf("Monday to Friday you're at work from about 9:00 AM to 5:15 PM and online from about 7:30 PM to 11:45 PM. Saturday and Sunday you're online from about 8:30 PM to 1:00 AM."),
+		);
+		// Days apart are named one by one, three in a row or more as a range
+		const alternating = [0, 1, 2, 3, 4, 5, 6].map((weekday) => day(weekday, [weekday % 2 ? evening : work]));
+		expect(usualWeekPrompt(alternating)).toBe(
+			weekOf("Monday, Wednesday, Friday and Sunday you're at work from about 9:00 AM to 5:15 PM and not online. Tuesday, Thursday and Saturday you're online from about 7:30 PM to 11:45 PM."),
+		);
+		expect(usualWeekPrompt([0, 1, 2, 3, 4, 5, 6].map((weekday) => day(weekday, weekday === 3 ? [] : [evening])))).toBe(
+			weekOf("Monday to Wednesday and Friday to Sunday you're online from about 7:30 PM to 11:45 PM. Thursday you're offline all day."),
+		);
+		expect(usualWeekPrompt([0, 1, 2, 3, 4, 5, 6].map((weekday) => day(weekday, [evening])))).toBe(weekOf("Every day you're online from about 7:30 PM to 11:45 PM."));
+	});
+
+	it('says how often a block happens, its short breaks, and a day it now and then takes offline', () => {
+		const week = [0, 1, 2, 3, 4, 5, 6].map((weekday) =>
+			day(weekday, [block('break', '12:30', '12:45'), block('online', '10:30', '13:30', { chance: 0.7 }), block('online', '20:30', '01:00', { chance: 0.3 })], 0.1),
+		);
+		expect(usualWeekPrompt(week)).toBe(
+			weekOf(
+				"Every day you're on your phone for a few minutes around 12:30 PM, online from about 10:30 AM to 1:30 PM (most weeks) and from about 8:30 PM to 1:00 AM (some weeks), though now and then you take the whole day offline.",
+			),
+		);
+		// Under one in ten, nothing is said of it; nor on a day with no online time to skip
+		expect(usualWeekPrompt([0, 1, 2, 3, 4, 5, 6].map((weekday) => day(weekday, [evening], 0.05)))).toBe(weekOf("Every day you're online from about 7:30 PM to 11:45 PM."));
+		expect(usualWeekPrompt([0, 1, 2, 3, 4, 5, 6].map((weekday) => day(weekday, [work], 0.5)))).toBe(weekOf("Every day you're at work from about 9:00 AM to 5:15 PM and not online."));
+		expect(usualWeekPrompt([0, 1, 2, 3, 4, 5, 6].map((weekday) => day(weekday, [block('break', '12:30', '12:45')])))).toBe(
+			weekOf("Every day you're on your phone for a few minutes around 12:30 PM and not online otherwise."),
+		);
+	});
+
+	it('words a schedule as written, through usualWeek', () => {
+		const schedule = ScheduleSchema.parse({ days: { 'mon-fri': { busy: [{ reason: 'at work', start: ['08:45', '09:15'], end: ['17:00', '17:30'] }] }, 'sat,sun': {} } });
+		expect(usualWeekPrompt(usualWeek(schedule))).toBe(weekOf("Monday to Friday you're at work from about 9:00 AM to 5:15 PM and not online. Saturday and Sunday you're offline all day."));
 	});
 });
 

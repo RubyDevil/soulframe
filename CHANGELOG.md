@@ -9,6 +9,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Its week in the prompt.** Every prompt with a time line (DM turns, openers, group-chat lines) now gives its usual
+  week, made from its `schedule` alone, every range at its middle ("Monday to Friday you're at work from about 9:00 AM
+  to 5:15 PM and online from about 7:30 PM to 11:45 PM. Saturday and Sunday you're …"), after the identity line where a
+  provider's prompt cache keeps it (`settings.context.week`, on by default); and the time line gives the coming days
+  exactly as its agenda drew them ("Tomorrow you're at work from about 9:10 AM to 5:20 PM and online from about 7:45 PM
+  to 11:50 PM. …", `settings.context.daysAhead`, 3 by default), so "what are you up to this weekend?" or "are you free
+  Thursday?" gets an answer the code keeps instead of a made-up one. What comes next today stays as it was; a block on
+  one of those days is left to them.
 - **A step clock**: `createStepClock()` runs reply queues without waiting while keeping every timestamp: give its
   `now` and `timers` to the runtime, wrap the model's calls in `clock.track`, and `clock.run({ until, done })`. Each
   wait (a glance, reading, typing, a pause, the backlog's gaps, the tick that sends openers) is skipped, the clock moved

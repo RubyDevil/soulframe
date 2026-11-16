@@ -121,19 +121,23 @@ describe('the sample prompt', () => {
 	/** The time line of its system prompt on a DM channel. */
 	const timeLineOf = async (schedule: unknown) => (await samplePrompt({ settings: TEXT, persona: persona({ schedule }), identity: TEST_IDENTITY, channel: NOTED_DM, now })).split('\n\n').at(-1);
 	const rest = "Their last message was just now. You haven't written to them before. Right now you're free and online";
+	/** The coming days (settings.context.daysAhead, 3 by default) of the same hours every day, from Thursday. */
+	const ahead = (times: string) => ['Tomorrow', 'On Saturday', 'On Sunday'].map((day) => `${day} you're online from about ${times}.`).join(' ');
 
 	it('is built at its next span on the channel when it is offline, so the lines on its day show', async () => {
 		// Offline at noon on Thursday: a minute after 7 PM
-		expect(await timeLineOf(EVENINGS)).toBe(`It is Thursday, November 5, 7:01 PM for you. ${rest}, until about 11:00 PM. You'll be online again tomorrow around 7:00 PM. ${AWARE_PROMPT}`);
+		expect(await timeLineOf(EVENINGS)).toBe(`It is Thursday, November 5, 7:01 PM for you. ${rest}, until about 11:00 PM. ${ahead('7:00 PM to 11:00 PM')} ${AWARE_PROMPT}`);
 		// Online then: at that time
 		expect(await timeLineOf(everyDay(['11:00', '11:00'], ['13:00', '13:00']))).toBe(
-			`It is Thursday, November 5, 12:00 PM for you. ${rest}, until about 1:00 PM. You'll be online again tomorrow around 11:00 AM. ${AWARE_PROMPT}`,
+			`It is Thursday, November 5, 12:00 PM for you. ${rest}, until about 1:00 PM. ${ahead('11:00 AM to 1:00 PM')} ${AWARE_PROMPT}`,
 		);
 	});
 
 	it("gives the persona's prompt, the app's identity phrase and style, where, the channel's note and the app's lines", async () => {
 		const system = await samplePrompt({ settings: TEXT, persona: persona({ schedule: EVENINGS }), identity: TEST_IDENTITY, style: TEST_STYLE, channel: NOTED_DM, extraLines: () => ['A line the app adds.'], now });
-		expect(system).toContain(`A voice.\n\nYou are Test, a guide made by Forum (https://forum.example), chatting by text in Forum direct messages. Forum shows everyone your name marked [bot].\n\n${TEST_STYLE}`);
+		expect(system).toContain(
+			`A voice.\n\nYou are Test, a guide made by Forum (https://forum.example), chatting by text in Forum direct messages. Forum shows everyone your name marked [bot].\n\nYour usual week, roughly (the times vary a little from day to day): Every day you're online from about 7:00 PM to 11:00 PM. The rest of the time you're offline, going about your day or night. It's how your weeks go, not something to bring up unasked.\n\n${TEST_STYLE}`,
+		);
 		expect(system).toContain('A line the app adds.');
 	});
 

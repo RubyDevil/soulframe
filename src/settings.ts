@@ -442,6 +442,17 @@ export const SettingsSchema = z
 				situation: z.boolean().default(true),
 				/** What comes next: "After that you're back at work until about 5:30 PM. You'll be online again today around 8:00 PM." */
 				upcoming: z.boolean().default(true),
+				/**
+				 * Its usual week, from its schedule (every range at its middle), in the common part of the prompt of a DM turn, an
+				 * opener and a group-chat line: "Your usual week (…): Monday to Friday: at work from about 9 AM to 5:15 PM and online
+				 * from about 7:30 PM to 11:45 PM. …". So it can say what it does on a Thursday, or at the weekend.
+				 */
+				week: z.boolean().default(true),
+				/**
+				 * How many days after today its time line gives exactly, as its agenda drew them (its calendar's plans in them):
+				 * "Coming days: Tomorrow: at work from about 9:10 AM to 5:20 PM and online from about 7:45 PM to 11:50 PM. …". 0 for none.
+				 */
+				daysAhead: z.number().int().min(0).max(7).default(3),
 				/** In DMs, that their messages came in while it was offline: "These messages came in while you were at work (from 12:16 PM)…". */
 				awayContext: z.boolean().default(true),
 				/** How well it knows and likes the person, in DMs: "Sam is one of your regulars… You like Sam." (`relationship`). */

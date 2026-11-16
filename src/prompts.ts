@@ -31,7 +31,7 @@
 import type { Channel } from './channel.js';
 import type { Question } from './decisions.js';
 import { siteOf, type MessageMedia, type SeenImage, type SeenLink } from './perception.js';
-import { localDateOf, type LocalDate, type Situation } from './schedule.js';
+import { localDateOf, type DayAgenda, type LocalDate, type Situation, type UsualBlock, type UsualDay } from './schedule.js';
 import type { Settings } from './settings.js';
 
 type MemorySettings = Settings['memory'];
@@ -56,11 +56,82 @@ export const SFW_RULE = 'Keep every conversation free of sexual or explicit cont
 /** The rules it never breaks, one "- " line each under one heading; nothing without rules. */
 export const rulesPrompt = (rules: readonly string[]) => (rules.length ? `Rules you never break:\n${rules.map((rule) => `- ${rule}`).join('\n')}` : '');
 
-/** The whole system prompt: the persona's own prompt, then identity, the app's style and the rules, then the task. */
+/**
+ * A day's blocks in order, completing "Tomorrow you're …" ("a, b and c"; an online item right after another without its
+ * "online"): "offline all day" with none, and without online time "not online", or "not online otherwise" after breaks.
+ */
+const dayText = (items: readonly { kind: 'online' | 'break' | 'busy'; text: string }[]) => {
+	if (!items.length) return 'offline all day';
+	const texts = items.map((item, index) => (item.kind === 'online' && items[index - 1]?.kind === 'online' ? item.text.replace(/^online /, '') : item.text));
+	const online = items.some((item) => item.kind === 'online');
+	const breaks = items.some((item) => item.kind === 'break');
+	return listText(online ? texts : [...texts, breaks ? 'not online otherwise' : 'not online']);
+};
+
+/** A short break, as the day lines say it: "on your phone for a few minutes around 12:30 PM". */
+const breakText = (at: string) => `on your phone for a few minutes around ${at}`;
+
+/** "a", "a and b", "a, b and c". */
+const listText = (parts: readonly string[]) => (parts.length <= 1 ? (parts[0] ?? '') : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`);
+
+const WEEKDAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] as const;
+
+/** "9:00 AM", "12:30 AM": minutes of a day on the clock (past 1440, the next day's), as `clockText` writes a time. */
+const minuteText = (minutes: number) => {
+	const of = ((minutes % 1440) + 1440) % 1440;
+	const hours = Math.floor(of / 60);
+	return `${hours % 12 || 12}:${String(of % 60).padStart(2, '0')} ${hours < 12 ? 'AM' : 'PM'}`;
+};
+
+/** "Monday to Friday", "Saturday and Sunday", "Monday, Wednesday and Friday", "Every day": weekdays (0 = Monday), three in a row or more as a range. */
+const weekdaysText = (days: readonly number[]) => {
+	if (days.length === 7) return 'Every day';
+	const runs: number[][] = [];
+	for (const day of days) {
+		const run = runs.at(-1);
+		if (run && run.at(-1) === day - 1) run.push(day);
+		else runs.push([day]);
+	}
+	return listText(runs.flatMap((run) => (run.length >= 3 ? [`${WEEKDAY_NAMES[run[0]!]} to ${WEEKDAY_NAMES[run.at(-1)!]}`] : run.map((day) => WEEKDAY_NAMES[day]!))));
+};
+
+/** A usual block, with how often it happens: "(most weeks)" from a chance of one in two, "(some weeks)" under it. */
+const usualBlockText = ({ kind, reason, from, to, chance }: UsualBlock) =>
+	(kind === 'break'
+		? breakText(minuteText(from))
+		: `${kind === 'busy' ? reason : 'online'} from about ${minuteText(from)} to ${minuteText(to)}`) + (chance >= 1 ? '' : chance >= 0.5 ? ' (most weeks)' : ' (some weeks)');
+
+/**
+ * What a usual day holds, completing "Monday you're …" (`dayText`); then, from one chance in ten of a day with no
+ * online time, that now and then it takes the whole day offline.
+ */
+const usualDayText = ({ blocks, skipDayChance }: UsualDay) => {
+	const day = dayText(blocks.map((block) => ({ kind: block.kind, text: usualBlockText(block) })));
+	return skipDayChance >= 0.1 && blocks.some((block) => block.kind !== 'busy') ? `${day}, though now and then you take the whole day offline` : day;
+};
+
+/**
+ * Its usual week (schedule.ts usualWeek: the config, every range at its middle), the days that go the same way
+ * together, then that the rest of the time it is offline (never sleep: the night is simply offline, as for busy
+ * reasons), and not to bring it up unasked. In the common part of the prompt (`systemPrompt`'s `week`), the same every
+ * day, so a provider's prompt cache keeps it.
+ */
+export const usualWeekPrompt = (week: readonly UsualDay[]) => {
+	const groups = new Map<string, number[]>();
+	for (const day of week) {
+		const text = usualDayText(day);
+		groups.set(text, [...(groups.get(text) ?? []), day.weekday]);
+	}
+	const days = [...groups].map(([text, weekdays]) => `${weekdaysText(weekdays)} you're ${text}.`).join(' ');
+	return `Your usual week, roughly (the times vary a little from day to day): ${days} The rest of the time you're offline, going about your day or night. It's how your weeks go, not something to bring up unasked.`;
+};
+
+/** The whole system prompt: the persona's own prompt, then identity and its usual week, the app's style and the rules, then the task. */
 export const systemPrompt = ({
 	personaPrompt,
 	name,
 	identity,
+	week,
 	style,
 	channel,
 	rules,
@@ -70,6 +141,8 @@ export const systemPrompt = ({
 	name: string;
 	/** The app's phrase after its name in the identity line (`createBrain`'s `identity`); none for the name alone. */
 	identity?: string;
+	/** `usualWeekPrompt`, after the identity line (settings.context.week, in the tasks with a time line); none by default. */
+	week?: string;
 	/** The app's block on how the persona writes (`createBrain`'s `style`), word for word; none by default. */
 	style?: string;
 	/** Where it is talking. */
@@ -77,7 +150,7 @@ export const systemPrompt = ({
 	/** The lines of `rulesPrompt`: the brain's own (the 18+ line, the sfw line), then the app's (`Policy.rules`); none for no rules block. */
 	rules: readonly string[];
 	task: string;
-}) => [personaPrompt.trim(), identityPrompt(name, identity, channel), style?.trim() ?? '', rulesPrompt(rules), task].filter(Boolean).join('\n\n');
+}) => [personaPrompt.trim(), identityPrompt(name, identity, channel), week ?? '', style?.trim() ?? '', rulesPrompt(rules), task].filter(Boolean).join('\n\n');
 
 // ---------------------------------------------------------------------------------------------------
 // Memory: the small notes the model keeps and rewrites itself
@@ -246,14 +319,42 @@ const nowText = ({ span, busy }: Situation, timeZone: string) => {
 	return busy ? `Right now you're ${busy.reason}, on a short break until about ${until}, so you only have a few minutes.` : `Right now you're only on for a few minutes, until about ${until}.`;
 };
 
-/** What comes next: back to what a break is from, or else the next busy block; then its next full online time. */
-const upcomingText = ({ at, busy, nextBusy, nextOnline }: Situation, today: LocalDate, timeZone: string) =>
-	[
-		busy ? `After that you're back ${busy.reason} until about ${aboutText(busy.end, timeZone)}.` : '',
-		nextBusy ? `${capitalized(blockDayWord(nextBusy, today, at, timeZone))} you're ${nextBusy.reason} from ${aboutText(nextBusy.start, timeZone)}.` : '',
-		nextOnline ? `You'll be online again ${blockDayWord(nextOnline, today, at, timeZone)} around ${aboutText(nextOnline.start, timeZone)}.` : '',
+/**
+ * What comes next: back to what a break is from, or else the next busy block; then its next full online time. With
+ * `listed` days after today said whole (`aheadText`), the sentences of `when`: those of today (`'today'`), or of a day
+ * past that list (`'later'`); a block of a listed day is left to it.
+ */
+const upcomingText = ({ at, busy, nextBusy, nextOnline }: Situation, today: LocalDate, timeZone: string, listed = 0, when: 'today' | 'later' = 'today') => {
+	/** The block, when it belongs with `when`. */
+	const of = <B extends { day: LocalDate }>(block: B | null) => {
+		const days = block ? daysBetween(today, block.day) : 0;
+		return block && (when === 'today' ? days <= 0 || !listed : listed > 0 && days > listed) ? block : null;
+	};
+	const busyNext = of(nextBusy);
+	const onlineNext = of(nextOnline);
+	return [
+		busy && when === 'today' ? `After that you're back ${busy.reason} until about ${aboutText(busy.end, timeZone)}.` : '',
+		busyNext ? `${capitalized(blockDayWord(busyNext, today, at, timeZone))} you're ${busyNext.reason} from ${aboutText(busyNext.start, timeZone)}.` : '',
+		onlineNext ? `You'll be online again ${blockDayWord(onlineNext, today, at, timeZone)} around ${aboutText(onlineNext.start, timeZone)}.` : '',
 	]
 		.filter(Boolean)
+		.join(' ');
+};
+
+/**
+ * The coming days, as its agenda drew them (schedule.ts agendaOn): for each day, "Tomorrow you're …", "On Thursday
+ * you're …" with its busy blocks, short breaks and online time in order (`dayText`), the times rounded to 5 minutes.
+ */
+const aheadText = (days: readonly DayAgenda[], today: LocalDate, timeZone: string) =>
+	days
+		.map((agenda) => {
+			const times = (block: { start: number; end: number }) => `from about ${aboutText(block.start, timeZone)} to ${aboutText(block.end, timeZone)}`;
+			const blocks = [
+				...agenda.busy.map((block) => ({ kind: 'busy' as const, start: block.start, text: `${block.reason} ${times(block)}` })),
+				...agenda.spans.map((span) => ({ kind: span.kind, start: span.start, text: span.kind === 'break' ? breakText(aboutText(span.start, timeZone)) : `online ${times(span)}` })),
+			].sort((a, b) => a.start - b.start);
+			return `${capitalized(dayWord(agenda.day, today))} you're ${dayText(blocks)}.`;
+		})
 		.join(' ');
 
 /** After the day lines, so the model doesn't bring its agenda up unasked. */
@@ -267,21 +368,33 @@ const endingText = ({ span, busy }: Situation, timeZone: string) =>
 
 /**
  * What its day looks like while online (schedule.ts situationAt), each part only when shown (settings.context): that
- * their messages waited while it was offline (`away`, DMs only), what it is doing now, what comes next, then
- * `AWARE_PROMPT`; empty when none is. With `endingSoon` (DMs only) and what it is doing now shown, the wrap-up goes
- * last, after `AWARE_PROMPT`, which would undercut it. Day words count from its date at `situation.at`, the date the
- * time line gives, so at 12:05 AM in Tuesday's span, Wednesday is "today" (blocks past midnight: blockDayWord).
+ * their messages waited while it was offline (`away`, DMs only), what it is doing now, what comes next, the coming
+ * days (`ahead`), then `AWARE_PROMPT`; empty when none is. With `endingSoon` (DMs only) and what it is doing now
+ * shown, the wrap-up goes last, after `AWARE_PROMPT`, which would undercut it. Day words count from its date at
+ * `situation.at`, the date the time line gives, so at 12:05 AM in Tuesday's span, Wednesday is "today" (blocks past
+ * midnight: blockDayWord).
  */
 export const dayPrompt = (
 	situation: Situation,
 	timeZone: string,
-	show: { now: boolean; upcoming: boolean; away: { since: number; reason: string | null } | null; endingSoon: boolean },
+	show: {
+		now: boolean;
+		upcoming: boolean;
+		away: { since: number; reason: string | null } | null;
+		endingSoon: boolean;
+		/** The coming days' agendas, from tomorrow (settings.context.daysAhead), said whole after what comes next; none by default. */
+		ahead?: readonly DayAgenda[];
+	},
 ) => {
 	const today = localDateOf(situation.at, timeZone);
+	const ahead = show.ahead ?? [];
 	const parts = [
 		show.away ? awayText(show.away, today, timeZone) : '',
 		show.now ? nowText(situation, timeZone) : '',
-		show.upcoming ? upcomingText(situation, today, timeZone) : '',
+		// In the order of the day: what comes next today, the coming days, then anything past them
+		show.upcoming ? upcomingText(situation, today, timeZone, ahead.length, 'today') : '',
+		aheadText(ahead, today, timeZone),
+		show.upcoming ? upcomingText(situation, today, timeZone, ahead.length, 'later') : '',
 	].filter(Boolean);
 	if (!parts.length) return '';
 	return [...parts, AWARE_PROMPT, show.now && show.endingSoon ? endingText(situation, timeZone) : ''].filter(Boolean).join(' ');
