@@ -591,14 +591,20 @@ What the code checks, whatever the settings say:
   the phone), never "them" or "their" (whose is not sure; "you" and "your" mean the person it was made with, and anyone
   else who may hear it hears their name: "at Sam's party"), and lies over no other plan of its own; over its routine
   it wins (an appointment cuts a work day in two); its public words, held to the same, never say "you" or "your"
-  either (else they are left out);
+  either (else they are left out), and own words that do are never `open` (at least `personal`: anyone else who
+  hears them hears a name);
 - time made to chat lies between 7 AM and midnight, over no busy block (its routine's, one of the day before that runs
   into it, as a night shift until 8 AM, or a plan's), and never makes the day's online time longer than its
   schedule's longest day by more than `makeTime.maxMinutes`; at an hour it is online for every channel anyway it adds
   nothing but is kept, so no plan of its own takes that time later (unless another for them is too soon: then it is
-  left out, and not told, since nothing was broken);
+  left out, and not told, since nothing was broken; over a promise to someone else that would be broken, refused as
+  too soon, and told);
 - it calls off only its own plans of a kind it may make now, still ahead; a plan called off still counts toward
-  `perWeek` and `perPersonDays`, and `store.sweep` keeps the persona's own plans of the last 90 days for that;
+  `perWeek` and `perPersonDays` (time broken on someone for someone else doesn't count toward theirs), and
+  `store.sweep` keeps the persona's own plans of the last 90 days for that;
+- a plan in place of one (`cancel` in it) is both or neither: the new one checked on the day without the old, neither
+  counted twice toward the limits (a plan moved is no new one); refused, the old one stands (with nothing to replace,
+  no such plan or one over, the new one alone);
 - a promise to someone (time made to chat with them, or a plan the model marked as with or for them) is called off in
   a turn with someone else, by its number or by a plan over it, only when that person is not less close to it than the
   one it was made with (their familiarity and, while it is kept, affinity levels, summed: one level apart is about as

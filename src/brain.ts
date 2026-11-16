@@ -5,7 +5,7 @@ import type { Llm, LlmMessage } from './llm.js';
 import { splitReply } from './pacing.js';
 import { clip, lookedCard, mediaOf, seenIn, timeLimited, unseen, type IncomingMessage, type MessageMedia, type PreviewLink, type SeenImage, type SeenLink } from './perception.js';
 import { hostOf, isStopRequest, MINOR_EXIT, minorSignal, STOP_ACK, stripForeignLinks } from './safety.js';
-import { calendarHours, checkPlan, comingPlans, heardOf, isPromise, type PlanCheck, type PlanProposal, type Share, type Viewer } from './calendar.js';
+import { calendarHours, checkPlan, comingPlans, heardOf, isPromise, nameIn, toOthers, type PlanCheck, type PlanProposal, type Share, type Viewer } from './calendar.js';
 import { followUpWindow } from './initiative.js';
 import { addDays, agendaOn, busyAt, fullyOnline, isOn, localDateOf, situationAt, usualWeek, zonedToUtc, type Hours } from './schedule.js';
 import { DAY, HOUR, MINUTE, ownSettings, SECOND, taskModel, type Settings } from './settings.js';
@@ -460,7 +460,7 @@ export function createBrain({
 	const seeFor =
 		(viewer?: Viewer): See =>
 		(busy) =>
-			heardOf(busy, viewer, calendar.sharing, (id) => store.personById(id).name);
+			heardOf(busy, viewer, calendar.sharing, nameIn(store));
 	/** The plan its calendar didn't take at the last kept turn with them, as their next turn is told (prompts.ts refusedPlanPrompt), if any. */
 	const refusedPlan = (person: Person) => {
 		const kept = calendar.enabled ? store.get(persona.id, refusedKey(person.id)) : null;
@@ -483,10 +483,11 @@ export function createBrain({
 		const left = calledOffOn(personId).filter((plan) => !ids.includes(plan.id));
 		store.set(persona.id, calledOffKey(personId), left.length ? JSON.stringify(left) : null);
 	};
-	/** The plans it called off on them for someone else, as a turn tells them (prompts.ts calledOffText each), and which. */
+	/** The plans it called off on them for someone else, as a turn tells them (prompts.ts calledOffText each, them by name: calendar.ts heardOf), and which. */
 	const owedTo = (personId: number) => {
 		const plans = calendar.enabled ? calledOffOn(personId) : [];
-		return { plans: plans.map((plan) => calledOffText(plan, persona.timezone)), ids: plans.map((plan) => plan.id) };
+		const name = nameIn(store)(personId);
+		return { plans: plans.map((plan) => calledOffText({ ...plan, what: name === undefined ? plan.what : toOthers(plan.what, name) }, persona.timezone)), ids: plans.map((plan) => plan.id) };
 	};
 	/**
 	 * A promise to someone called off in a turn with someone else (`by`): called off, audited, and kept for their next
@@ -515,12 +516,6 @@ export function createBrain({
 	 * promise to someone else it calls off, by its number or by a plan over it, is theirs to hear about (`callOff`).
 	 */
 	const applyPlan = (personId: number, proposal: PlanProposal | 'unreadable', writtenAt: number): void => {
-		// A new plan in place of one: that one called off first, then the plan, each as its own
-		if (proposal !== 'unreadable' && 'replaces' in proposal && proposal.replaces !== undefined) {
-			const { replaces, ...plan } = proposal;
-			applyPlan(personId, { cancel: replaces }, writtenAt);
-			return applyPlan(personId, plan, writtenAt);
-		}
 		const checked: PlanCheck =
 			proposal === 'unreadable'
 				? { refused: 'unreadable' }
@@ -528,7 +523,9 @@ export function createBrain({
 		if ('refused' in checked) {
 			store.audit(persona.id, 'plan_refused', { personId, reason: checked.refused });
 			if (checked.refused !== 'already_online') {
-				const told: Parameters<typeof refusedPlanPrompt>[0] = { reason: checked.refused, ...(checked.block && { block: checked.block }), ...(checked.clash && { clash: checked.clash }), ...(proposal !== 'unreadable' && 'cancel' in proposal && { cancel: proposal.cancel }) };
+				// The plan it couldn't call off, by its number or for one in its place, is said by that number
+				const cancel = checked.stands ?? (proposal !== 'unreadable' && 'cancel' in proposal ? proposal.cancel : undefined);
+				const told: Parameters<typeof refusedPlanPrompt>[0] = { reason: checked.refused, ...(checked.block && { block: checked.block }), ...(checked.clash && { clash: checked.clash }), ...(cancel !== undefined && { cancel }) };
 				store.set(persona.id, refusedKey(personId), JSON.stringify(told));
 			}
 			return;
@@ -539,6 +536,13 @@ export function createBrain({
 			else store.cancelEvent(event.id, personId);
 			store.audit(persona.id, 'plan_cancelled', { personId, eventId: event.id });
 			return;
+		}
+		// The plan it takes the place of, called off first, as by its number
+		if (checked.replaced) {
+			const { replaced } = checked;
+			if (isPromise(replaced) && replaced.personId !== personId) callOff(replaced, personId);
+			else store.cancelEvent(replaced.id, personId);
+			store.audit(persona.id, 'plan_cancelled', { personId, eventId: replaced.id });
 		}
 		const event = store.addEvent(persona.id, checked.add);
 		store.audit(persona.id, 'plan_added', { personId, eventId: event.id, kind: event.kind, day: event.day, from: event.from, to: event.to });
@@ -916,8 +920,9 @@ export function createBrain({
 					...(turn.importance !== undefined && { importance: turn.importance, importanceAt: now() }),
 				});
 				if (followingUp && turn.followUp !== undefined) planFollowUp(id, turn.followUp);
-				// Its last refused plan, and the plans it called off on them, were told to this turn: a plan of this one may be refused in turn
-				if (calendar.enabled) {
+				// Its last refused plan, and the plans it called off on them, were told to this turn, and by its reply to them (one
+				// that sends nothing, left on read, tells them nothing): a plan of this one may be refused in turn
+				if (calendar.enabled && reply) {
 					store.set(persona.id, refusedKey(id), null);
 					told(id, owed.ids);
 				}
@@ -957,9 +962,10 @@ export function createBrain({
 			const photos = history.some((m) => m.media?.images.length);
 			const links = history.some((m) => m.media?.links.length);
 			// Why it may text them: a follow-up's note, how long they have been quiet, what it is just back from, or what it
-			// owes them now (every plan it called off on them meanwhile too; none left, the one it was planned for)
+			// owes them now (every plan it called off on them meanwhile too; none left, the one it was planned for). Another
+			// kind tells them too of what it owes them, if it texts them
 			const quietFor = now() - (history.at(-1)?.at ?? person.lastInAt);
-			const owed = opener.kind === 'apology' ? owedTo(person.id) : { plans: [], ids: [] };
+			const owed = owedTo(person.id);
 			const reason =
 				opener.kind === 'followUp'
 					? followUpReasonPrompt(person.name, opener.about)
@@ -983,6 +989,7 @@ export function createBrain({
 				relationship: settings.context.relationship ? relationshipNow(person) : undefined,
 				...(photos || links ? { media: { photos, links } } : {}),
 				calendar: calendarLines(person),
+				...(opener.kind !== 'apology' && owed.plans.length && { calledOff: calledOffPrompt(owed.plans, { opener: true }) }),
 			});
 			const messages: LlmMessage[] = [
 				{ role: 'system', content: system(channel, task, true) },
@@ -1000,7 +1007,7 @@ export function createBrain({
 				kept = true;
 				if (parsed.notes !== undefined) store.updatePerson(person.id, { summary: clip(parsed.notes, settings.memory.personNotes) });
 				if (parsed.self !== undefined) store.set(persona.id, 'selfNotes', clip(parsed.self, settings.memory.selfNotes));
-				// The apology sent: the plans it told of are told (one it chose not to send leaves them for their next turn)
+				// Sent: the plans it told of are told (one it chose not to send leaves them for their next turn)
 				if (reply) told(person.id, owed.ids);
 			};
 			return { messages: reply ? splitReply(reply, runtime.rng, settings.pacing) : [], action: 'none', keep };

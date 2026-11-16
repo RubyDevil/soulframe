@@ -974,7 +974,7 @@ interface Store {
 	calledOffOn(persona: string, personId: number, since: number): number;
 	eventById(id: number): StoredEvent | undefined;
 	events(persona: string, from: LocalDate, to: LocalDate): StoredEvent[];
-	eventsMadeSince(persona: string, since: number, only?: { kind?: 'busy' | 'online'; personId?: number }): number;
+	eventsMadeSince(persona: string, since: number, only?: { kind?: 'busy' | 'online'; personId?: number; unbroken?: boolean }): number;
 }
 ```
 
@@ -1014,7 +1014,8 @@ failed?: true }[]; links: (LinkPreview & { looked?: true })[] }`. A photo keeps 
   audited for each persona. These lists protect people: use them for a mistake you checked, not as routine.
 - **`forgetPerson`**: deletes one person (their messages, notes, familiarity and affinity, accounts, the plans its
   calendar keeps from turns with them, and the audit lines about them) in one transaction. A promise to someone else
-  broken for them stays broken, for someone forgotten (`cancelledBy` 0, its audit line without them). The deny list and minor flags are kept, so a deny-listed account stays so. Someone
+  broken for them stays broken, for someone forgotten (`cancelledBy` 0, its audit line without them), and a plan
+  refused to someone else for a plan made with them keeps only that plan's public words. The deny list and minor flags are kept, so a deny-listed account stays so. Someone
   who asked to stop, was blocked or denied is kept too, since forgetting them would let the persona answer them
   again; `{ includeEnded: true }` forgets them as well. Answers whether anyone was forgotten.
 - **`resetPersona`**: deletes everything one persona knows: its people and their messages (ended people kept, as
@@ -1051,12 +1052,14 @@ read only while it is on:
   times that make no block, or a busy plan without `what`. Answers it.
 - **`cancelEvent`**: calls a plan off, in a turn with `by` when it was (left out: the app): it stays stored (a plan the
   persona made counts toward its limits) but no agenda reads it. Answers whether it stood. **`eventById`**: one by id,
-  standing or called off. **`calledOffOn`**: how many plans the persona made with the person were called off in turns
-  with someone else since a time: promises it broke for others, as its calendar tells it.
+  standing or called off. **`calledOffOn`**: how many promises the persona made to the person (time made to chat with
+  them, or a plan with or for them) were called off in turns with someone else since a time: promises it broke for
+  others, as its calendar tells it.
 - **`events`**: the persona's standing plans from one date to another, both included, in order: what its agenda lays
   over each drawn day; not one it made with someone who has since ended it (stopped, blocked or denied), which stands
   again if they come back. **`eventsMadeSince`**: how many it made itself since a time, called off or not, by kind and
-  person when given: what its guardrails count. A forgotten person's plans made in turns with them go with them; the
+  person when given: what its guardrails count; `unbroken` leaves out those called off for someone else (time broken
+  on them is no time they had). A forgotten person's plans made in turns with them go with them; the
   app's stay, with `personId` `null`.
 
 ### `StoredEvent`

@@ -69,6 +69,9 @@ const PLAN_SLEEP_WORDS = /sleep|\bbed|\bnap(?:s|ped|ping)?\b|\bdoz(?:e|ed|ing)\b
 const PLAN_SCHOOL_WORDS =
 	/school|schul|ecole|escuel|escola|scuol|colegio|lycee|liceo|colleg|univers|\buni\b|homework|\blectures?\b|\bexams?\b|campus|student|teacher|\btutor|detention|\bprom\b|homeroom|\bgrade\b|\brecess\b|semester|classmate|\bpupils?\b|\b(?:clases?|classe|klassen?)\b/i;
 
+/** Whether a plan's words speak to the person it was made with ("at your party", `ADDRESSED`), read plain (`plainOf`). */
+export const addresses = (words: string) => new RegExp(ADDRESSED.source, 'i').test(plainOf(words));
+
 /**
  * Why the reason of a plan the persona made itself (calendar.ts) is refused, or null: it completes "you're ..." as a
  * busy reason does, never sleep and never school (in any conversation: what the model writes is held to the strictest),
@@ -85,7 +88,7 @@ export const planReasonProblem = (reason: string, { addressed = false }: { addre
 	if (SLEEP_WORDS.test(plain) || PLAN_SLEEP_WORDS.test(plain)) return 'sleep';
 	if (SCHOOL_WORDS.test(plain) || PLAN_SCHOOL_WORDS.test(plain)) return 'school';
 	if (TALK_WORDS.test(plain)) return 'online';
-	if (THIRD_PERSON.test(plain) || (!addressed && new RegExp(ADDRESSED.source, 'i').test(plain))) return 'person';
+	if (THIRD_PERSON.test(plain) || (!addressed && addresses(plain))) return 'person';
 	return null;
 };
 

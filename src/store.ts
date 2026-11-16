@@ -738,6 +738,13 @@ export function createStore(db: Database, now: () => number = Date.now) {
 				db.prepare('UPDATE events SET cancelled_by = 0 WHERE cancelled_by = ?').run(personId);
 				db.prepare("DELETE FROM audit WHERE persona = ? AND json_extract(detail, '$.personId') = ?").run(row.persona, personId);
 				db.prepare("UPDATE audit SET detail = json_remove(detail, '$.for') WHERE persona = ? AND json_extract(detail, '$.for') = ?").run(row.persona, personId);
+				// A plan refused to someone else for a plan made with them: that plan is gone, so only its public words stay, if any
+				const refusals = db.prepare("SELECT key, value FROM kv WHERE persona = ? AND key LIKE 'calendarRefused:%'").all(row.persona) as unknown as { key: string; value: string }[];
+				for (const { key, value } of refusals) {
+					const { clash, ...refusal } = JSON.parse(value) as { clash?: { madeWith?: number; public?: string } };
+					if (clash?.madeWith !== personId) continue;
+					db.prepare('UPDATE kv SET value = ? WHERE persona = ? AND key = ?').run(JSON.stringify({ ...refusal, ...(clash.public && { clash: { reason: clash.public } }) }), row.persona, key);
+				}
 				db.prepare('DELETE FROM people WHERE id = ?').run(personId);
 			});
 			return true;

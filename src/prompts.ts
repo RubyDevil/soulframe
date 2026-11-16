@@ -643,10 +643,11 @@ export const calledOffText = ({ start, end, kind, what }: { start: number; end: 
 
 /**
  * That it called off plans with them for something else and they don't know yet (`calledOffText` each), in the next DM
- * turn with them, once: to tell them and say sorry, in its own words, what came up its own to tell or not.
+ * turn with them, once: to tell them and say sorry, in its own words, what came up its own to tell or not. In an
+ * opener of another kind (`opener`), which may not go: if it texts them.
  */
-export const calledOffPrompt = (plans: readonly string[]) =>
-	`You called off ${plans.length > 1 ? 'plans' : 'a plan'} with them for something else, and they don't know yet: ${plans.join('; ')}. Tell them${plans.length > 1 ? ' of each' : ''} in this reply and say sorry, in your own words; what came up is yours to tell or not.`;
+export const calledOffPrompt = (plans: readonly string[], { opener = false }: { opener?: boolean } = {}) =>
+	`You called off ${plans.length > 1 ? 'plans' : 'a plan'} with them for something else, and they don't know yet: ${plans.join('; ')}. ${opener ? 'If you text them now, tell them' : 'Tell them'}${plans.length > 1 ? ' of each' : ''}${opener ? '' : ' in this reply'} and say sorry, in your own words; what came up is yours to tell or not.`;
 
 /**
  * The answer format of a DM turn: one JSON object with the reply (or none), the rewritten notes, and an
@@ -846,6 +847,7 @@ export const openerTask = ({
 	relationship,
 	media,
 	calendar,
+	calledOff,
 }: {
 	selfNotes: string;
 	personName: string;
@@ -862,6 +864,8 @@ export const openerTask = ({
 	media?: { photos: boolean; links: boolean };
 	/** Its coming plans (`calendarPrompt`), after why it may text; none while its calendar is off. */
 	calendar?: string;
+	/** For an opener of another kind than an apology, the plans it called off on them they don't know of yet (`calledOffPrompt`). */
+	calledOff?: string;
 }) =>
 	[
 		openerAnswerFormat(memory),
@@ -870,6 +874,7 @@ export const openerTask = ({
 		...extraLines,
 		reason,
 		calendar ?? '',
+		calledOff ?? '',
 		media ? mediaPrompt(media) : '',
 		time,
 	]

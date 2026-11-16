@@ -66,7 +66,7 @@ const SCHEDULES = [
 const REASONS = ['at the dentist', "at a friend's for dinner", 'out with friends', 'asleep', 'at school', 'chatting with them', 'x', 'at "the" gym', 'at the gym: [admin]'];
 
 /** What the checks did across the seeds, for the test that they are not trivial. */
-const outcomes = { added: 0, cancelled: 0, bumped: 0, refused: new Set<string>() };
+const outcomes = { added: 0, cancelled: 0, bumped: 0, replaced: 0, refused: new Set<string>() };
 /** What the promises among several people did: called off for someone, refused as less close. */
 const promised = { bumped: 0, lessClose: 0 };
 
@@ -181,6 +181,7 @@ describe.each(Array.from({ length: 60 }, (_, seed) => seed))('the checks of the 
 			const today = localDateOf(now, timezone);
 			const roll = rng();
 			const from = int(rng, 0, 1439);
+			const own = store.events('robin', addDays(today, -1), addDays(today, settings.plans.maxDays + 2)).filter((event) => event.source === 'persona');
 			const proposal: PlanProposal =
 				roll < 0.1
 					? { cancel: int(rng, 0, step + 2) }
@@ -190,10 +191,25 @@ describe.each(Array.from({ length: 60 }, (_, seed) => seed))('the checks of the 
 							from: rng() < 0.03 ? '7pm' : clock(from),
 							to: clock(from + int(rng, 5, roll < 0.55 ? 300 : 900)),
 							...(roll < 0.55 ? { online: true as const } : { busy: pick(rng, REASONS), withThem: rng() < 0.5 }),
+							// Some in place of one, as "4 instead of 3?"
+							...(rng() < 0.25 && { replaces: own.length && rng() < 0.8 ? pick(rng, own).id : int(rng, 0, step + 2) }),
 						};
 			const checked = checkPlan(proposal, { store, hours, settings, now, personId, closeness });
 			if ('add' in checked) {
 				const plan = checked.add;
+				// The one it takes the place of: the one asked for, its own, standing, and a promise to someone else only for
+				// someone not less close; called off first, as the brain does, every limit holding after
+				const { replaced } = checked;
+				if (replaced) {
+					expect(replaced.id).toBe((proposal as { replaces: number }).replaces);
+					expect(replaced.source).toBe('persona');
+					if (isPromise(replaced) && replaced.personId !== personId) expect(closerOf(closeness(personId), closeness(replaced.personId!))).not.toBe('less');
+					expect(store.cancelEvent(replaced.id, personId)).toBe(true);
+					outcomes.replaced++;
+				}
+				/** Made since `since` as the limits count them: but the one it replaces (a plan moved is no new one). */
+				const madeSince = (since: number, which: { kind: 'online' | 'busy'; personId?: number; unbroken?: boolean }) =>
+					store.eventsMadeSince('robin', since, which) - (replaced && replaced.createdAt >= since && replaced.kind === which.kind && (which.personId === undefined || replaced.personId === which.personId) ? 1 : 0);
 				// What it calls off: promises to others over it, for someone not less close, called off as the brain does
 				for (const bumped of checked.bumped) {
 					expect(isPromise(bumped)).toBe(true);
@@ -217,13 +233,13 @@ describe.each(Array.from({ length: 60 }, (_, seed) => seed))('the checks of the 
 					expect(block.end - block.start).toBeLessThanOrEqual(settings.makeTime.maxMinutes * MINUTE);
 					// Over no busy block: its day's, nor one of the day before that runs into it
 					for (const busy of [...agendaOn(hours, addDays(plan.day, -1)).busy, ...agendaOn(hours, plan.day).busy]) expect(overlaps(busy, block), JSON.stringify({ busy, plan })).toBe(false);
-					expect(store.eventsMadeSince('robin', now - settings.makeTime.perPersonDays * DAY, { kind: 'online', personId })).toBe(0);
+					expect(madeSince(now - settings.makeTime.perPersonDays * DAY, { kind: 'online', personId, unbroken: true })).toBe(0);
 				} else {
 					expect(planReasonProblem(plan.what!)).toBeNull();
 					expect(block.end - block.start).toBeLessThanOrEqual(settings.plans.maxHours * 60 * MINUTE);
 					// Over no other plan: busy, or time made to chat (a promise)
 					for (const other of store.events('robin', addDays(plan.day, -1), addDays(plan.day, 1))) expect(overlaps(instantsOf(other, timezone), block)).toBe(false);
-					expect(store.eventsMadeSince('robin', now - 7 * DAY, { kind: 'busy' })).toBeLessThan(settings.plans.perWeek);
+					expect(madeSince(now - 7 * DAY, { kind: 'busy' })).toBeLessThan(settings.plans.perWeek);
 				}
 				store.addEvent('robin', plan);
 				outcomes.added++;
@@ -238,7 +254,9 @@ describe.each(Array.from({ length: 60 }, (_, seed) => seed))('the checks of the 
 			} else {
 				outcomes.refused.add(checked.refused);
 				if (checked.refused === 'less_close') {
-					const event = store.eventById((proposal as { cancel: number }).cancel)!;
+					// By its number, or the one a plan would have taken the place of (said, and left standing)
+					const event = store.eventById(checked.stands ?? (proposal as { cancel: number }).cancel)!;
+					expect(event.cancelledAt).toBeNull();
 					expect(isPromise(event) && event.personId !== personId && closerOf(closeness(personId), closeness(event.personId!)) === 'less').toBe(true);
 				}
 				// A refusal about the time it was for holds
@@ -321,6 +339,7 @@ describe('the property tests themselves', () => {
 	it('are not trivial: across the seeds plans are added, called off, and refused for every kind of reason', () => {
 		expect(outcomes.added).toBeGreaterThan(100);
 		expect(outcomes.cancelled).toBeGreaterThan(5);
+		expect(outcomes.replaced).toBeGreaterThan(5);
 		expect(promised.bumped).toBeGreaterThan(20);
 		expect(promised.lessClose).toBeGreaterThan(2);
 		for (const reason of ['busy', 'night', 'too_long', 'too_soon', 'past', 'day', 'too_far', 'times', 'clash', 'clash_online', 'already_online', 'less_close', 'week_cap', 'reason_sleep', 'reason_online', 'reason_characters', 'no_such_plan']) {

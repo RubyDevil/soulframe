@@ -62,6 +62,11 @@ describe('checkPlan: a plan of its own (busy)', () => {
 		});
 		// Public words that fall short are left out: to others, a plan of its own
 		for (const bad of ['at your place', 'asleep', 'x', 'at "home"']) expect(check({ ...dinner, public: bad })).toMatchObject({ add: { public: null } });
+		// Words that speak to them name them to anyone else: never open to anyone, however it ranked them
+		expect(check({ ...dinner, busy: 'at your place', share: 'open' })).toMatchObject({ add: { share: 'personal' } });
+		expect(check({ ...dinner, busy: 'at ｙｏｕｒ place', share: 'open' })).toMatchObject({ add: { share: 'personal' } });
+		expect(check({ ...dinner, busy: 'at the dentist', share: 'open' })).toMatchObject({ add: { share: 'open' } });
+		expect(check({ ...dinner, busy: 'at your place', share: 'confidential' })).toMatchObject({ add: { share: 'confidential' } });
 	});
 
 	it.each<[string, Partial<typeof dinner>]>([
@@ -320,6 +325,42 @@ describe('checkPlan: time made to chat (online)', () => {
 		expect(checkFor(kim.id, { ...call, day: 5, from: '11:00', to: '13:00' })).toMatchObject({ add: { personId: kim.id }, bumped: [time] });
 	});
 
+	it('moves a plan in place of one as both or neither, the day checked without the old one, and no new one to the limits', () => {
+		const { add, check, checkFor, store, sam, kim, close } = setUp();
+		// Sam: "4 instead of 3?" Time for them lately is the time it moves, no new favour
+		const time = add(call);
+		const moved = check({ ...call, from: '16:00', to: '17:00', replaces: time.id });
+		expect(moved).toMatchObject({ add: { from: 16 * 60, personId: sam.id }, replaced: time, bumped: [] });
+		// Over the old one, too: it is gone by then
+		expect(check({ ...call, from: '15:30', to: '16:30', replaces: time.id })).toMatchObject({ replaced: time });
+		// A new one that is refused leaves the old one standing: nothing called off
+		expect(check({ ...call, from: '02:00', to: '03:00', replaces: time.id })).toEqual({ refused: 'night', block: expect.anything() });
+		// One it may not call off: neither, and that one said
+		close(sam.id, 9);
+		expect(checkFor(kim.id, { ...dinner, day: 6, busy: 'at the beach with you', replaces: time.id })).toEqual({ refused: 'less_close', stands: time.id });
+		// Nothing to replace (no such plan, or over): the new one alone
+		expect(checkFor(kim.id, { ...dinner, busy: 'at the beach', replaces: 9_999 })).toMatchObject({ add: { what: 'at the beach' }, bumped: [] });
+		expect(store.eventById(time.id)?.cancelledAt).toBeNull();
+		// The week's cap counts a busy plan moved once
+		const week = setUp(settingsOf({ calendar: { enabled: true, plans: { perWeek: 1 } } }).calendar);
+		const gym = week.add({ ...dinner, busy: 'at the gym' });
+		expect(week.check({ ...dinner, day: 4, busy: 'at the pool' })).toMatchObject({ refused: 'week_cap' });
+		expect(week.check({ ...dinner, day: 4, busy: 'at the pool', replaces: gym.id })).toMatchObject({ add: { what: 'at the pool' }, replaced: gym });
+	});
+
+	it('tells, as too soon, time it would make for someone over a promise to another at an hour it is online anyway', () => {
+		const { add, checkFor, kim, close } = setUp();
+		close(kim.id, 6);
+		// Tuesday evening, its usual online time: a party with Sam over it (the party would win), and Kim wants 8 PM
+		const party = add({ ...dinner, day: 1, from: '19:00', to: '22:00', busy: 'at your party', withThem: true });
+		const eight = { ...call, day: 1, from: '20:00', to: '21:00' };
+		// None for Kim lately: kept, and the party called off for it
+		expect(checkFor(kim.id, eight)).toMatchObject({ add: { personId: kim.id }, bumped: [party] });
+		// With time made for Kim lately: the party stands, so the hour isn't theirs, and they are told
+		add({ ...call, day: 2, from: '20:00', to: '21:00' }, kim.id);
+		expect(checkFor(kim.id, eight)).toMatchObject({ refused: 'too_soon' });
+	});
+
 	it('breaks a busy plan with someone only as a promise: one only told to them is no promise, and refused as a clash', () => {
 		const { add, checkFor, kim } = setUp();
 		const party = add({ ...dinner, busy: "at Jo's party", withThem: true });
@@ -495,8 +536,13 @@ describe('calendarHours and comingPlans', () => {
 		expect(sightOf(plan('personal'), undefined, sharing)).toBe('public');
 		expect(sightOf(plan('confidential'), undefined, sharing)).toBe('public');
 		const party = { reason: 'at your party', madeWith: 1, public: 'at a party' };
-		expect(heardOf({ ...party, share: 'open' }, undefined, sharing, () => 'Sam')).toEqual({ words: "at Sam's party" });
+		expect(heardOf({ reason: 'at the dentist', madeWith: 1, share: 'open' }, undefined, sharing, () => 'Sam')).toEqual({ words: 'at the dentist' });
 		expect(heardOf({ ...party, share: 'personal' }, undefined, sharing, () => 'Sam')).toEqual({ words: 'at a party' });
+		// Whom it was made with hears it by their own name too: in a prompt "you" is the persona
+		expect(heardOf({ ...party, share: 'confidential' }, { id: 1, familiarity: 0 }, sharing, () => 'Sam')).toEqual({ words: "at Sam's party" });
+		// Someone close enough, but whom it was made with is no longer known (forgotten): its public words
+		expect(heardOf({ ...party, share: 'personal' }, { id: 2, familiarity: 1 }, sharing, () => 'Sam')).toEqual({ words: "at Sam's party" });
+		expect(heardOf({ ...party, share: 'personal' }, { id: 2, familiarity: 1 }, sharing, () => undefined)).toEqual({ words: 'at a party' });
 		expect(sightOf(plan('personal'), { id: 2, familiarity: 0.32 }, sharing)).toBe('public');
 		expect(sightOf(plan('personal'), { id: 2, familiarity: 0.48 }, sharing)).toBe('full');
 		expect(sightOf({ madeWith: 1 }, { id: 2, familiarity: 0.48 }, sharing)).toBe('full');

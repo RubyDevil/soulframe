@@ -698,6 +698,9 @@ describe('texting first (settings.initiative)', () => {
 			reason,
 			sam.time,
 		]);
+		// Its calendar, then what it owes them, after the reason
+		const owed = openerTask({ selfNotes: '', personName: 'Sam', personNotes: '', memory, extraLines: [], reason, time: sam.time, calendar: 'CALENDAR', calledOff: 'OWED' });
+		expect(owed.split('\n\n').slice(-4)).toEqual([reason, 'CALENDAR', 'OWED', sam.time]);
 	});
 
 	it('gives each kind of opener its reason', () => {
@@ -846,6 +849,11 @@ describe('the calendar (planField, calendarPrompt)', () => {
 		);
 		expect(calledOffPrompt([call, party])).toContain('You called off plans with them for something else');
 		expect(calledOffPrompt([call, party])).toContain('. Tell them of each in this reply and say sorry');
+		// In an opener of another kind, which may not go
+		expect(calledOffPrompt([call], { opener: true })).toBe(
+			"You called off a plan with them for something else, and they don't know yet: Sunday, November 22, 3:00 PM to 4:00 PM: time you made to chat with them. If you text them now, tell them and say sorry, in your own words; what came up is yours to tell or not.",
+		);
+		expect(calledOffPrompt([call, party], { opener: true })).toContain('. If you text them now, tell them of each and say sorry');
 		expect(apologyReasonPrompt('Sam', [call])).toBe(
 			"You called off a plan with Sam for something else, and they don't know yet: Sunday, November 22, 3:00 PM to 4:00 PM: time you made to chat with them. Text them to tell them and say sorry, in your own words; what came up is yours to tell or not.",
 		);
