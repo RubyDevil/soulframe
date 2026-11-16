@@ -22,12 +22,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   time made to chat between 7 AM and midnight, over no busy block, never more online in a day than its schedule's
   longest day and one such time, once per person a week; lengths as the time passes, daylight saving in it; limits per
   week and days ahead) and audits the outcome (`plan_added`, `plan_cancelled`, `plan_called_off`, `plan_refused`, one
-  it couldn't read too). A plan it refused is told, once, to the next turn with that person, so a promise the model
+  it couldn't read too). A plan it refused is told, once, to the next turn with that person that replies (its time
+  passed, to own up to; two weeks past, not at all), so a promise the model
   made ("sure, 3 tomorrow" while at work) can be put right; time made at an hour it is online anyway is kept all the
   same, so no later plan breaks the promise lightly. A busy plan cuts the day's online time and busy blocks (a
   dentist's hour splits a work day); time made to chat is online time for every channel. DM turns and openers list the
   coming plans (`calendar.shown`, a number on each it may call off there), and its time lines include them, a plan's
-  words always quoted as data. A plan made with someone who then ends it no longer stands. Interruptions stay the
+  words always quoted as data. A plan made with someone who then ends it no longer stands, and is called off if they
+  come back (`unblock`, `undeny`). Interruptions stay the
   routine's.
 - **Promises, kept or broken like a person's.** Time made to chat with someone, and a plan the model marks as with or
   for them (`withThem`), are promises to them. It may break one for someone who matters as much or more: in a turn
@@ -53,7 +55,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   queue reads; give them to `spanAt`, `fullyOnline` and `watchSpans` so a plan moves your view of its online time too.
 - The store's calendar: `addEvent`, `cancelEvent`, `eventById`, `events`, `eventsMadeSince`, `calledOffOn`, and the
   `StoredEvent` type. Their `events` table is made when the store opens; `sweep` deletes the events called off and over (the
-  persona's own of the last 90 days kept, which its limits count), `resetPersona` a persona's calendar, and
+  persona's own of the last 90 days kept, which its limits count, and those called off in the last 30, which it still
+  tells), `resetPersona` a persona's calendar, and
   `forgetPerson` the plans made in turns with that person (the app's stay, without them; a promise to someone else
   broken for them stays broken, for someone forgotten; refusals and shares kept for others keep nothing of their
   plans; messages already sent stay in those others' history).

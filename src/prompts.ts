@@ -571,23 +571,32 @@ const REWORD = (reason: string) => reason === 'unreadable' || (reason.startsWith
  * made with someone else, what they may hear of it.
  */
 export const refusedPlanPrompt = (
-	{ reason, block, clash, cancel }: { reason: string; block?: { start: number; end: number }; clash?: BusyLike; cancel?: number },
+	{ reason, block, clash, cancel, instead }: { reason: string; block?: { start: number; end: number }; clash?: BusyLike; cancel?: unknown; instead?: true },
 	timeZone: string,
 	see: See = unseen,
+	now?: number,
 ) => {
 	const heard = clash ? see(clash) : { words: undefined };
 	const why = (REFUSED_PLAN[reason] ?? "it wasn't put in a few plain words")
 		.replace('{busy}', clash ? busyText(clash, see) : 'busy')
 		.replace('{plan}', heard.words !== undefined ? `: ${JSON.stringify(heard.words)}${heard.confidence ? ', in confidence' : ''}` : '');
 	const when = block ? ` (${dateTimeText(block.start, timeZone)} to ${clockText(block.end, timeZone)})` : '';
-	if (cancel !== undefined) return `Your calendar couldn't call off plan [${cancel}]: ${why}.`;
-	const after = !REWORD(reason)
-		? 'If you promised it, tell them and suggest another time.'
-		: reason === 'unreadable'
-			? 'If you still mean it, make it again as the plan field says.'
-			: 'If you still mean it, make it again in other words.';
+	// Its time gone by since (that turn may be days ago): nothing to suggest, only to own up to
+	const after =
+		now !== undefined && block !== undefined && block.end <= now && reason !== 'past'
+			? PAST_PROMISE
+			: !REWORD(reason)
+				? 'If you promised it, tell them and suggest another time.'
+				: reason === 'unreadable'
+					? 'If you still mean it, make it again as the plan field says.'
+					: 'If you still mean it, make it again in other words.';
+	// A plan it couldn't call off, said by its time (one listed without a number has none to say), and the one meant for its place
+	if (cancel) return `Your calendar couldn't call off ${block ? 'your plan' : 'that plan'}${when}: ${why}.${instead ? ` So the plan you made in its place wasn't made either. ${after}` : ''}`;
 	return `Your calendar didn't take the plan you made last time${when}: ${why}. ${after}`;
 };
+
+/** What a refused plan's next turn is told once its time has gone by (`refusedPlanPrompt`). */
+const PAST_PROMISE = 'That time has passed now: if you promised it, own up to it.';
 
 /** Time made to chat, by whom it is for (calendar.ts comingPlans): them, someone else (never named), or nobody (the app's). */
 const MADE_TIME = { them: 'time you made to chat with them', someone: 'time you made to be online for someone else', none: 'time you set aside to be online' } as const;
@@ -644,17 +653,20 @@ export const calendarPrompt = (plans: readonly ComingPlan[], timeZone: string, p
 				.join('; ')}.${plans.some((plan) => plan.confidence) ? ` ${REST_YOURS}` : ''}`
 		: '';
 
-/** A plan it called off on someone for someone else, as it tells them: its day and times, and what it was (theirs to hear whole). */
-export const calledOffText = ({ start, end, kind, what }: { start: number; end: number; kind: ComingPlan['kind']; what: string }, timeZone: string) =>
-	`${dateTimeText(start, timeZone)} to ${clockText(end, timeZone)}: ${kind === 'online' ? MADE_TIME.them : JSON.stringify(what)}`;
+/**
+ * A plan it called off on someone for someone else, as it tells them: its day and times, and what it was (theirs to hear
+ * whole); one whose time has gone by since (`now`), said so: they likely noticed.
+ */
+export const calledOffText = ({ start, end, kind, what }: { start: number; end: number; kind: ComingPlan['kind']; what: string }, timeZone: string, now?: number) =>
+	`${dateTimeText(start, timeZone)} to ${clockText(end, timeZone)}: ${kind === 'online' ? MADE_TIME.them : JSON.stringify(what)}${now !== undefined && end <= now ? ' (its time has passed)' : ''}`;
 
 /**
- * That it called off plans with them for something else and they don't know yet (`calledOffText` each), in the next DM
+ * That it called off plans with them for something else and hasn't told them yet (`calledOffText` each), in the next DM
  * turn with them, once: to tell them and say sorry, in its own words, what came up its own to tell or not. In an
  * opener of another kind (`opener`), which may not go: if it texts them.
  */
 export const calledOffPrompt = (plans: readonly string[], { opener = false }: { opener?: boolean } = {}) =>
-	`You called off ${plans.length > 1 ? 'plans' : 'a plan'} with them for something else, and they don't know yet: ${plans.join('; ')}. ${opener ? 'If you text them now, tell them' : 'Tell them'}${plans.length > 1 ? ' of each' : ''}${opener ? '' : ' in this reply'} and say sorry, in your own words; what came up is yours to tell or not.`;
+	`You called off ${plans.length > 1 ? 'plans' : 'a plan'} with them for something else, and haven't told them yet: ${plans.join('; ')}. ${opener ? 'If you text them now, tell them' : 'Tell them'}${plans.length > 1 ? ' of each' : ''}${opener ? '' : ' in this reply'} and say sorry, in your own words; what came up is yours to tell or not.`;
 
 /**
  * The answer format of a DM turn: one JSON object with the reply (or none), the rewritten notes, and an
@@ -821,7 +833,7 @@ export const checkInReasonPrompt = (personName: string, quietMs: number) =>
 
 /** Why it may text them first, to say sorry: the plans with them it called off for something else (`calledOffText` each), which they don't know of yet. */
 export const apologyReasonPrompt = (personName: string, plans: readonly string[]) =>
-	`You called off ${plans.length > 1 ? 'plans' : 'a plan'} with ${personName} for something else, and they don't know yet: ${plans.join('; ')}. Text them to tell them${plans.length > 1 ? ' of each' : ''} and say sorry, in your own words; what came up is yours to tell or not.`;
+	`You called off ${plans.length > 1 ? 'plans' : 'a plan'} with ${personName} for something else, and haven't told them yet: ${plans.join('; ')}. Text them to tell them${plans.length > 1 ? ' of each' : ''} and say sorry, in your own words; what came up is yours to tell or not.`;
 
 /** Why it may text them first, sharing its day: the busy block it is just back from (its reason, as `busyText` says it). */
 export const shareReasonPrompt = (personName: string, reason: string) =>

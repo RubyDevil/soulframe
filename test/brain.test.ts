@@ -1665,7 +1665,7 @@ describe('its calendar (settings.calendar)', () => {
 		expect(store.pendingOpener(sam.id)).toBeUndefined();
 		await say('sam', 'Sam', 'still on for saturday?');
 		expect(seen[1]).toContain(
-			"You called off a plan with them for something else, and they don't know yet: Saturday, October 17, 3:00 PM to 4:00 PM: time you made to chat with them. Tell them in this reply and say sorry",
+			"You called off a plan with them for something else, and haven't told them yet: Saturday, October 17, 3:00 PM to 4:00 PM: time you made to chat with them. Tell them in this reply and say sorry",
 		);
 		await say('sam', 'Sam', 'oh ok');
 		expect(seen[2]).not.toContain('You called off');
@@ -1718,7 +1718,9 @@ describe('its calendar (settings.calendar)', () => {
 		const { seen, say } = robinFor(CALENDAR, [{ reply: 'ok', plan: beach }, { reply: 'hm' }], store);
 		await say('kim', 'Kim', 'skip the party and come to the beach with me?');
 		await say('kim', 'Kim', 'so?');
-		expect(seen[1]).toContain(`Your calendar couldn't call off plan [${party.id}]: you made it with someone you're closer to.`);
+		expect(seen[1]).toContain(
+			"Your calendar couldn't call off your plan (Saturday, October 17, 2:00 PM to 6:00 PM): you made it with someone you're closer to. So the plan you made in its place wasn't made either. If you promised it, tell them and suggest another time.",
+		);
 		expect(store.events('robin', SATURDAY, SATURDAY)).toEqual([expect.objectContaining({ id: party.id })]);
 	});
 
@@ -1748,7 +1750,7 @@ describe('its calendar (settings.calendar)', () => {
 		expect(apology).toMatchObject({ kind: 'apology', about: 'Saturday, October 17, 6:00 PM to 10:00 PM: "at Jo\'s party"' });
 		// Its model chose not to send it: the notice stays for Sam's next turn
 		(await brain.composeOpener(sam.id, DM.chat, apology)).keep?.();
-		expect(seen[1]).toContain("You called off a plan with Sam for something else, and they don't know yet: Saturday, October 17, 6:00 PM to 10:00 PM: \"at Jo's party\". Text them to tell them and say sorry");
+		expect(seen[1]).toContain("You called off a plan with Sam for something else, and haven't told them yet: Saturday, October 17, 6:00 PM to 10:00 PM: \"at Jo's party\". Text them to tell them and say sorry");
 		expect(store.get('robin', `calendarCalledOff:${sam.id}`)).not.toBeNull();
 		// Sent: told
 		(await brain.composeOpener(sam.id, DM.chat, apology)).keep?.();
@@ -1772,7 +1774,7 @@ describe('its calendar (settings.calendar)', () => {
 		const apology = store.pendingOpener(sam.id)!;
 		expect(apology).toMatchObject({ kind: 'apology', about: `${PARTY}; ${CALL}`, expiresAt: zonedToUtc({ ...SATURDAY, day: 18 }, 16 * 60, 'America/Toronto') });
 		const opener = await brain.composeOpener(sam.id, DM.chat, apology);
-		expect(seen[2]).toContain(`You called off plans with Sam for something else, and they don't know yet: ${PARTY}; ${CALL}. Text them to tell them of each`);
+		expect(seen[2]).toContain(`You called off plans with Sam for something else, and haven't told them yet: ${PARTY}; ${CALL}. Text them to tell them of each`);
 		// Another called off while it was written stays owed: sending it tells them of only those it named
 		const later = store.addEvent('robin', { kind: 'online', day: { ...SATURDAY, day: 19 }, from: 15 * 60, to: 16 * 60, personId: sam.id, source: 'persona' });
 		store.cancelEvent(later.id, kim.id);
@@ -1803,7 +1805,7 @@ describe('its calendar (settings.calendar)', () => {
 		// A follow-up of its own: told what it owes them, if it texts them; one it doesn't send tells nothing
 		const followUp = store.planOpener('robin', sam.id, { kind: 'followUp', about: 'ask about the exam', dueAt: NOW, expiresAt: NOW + DAY });
 		(await brain.composeOpener(sam.id, DM.chat, followUp)).keep?.();
-		expect(seen[1]).toContain("You called off a plan with them for something else, and they don't know yet: Saturday, October 17, 9:00 PM to 10:00 PM: time you made to chat with them. If you text them now, tell them and say sorry");
+		expect(seen[1]).toContain("You called off a plan with them for something else, and haven't told them yet: Saturday, October 17, 9:00 PM to 10:00 PM: time you made to chat with them. If you text them now, tell them and say sorry");
 		expect(store.get('robin', `calendarCalledOff:${sam.id}`)).not.toBeNull();
 		(await brain.composeOpener(sam.id, DM.chat, followUp)).keep?.();
 		expect(store.get('robin', `calendarCalledOff:${sam.id}`)).toBeNull();
@@ -1836,8 +1838,29 @@ describe('its calendar (settings.calendar)', () => {
 		store.set('robin', `calendarCalledOff:${sam.id}`, JSON.stringify([old, recent]));
 		const { seen, say } = robinFor(CALENDAR, [], store);
 		await say('sam', 'Sam', 'hey');
-		expect(seen[0]).toContain('You called off a plan with them for something else, and they don\'t know yet: Thursday, October 1, 8:00 PM to 9:00 PM: "at the zoo with Sam". Tell them');
+		// Its time gone by: said so, as they likely noticed
+		expect(seen[0]).toContain('You called off a plan with them for something else, and haven\'t told them yet: Thursday, October 1, 8:00 PM to 9:00 PM: "at the zoo with Sam" (its time has passed). Tell them');
 		expect(store.get('robin', `calendarCalledOff:${sam.id}`)).toBeNull();
+	});
+
+	it('lets a refused plan go once two weeks past, and reads past kv values it cannot read as none', async () => {
+		const store = memoryStore(() => NOW);
+		const sam = known(store, 'sam', 'Sam', 0.25, 0.2);
+		const kim = known(store, 'kim', 'Kim', 0.25, 0.2);
+		const lee = known(store, 'lee', 'Lee', 0.25, 0.2);
+		store.set('robin', `calendarRefused:${sam.id}`, JSON.stringify({ reason: 'busy', at: NOW - 20 * DAY, block: { start: NOW - 20 * DAY, end: NOW - 20 * DAY + HOUR }, clash: { reason: 'at work' } }));
+		store.set('robin', `calendarRefused:${kim.id}`, '{oops');
+		store.set('robin', `calendarCalledOff:${kim.id}`, '{"not":"a list"}');
+		store.set('robin', `calendarRefused:${lee.id}`, JSON.stringify({ reason: 'busy', at: NOW - 3 * DAY, block: { start: NOW - 3 * DAY, end: NOW - 3 * DAY + HOUR }, clash: { reason: 'at work' } }));
+		const { seen, say } = robinFor(CALENDAR, [], store);
+		await say('sam', 'Sam', 'hey');
+		await say('kim', 'Kim', 'hey');
+		await say('lee', 'Lee', 'hey');
+		expect(seen[0]).not.toContain("Your calendar didn't take");
+		expect(seen[1]).not.toContain('Your calendar didn');
+		expect(seen[1]).not.toContain('You called off');
+		// Its time gone by: only to own up to
+		expect(seen[2]).toContain("you're at work then. That time has passed now: if you promised it, own up to it.");
 	});
 
 	it('weighs closeness by the levels a conversation was shown while the level lists still hold them', async () => {

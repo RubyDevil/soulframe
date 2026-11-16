@@ -10,7 +10,7 @@ import { addresses, planReasonProblem } from './config/hours.js';
 import { toOthers } from './prompts.js';
 import { addDays, agendaOn, CLOCK, localDateOf, onlineMinutesByWeekday, parseClock, zonedToUtc, type Busy, type CalendarEvent, type Hours, type LocalDate } from './schedule.js';
 import { DAY, MINUTE, type Settings } from './settings.js';
-import type { Store, StoredEvent } from './store.js';
+import { CALLED_OFF_COUNT_DAYS, type Store, type StoredEvent } from './store.js';
 
 /** The shortest plan, in minutes. */
 const SHORTEST_MINUTES = 15;
@@ -395,7 +395,7 @@ export function comingPlans(
 						: sight === 'public' || nameIn(store)(madeWith) === undefined
 							? 'someone'
 							: { name: nameIn(store)(madeWith)! },
-			promise: promised === null ? null : { closer: promised, calledOff: store.calledOffOn(hours.id, madeWith!, now - 30 * DAY) },
+			promise: promised === null ? null : { closer: promised, calledOff: store.calledOffOn(hours.id, madeWith!, now - CALLED_OFF_COUNT_DAYS * DAY) },
 		};
 	});
 }

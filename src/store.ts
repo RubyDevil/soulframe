@@ -146,6 +146,8 @@ const dayKey = ({ year, month, day }: LocalDate) => `${year}-${String(month).pad
 
 /** How far back the persona's own plans count toward its calendar's limits (settings.calendar `makeTime.perPersonDays` at most): kept by `sweep` that long. */
 const LIMITS_COUNT_DAYS = 90;
+/** How far back a persona's promises broken for others are counted (calendar.ts comingPlans, `calledOffOn`): kept that long by `sweep`. */
+export const CALLED_OFF_COUNT_DAYS = 30;
 
 const toEvent = (row: EventRow): StoredEvent => {
 	const [year, month, day] = row.day.split('-').map(Number) as [number, number, number];
@@ -401,6 +403,24 @@ export function createStore(db: Database, now: () => number = Date.now) {
 	// Prepared once: every agenda read of a persona with a calendar asks it (schedule.ts agendaOn)
 	// A plan the persona made with someone who then stopped, blocked it or was denied no longer stands: nobody is left to
 	// call it off with, and nothing of them is kept to
+	/**
+	 * Someone who ended it and comes back: the plans made with them while they were away stood for nobody, and others may
+	 * have taken their time since. Called off for good, by the app (no promise broken for anyone).
+	 */
+	const endPlans = (personId: number) => db.prepare("UPDATE events SET cancelled_at = ? WHERE person_id = ? AND source = 'persona' AND cancelled_at IS NULL").run(now(), personId);
+	/**
+	 * Its day shared with someone (`share_planned`), just back from a plan made with someone forgotten (`madeWith`, one of
+	 * `gone`): what that opener said goes (pending, it is dropped), and the audit line keeps nothing of it.
+	 */
+	const forgetShares = (persona: string, gone: (madeWith: number) => boolean) => {
+		const shares = db
+			.prepare("SELECT id, json_extract(detail, '$.openerId') AS opener, json_extract(detail, '$.madeWith') AS madeWith FROM audit WHERE persona = ? AND kind = 'share_planned' AND json_extract(detail, '$.madeWith') IS NOT NULL")
+			.all(persona) as unknown as { id: number; opener: number | null; madeWith: number }[];
+		for (const share of shares.filter((share) => gone(share.madeWith))) {
+			if (share.opener !== null) db.prepare("UPDATE openers SET about = '', closed_at = COALESCE(closed_at, ?), outcome = COALESCE(outcome, 'dropped') WHERE id = ?").run(now(), share.opener);
+			db.prepare("UPDATE audit SET detail = json_remove(detail, '$.about', '$.madeWith') WHERE id = ?").run(share.id);
+		}
+	};
 	const standingEvents = db.prepare(
 		"SELECT e.* FROM events e LEFT JOIN people p ON p.id = e.person_id WHERE e.persona = ? AND e.day >= ? AND e.day <= ? AND e.cancelled_at IS NULL AND (e.source != 'persona' OR e.person_id IS NULL OR p.state = 'active') ORDER BY e.day, e.from_minute, e.id",
 	);
@@ -514,7 +534,7 @@ export function createStore(db: Database, now: () => number = Date.now) {
 		 * Deletes messages, audit lines, closed openers and calendar events older than `before`: an event made before it
 		 * and called off before it, or dated two days or more before it (over in every time zone), but for the persona's
 		 * own made in the last 90 days, which its limits still count (settings.calendar: `perWeek`, `perPersonDays` up to
-		 * 90). The app sweeps its own tables.
+		 * 90), or called off in the last 30, which its calendar still tells (`calledOffOn`). The app sweeps its own tables.
 		 */
 		sweep(before: number) {
 			db.prepare('DELETE FROM messages WHERE at < ?').run(before);
@@ -522,12 +542,9 @@ export function createStore(db: Database, now: () => number = Date.now) {
 			db.prepare('DELETE FROM openers WHERE closed_at IS NOT NULL AND closed_at < ?').run(before);
 			const over = new Date(before - 2 * 86_400_000);
 			const overDay = dayKey({ year: over.getUTCFullYear(), month: over.getUTCMonth() + 1, day: over.getUTCDate() });
-			db.prepare("DELETE FROM events WHERE created_at < ? AND (source != 'persona' OR created_at < ?) AND ((cancelled_at IS NOT NULL AND cancelled_at < ?) OR day < ?)").run(
-				before,
-				now() - LIMITS_COUNT_DAYS * 86_400_000,
-				before,
-				overDay,
-			);
+			db.prepare(
+				"DELETE FROM events WHERE created_at < ? AND (source != 'persona' OR (created_at < ? AND (cancelled_at IS NULL OR cancelled_at < ?))) AND ((cancelled_at IS NOT NULL AND cancelled_at < ?) OR day < ?)",
+			).run(before, now() - LIMITS_COUNT_DAYS * 86_400_000, now() - CALLED_OFF_COUNT_DAYS * 86_400_000, before, overDay);
 		},
 		/**
 		 * Puts a plan in the persona's calendar (settings.calendar), laid over its agenda while the calendar is on: `busy`,
@@ -694,6 +711,7 @@ export function createStore(db: Database, now: () => number = Date.now) {
 			const row = db.prepare('SELECT persona, state FROM people WHERE id = ?').get(personId) as unknown as { persona: string; state: PersonState } | undefined;
 			if (!row || (row.state !== 'stopped' && row.state !== 'blocked')) return false;
 			db.prepare("UPDATE people SET state = 'active', updated_at = ? WHERE id = ?").run(now(), personId);
+			endPlans(personId);
 			db.prepare('INSERT INTO audit (at, persona, kind, detail) VALUES (?, ?, ?, ?)').run(now(), row.persona, 'unblocked', JSON.stringify({ personId, from: row.state, source: 'manual' }));
 			return true;
 		},
@@ -714,6 +732,7 @@ export function createStore(db: Database, now: () => number = Date.now) {
 						.get(id);
 					if (stillDenied) continue;
 					db.prepare("UPDATE people SET state = 'active', updated_at = ? WHERE id = ?").run(now(), id);
+					endPlans(id);
 					db.prepare('INSERT INTO audit (at, persona, kind, detail) VALUES (?, ?, ?, ?)').run(now(), persona, 'undenied', JSON.stringify({ personId: id, platform: channel, source: 'manual' }));
 				}
 				return true;
@@ -744,20 +763,20 @@ export function createStore(db: Database, now: () => number = Date.now) {
 				db.prepare('UPDATE events SET cancelled_by = 0 WHERE cancelled_by = ?').run(personId);
 				db.prepare("DELETE FROM audit WHERE persona = ? AND json_extract(detail, '$.personId') = ?").run(row.persona, personId);
 				db.prepare("UPDATE audit SET detail = json_remove(detail, '$.for') WHERE persona = ? AND json_extract(detail, '$.for') = ?").run(row.persona, personId);
-				// Its day shared with someone else, just back from a plan made with them: what that opener said goes (pending, it is dropped)
-				const shares = db
-					.prepare("SELECT id, json_extract(detail, '$.openerId') AS opener FROM audit WHERE persona = ? AND kind = 'share_planned' AND json_extract(detail, '$.madeWith') = ?")
-					.all(row.persona, personId) as unknown as { id: number; opener: number | null }[];
-				for (const share of shares) {
-					if (share.opener !== null) {
-						db.prepare("UPDATE openers SET about = '', closed_at = COALESCE(closed_at, ?), outcome = COALESCE(outcome, 'dropped') WHERE id = ?").run(now(), share.opener);
-					}
-					db.prepare("UPDATE audit SET detail = json_remove(detail, '$.about', '$.madeWith') WHERE id = ?").run(share.id);
-				}
+				// Its day shared with someone else, just back from a plan made with them: what that opener said goes
+				forgetShares(row.persona, (madeWith) => madeWith === personId);
 				// A plan refused to someone else for a plan made with them: that plan is gone, so only its public words stay, if any
 				const refusals = db.prepare("SELECT key, value FROM kv WHERE persona = ? AND key LIKE 'calendarRefused:%'").all(row.persona) as unknown as { key: string; value: string }[];
 				for (const { key, value } of refusals) {
-					const { clash, ...refusal } = JSON.parse(value) as { clash?: { madeWith?: number; public?: string } };
+					type Refusal = { clash?: { madeWith?: number; public?: string } };
+					let parsed: unknown = null;
+					try {
+						parsed = JSON.parse(value);
+					} catch {
+						// Not one it wrote: left as it is (the brain reads it as none)
+					}
+					if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
+					const { clash, ...refusal } = parsed as Refusal;
 					if (clash?.madeWith !== personId) continue;
 					db.prepare('UPDATE kv SET value = ? WHERE persona = ? AND key = ?').run(JSON.stringify({ ...refusal, ...(clash.public && { clash: { reason: clash.public } }) }), row.persona, key);
 				}
@@ -788,8 +807,9 @@ export function createStore(db: Database, now: () => number = Date.now) {
 					// Those about people kept stay; so do none about anyone forgotten
 					const keep = (db.prepare("SELECT id FROM people WHERE persona = ? AND state != 'active'").all(persona) as unknown as { id: number }[]).map((p) => p.id);
 					db.prepare(`DELETE FROM audit WHERE persona = ? AND (json_extract(detail, '$.personId') IS NULL OR json_extract(detail, '$.personId') NOT IN (${keep.map(() => '?').join(', ')}))`).run(persona, ...keep);
-					// Nor whom a promise to one of them was broken for
+					// Nor whom a promise to one of them was broken for, nor what was shared with them of a plan made with anyone forgotten
 					db.prepare(`UPDATE audit SET detail = json_remove(detail, '$.for') WHERE persona = ? AND json_extract(detail, '$.for') NOT IN (${keep.map(() => '?').join(', ')})`).run(persona, ...keep);
+					forgetShares(persona, (madeWith) => !keep.includes(madeWith));
 				}
 				return { people: ids.length, messages };
 			});

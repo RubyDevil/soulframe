@@ -1005,14 +1005,17 @@ failed?: true }[]; links: (LinkPreview & { looked?: true })[] }`. A photo keeps 
 - **`audit`**, **`auditLog`**: the audit log (newest first, default 50, for one persona or all).
 - **`sweep`**: deletes messages, audit lines and closed openers older than `before`, and the calendar events made before
   it that were called off before it or are dated two days or more before it, but for the persona's own plans of the
-  last 90 days, which its limits still count. The application sweeps its own tables.
+  last 90 days, which its limits still count, or called off in the last 30, which its calendar still tells. The
+  application sweeps its own tables.
 - **`block`**, **`unblock`**: by hand, for an operator. `block` makes an active person `blocked`: the persona ignores
   what they write and cuts a reply under way. `unblock` makes someone `stopped` (they asked to stop) or `blocked`
-  `active` again. Both are audited with `source: 'manual'`, answer whether anything changed, and only touch the store:
+  `active` again (calling off the plans its calendar made with them: they stood for nobody while they were away, and
+  others may have taken their time since). Both are audited with `source: 'manual'`, answer whether anything changed, and only touch the store:
   blocking on the platform itself is the application's (`act`), and unblocking someone who asked to stop is your call,
   not the persona's.
 - **`undeny`**, **`clearMinorCaution`**: by hand, the other way for the safety lists: `undeny` takes an account off the
-  deny list and makes the people with it `active` again, unless another of their accounts is still listed;
+  deny list and makes the people with it `active` again, unless another of their accounts is still listed (their plans
+  called off, as `unblock`);
   `clearMinorCaution` takes the flag off an account. They answer whether the account was on the list, and `undeny` is
   audited for each persona. These lists protect people: use them for a mistake you checked, not as routine.
 - **`forgetPerson`**: deletes one person (their messages, notes, familiarity and affinity, accounts, the plans its
@@ -1060,8 +1063,8 @@ read only while it is on:
   them, or a plan with or for them) were called off in turns with someone else since a time: promises it broke for
   others, as its calendar tells it.
 - **`events`**: the persona's standing plans from one date to another, both included, in order: what its agenda lays
-  over each drawn day; not one it made with someone who has since ended it (stopped, blocked or denied), which stands
-  again if they come back. **`eventsMadeSince`**: how many it made itself since a time, called off or not, by kind and
+  over each drawn day; not one it made with someone who has since ended it (stopped, blocked or denied), which is
+  called off if they come back (`unblock`, `undeny`). **`eventsMadeSince`**: how many it made itself since a time, called off or not, by kind and
   person when given: what its guardrails count; `unbroken` leaves out those called off for someone else (time broken
   on them is no time they had). A forgotten person's plans made in turns with them go with them; the
   app's stay, with `personId` `null`.

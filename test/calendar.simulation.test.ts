@@ -142,7 +142,7 @@ function simulate(seed: number, sharing: Sharing) {
 	};
 	/** A prompt to `person`: what it tells of promises broken on them is all that is owed, and only that. */
 	const checkNotices = (person: Person, prompt: string, owed: StoredEvent[]) => {
-		const notice = /You called off (?:a plan|plans) with (?:them|\w+) for something else, and they don't know yet: (.*?)\. (?:Tell|Text|If)/.exec(prompt);
+		const notice = /You called off (?:a plan|plans) with (?:them|\w+) for something else, and haven't told them yet: (.*?)\. (?:Tell|Text|If)/.exec(prompt);
 		if (!owed.length) {
 			if (notice) throw new Error(`a called-off notice to ${person.name} with nothing owed: ${notice[0]} (kv ${store.get('robin', calledOffKey(person.id))})`);
 			return;

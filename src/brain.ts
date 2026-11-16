@@ -469,8 +469,18 @@ export function createBrain({
 			heardOf(busy, viewer, calendar.sharing, nameIn(store));
 	/** The plan its calendar didn't take at the last kept turn with them, as their next turn is told (prompts.ts refusedPlanPrompt), if any. */
 	const refusedPlan = (person: Person) => {
-		const kept = calendar.enabled ? store.get(persona.id, refusedKey(person.id)) : null;
-		return kept ? refusedPlanPrompt(JSON.parse(kept) as Parameters<typeof refusedPlanPrompt>[0], persona.timezone, seeFor(viewerOf(person))) : undefined;
+		const kept = calendar.enabled ? jsonIn<Parameters<typeof refusedPlanPrompt>[0] & { at?: number }>(refusedKey(person.id)) : undefined;
+		// None it can read, and none two weeks past (its time, or when it was refused): long past putting right
+		if (!kept || typeof kept !== 'object' || typeof kept.reason !== 'string' || Math.max(kept.block?.end ?? 0, kept.at ?? 0) < now() - 14 * DAY) return undefined;
+		return refusedPlanPrompt(kept, persona.timezone, seeFor(viewerOf(person)), now());
+	};
+	/** A kv value of its own as JSON, or undefined: none, or one it can't read. */
+	const jsonIn = <T>(key: string): T | undefined => {
+		try {
+			return (JSON.parse(store.get(persona.id, key) ?? 'null') as T | null) ?? undefined;
+		} catch {
+			return undefined;
+		}
 	};
 	/** Its coming plans, as DM turns and openers with the person list them (prompts.ts calendarPrompt); none while its calendar is off. */
 	const calendarLines = (person: Person) =>
@@ -480,8 +490,10 @@ export function createBrain({
 	/** Where the plan its calendar didn't take is kept for the next turn with them (kv), until a turn with them is kept. */
 	const refusedKey = (personId: number) => `calendarRefused:${personId}`;
 	/** The plans it called off on them for someone else, which they don't know of yet: not one over two weeks ago, long past telling. */
-	const calledOffOn = (personId: number): CalledOff[] =>
-		(JSON.parse(store.get(persona.id, calledOffKey(personId)) ?? '[]') as CalledOff[]).filter((plan) => plan.end > now() - 14 * DAY);
+	const calledOffOn = (personId: number): CalledOff[] => {
+		const kept = jsonIn<unknown>(calledOffKey(personId));
+		return (Array.isArray(kept) ? (kept as CalledOff[]) : []).filter((plan) => plan && typeof plan.start === 'number' && typeof plan.end === 'number' && plan.end > now() - 14 * DAY);
+	};
 	/** They were told of these (by a kept turn, or an apology sent): only these leave, one called off meanwhile stays. */
 	const told = (personId: number, ids: readonly number[]) => {
 		const left = calledOffOn(personId).filter((plan) => !ids.includes(plan.id));
@@ -491,7 +503,7 @@ export function createBrain({
 	const owedTo = (personId: number) => {
 		const plans = calendar.enabled ? calledOffOn(personId) : [];
 		const name = nameIn(store)(personId);
-		return { plans: plans.map((plan) => calledOffText({ ...plan, what: name === undefined ? plan.what : toOthers(plan.what, name) }, persona.timezone)), ids: plans.map((plan) => plan.id) };
+		return { plans: plans.map((plan) => calledOffText({ ...plan, what: name === undefined ? String(plan.what) : toOthers(String(plan.what), name) }, persona.timezone, now())), ids: plans.map((plan) => plan.id) };
 	};
 	/**
 	 * A promise to someone called off in a turn with someone else (`by`): called off, audited, and kept for their next
@@ -527,9 +539,19 @@ export function createBrain({
 		if ('refused' in checked) {
 			store.audit(persona.id, 'plan_refused', { personId, reason: checked.refused });
 			if (checked.refused !== 'already_online') {
-				// The plan it couldn't call off, by its number or for one in its place, is said by that number
+				// The plan it couldn't call off, by its number or for one in its place, said by its time (a number listed to nobody
+				// else means nothing to them), and whether a plan was meant for its place
 				const cancel = checked.stands ?? (proposal !== 'unreadable' && 'cancel' in proposal ? proposal.cancel : undefined);
-				const told: Parameters<typeof refusedPlanPrompt>[0] = { reason: checked.refused, ...(checked.block && { block: checked.block }), ...(checked.clash && { clash: checked.clash }), ...(cancel !== undefined && { cancel }) };
+				const standing = cancel !== undefined ? store.eventById(cancel) : undefined;
+				const block = checked.block ?? (standing?.persona === persona.id ? { start: zonedToUtc(standing.day, standing.from, persona.timezone), end: zonedToUtc(standing.day, standing.to, persona.timezone) } : undefined);
+				const told = {
+					reason: checked.refused,
+					at: now(),
+					...(block && { block }),
+					...(checked.clash && { clash: checked.clash }),
+					...(cancel !== undefined && { cancel: true as const }),
+					...(checked.stands !== undefined && { instead: true as const }),
+				};
 				store.set(persona.id, refusedKey(personId), JSON.stringify(told));
 			}
 			return;

@@ -538,6 +538,64 @@ describe('calendar events', () => {
 		expect(store.events('kim', friday, friday)).toHaveLength(1);
 	});
 
+	it('calls off the plans made with someone who comes back (unblocked, undenied): others may have taken their time', () => {
+		const store = memoryStore(() => 1_000);
+		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const lee = store.createPerson('robin', 'chat', 'lee', 'Lee');
+		const time = store.addEvent('robin', { kind: 'online', day: friday, from: 900, to: 960, personId: sam.id, source: 'persona' });
+		const party = store.addEvent('robin', { kind: 'busy', day: saturday, from: 900, to: 960, what: 'at your party', personId: lee.id, source: 'persona', withThem: true });
+		store.block(sam.id);
+		expect(store.events('robin', friday, friday)).toEqual([]);
+		store.unblock(sam.id);
+		// Gone for good, by the app: no promise broken for anyone
+		expect(store.events('robin', friday, friday)).toEqual([]);
+		expect(store.eventById(time.id)).toMatchObject({ cancelledBy: null, cancelledAt: 1_000 });
+		expect(store.calledOffOn('robin', sam.id, 0)).toBe(0);
+		store.deny('chat', 'lee', 'minor');
+		store.undeny('chat', 'lee');
+		expect(store.eventById(party.id)?.cancelledAt).toBe(1_000);
+	});
+
+	it('keeps a promise broken for someone else through a sweep for 30 days, which its calendar still tells', () => {
+		let at = Date.UTC(2026, 10, 1);
+		const store = memoryStore(() => at);
+		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const kim = store.createPerson('robin', 'chat', 'kim', 'Kim');
+		// Made 100 days before it is broken, far ahead
+		const made = store.addEvent('robin', { kind: 'online', day: { year: 2027, month: 2, day: 10 }, from: 900, to: 960, personId: sam.id, source: 'persona' });
+		at += 100 * 86_400_000;
+		store.cancelEvent(made.id, kim.id);
+		at += 10 * 86_400_000;
+		store.sweep(at - 86_400_000);
+		expect(store.calledOffOn('robin', sam.id, at - 30 * 86_400_000)).toBe(1);
+		at += 25 * 86_400_000;
+		store.sweep(at - 86_400_000);
+		expect(store.eventById(made.id)).toBeUndefined();
+	});
+
+	it('forgets someone even past a kv value it cannot read', () => {
+		const store = memoryStore(() => 1_000);
+		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const kim = store.createPerson('robin', 'chat', 'kim', 'Kim');
+		store.set('robin', `calendarRefused:${kim.id}`, 'not json');
+		store.set('robin', 'calendarRefused:77', 'null');
+		expect(store.forgetPerson(sam.id)).toBe(true);
+		expect(store.get('robin', `calendarRefused:${kim.id}`)).toBe('not json');
+	});
+
+	it('keeps nothing of a forgotten person\'s plan in what was shared with someone kept by a reset', () => {
+		const store = memoryStore(() => 1_000);
+		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const kim = store.createPerson('robin', 'chat', 'kim', 'Kim');
+		const share = store.planOpener('robin', kim.id, { kind: 'share', about: 'busy ("at Sam\'s surprise party")', dueAt: 1_000, expiresAt: 2_000 });
+		store.audit('robin', 'share_planned', { personId: kim.id, about: share.about, openerId: share.id, madeWith: sam.id });
+		store.block(kim.id);
+		store.resetPersona('robin');
+		expect(JSON.stringify(store.auditLog('robin'))).not.toContain('surprise');
+		expect(store.auditLog('robin').find((row) => row.kind === 'share_planned')?.detail).toEqual({ personId: kim.id, openerId: share.id });
+		expect(store.pendingOpener(kim.id)).toBeUndefined();
+	});
+
 	it('sweeps a plan made before the cut and dated two days or more before it, and keeps the others', () => {
 		const nov23 = Date.UTC(2026, 10, 23);
 		let at = nov23 - 10 * 86_400_000;

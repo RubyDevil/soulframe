@@ -777,7 +777,15 @@ describe('the calendar (planField, calendarPrompt)', () => {
 		expect(refusedPlanPrompt({ reason: 'clash', block, clash: { ...kims, public: "at a friend's party" } }, zone)).toContain(`: you have another plan then: "at a friend's party".`);
 		expect(refusedPlanPrompt({ reason: 'clash', block, clash: kims }, zone, (busy) => ({ words: busy.reason }))).toContain(': you have another plan then: "at Kim\'s party".');
 		expect(refusedPlanPrompt({ reason: 'clash', block, clash: kims }, zone, (busy) => ({ words: busy.reason, confidence: true }))).toContain(': you have another plan then: "at Kim\'s party", in confidence.');
-		expect(refused({ reason: 'less_close', cancel: 6 })).toBe("Your calendar couldn't call off plan [6]: you made it with someone you're closer to.");
+		// One it couldn't call off, said by its time (no number: the reader may see none), and the plan meant for its place
+		expect(refused({ reason: 'less_close', cancel: true, block })).toBe(`Your calendar couldn't call off your plan (${when}): you made it with someone you're closer to.`);
+		expect(refused({ reason: 'less_close', cancel: true, block, instead: true })).toBe(
+			`Your calendar couldn't call off your plan (${when}): you made it with someone you're closer to. So the plan you made in its place wasn't made either.${AFTER}`,
+		);
+		// Its time gone by since that turn: nothing to suggest, only to own up to
+		const PAST = ' That time has passed now: if you promised it, own up to it.';
+		expect(refusedPlanPrompt({ reason: 'busy', block, clash: { reason: 'at work' } }, zone, undefined, block.end + 1)).toBe(`Your calendar didn't take the plan you made last time (${when}): you're at work then.${PAST}`);
+		expect(refusedPlanPrompt({ reason: 'busy', block, clash: { reason: 'at work' } }, zone, undefined, block.end - 1)).toContain(AFTER);
 		// One it couldn't read: to make again as the field says
 		expect(refused({ reason: 'unreadable' })).toBe("Your calendar didn't take the plan you made last time: it wasn't written as the plan field says. If you still mean it, make it again as the plan field says.");
 		expect(refused({ reason: 'clash_online', block })).toBe(`Your calendar didn't take the plan you made last time (${when}): you already made time to be online then.${AFTER}`);
@@ -796,8 +804,8 @@ describe('the calendar (planField, calendarPrompt)', () => {
 			`Your calendar didn't take the plan you made last time (${when}): time with them here isn't time away from your phone: make it time to be online for them, or nothing if you're online then anyway.${AFTER}`,
 		);
 		expect(refused({ reason: 'times' })).toBe(`Your calendar didn't take the plan you made last time: its times weren't on a 24-hour clock.${AFTER}`);
-		expect(refused({ reason: 'over', cancel: 4 })).toBe("Your calendar couldn't call off plan [4]: it's over already.");
-		expect(refused({ reason: 'not_its_own', cancel: 5 })).toBe("Your calendar couldn't call off plan [5]: it isn't yours to call off.");
+		expect(refused({ reason: 'over', cancel: true, block })).toBe(`Your calendar couldn't call off your plan (${when}): it's over already.`);
+		expect(refused({ reason: 'no_such_plan', cancel: true })).toBe("Your calendar couldn't call off that plan: it isn't one of your plans.");
 		for (const reason of ['busy', 'clash', 'clash_online', 'night', 'too_much', 'too_long', 'too_short', 'too_soon', 'week_cap', 'day', 'too_far', 'past', 'times', 'off', 'reason_sleep', 'reason_school', 'reason_length']) {
 			expect(refused({ reason, block })).not.toMatch(/sleep|bed|school|student|homework/i);
 		}
@@ -845,20 +853,20 @@ describe('the calendar (planField, calendarPrompt)', () => {
 		expect(call).toBe('Sunday, November 22, 3:00 PM to 4:00 PM: time you made to chat with them');
 		expect(party).toBe('Sunday, November 22, 3:00 PM to 5:00 PM: "at Jo\'s party"');
 		expect(calledOffPrompt([call])).toBe(
-			"You called off a plan with them for something else, and they don't know yet: Sunday, November 22, 3:00 PM to 4:00 PM: time you made to chat with them. Tell them in this reply and say sorry, in your own words; what came up is yours to tell or not.",
+			"You called off a plan with them for something else, and haven't told them yet: Sunday, November 22, 3:00 PM to 4:00 PM: time you made to chat with them. Tell them in this reply and say sorry, in your own words; what came up is yours to tell or not.",
 		);
 		expect(calledOffPrompt([call, party])).toContain('You called off plans with them for something else');
 		expect(calledOffPrompt([call, party])).toContain('. Tell them of each in this reply and say sorry');
 		// In an opener of another kind, which may not go
 		expect(calledOffPrompt([call], { opener: true })).toBe(
-			"You called off a plan with them for something else, and they don't know yet: Sunday, November 22, 3:00 PM to 4:00 PM: time you made to chat with them. If you text them now, tell them and say sorry, in your own words; what came up is yours to tell or not.",
+			"You called off a plan with them for something else, and haven't told them yet: Sunday, November 22, 3:00 PM to 4:00 PM: time you made to chat with them. If you text them now, tell them and say sorry, in your own words; what came up is yours to tell or not.",
 		);
 		expect(calledOffPrompt([call, party], { opener: true })).toContain('. If you text them now, tell them of each and say sorry');
 		expect(apologyReasonPrompt('Sam', [call])).toBe(
-			"You called off a plan with Sam for something else, and they don't know yet: Sunday, November 22, 3:00 PM to 4:00 PM: time you made to chat with them. Text them to tell them and say sorry, in your own words; what came up is yours to tell or not.",
+			"You called off a plan with Sam for something else, and haven't told them yet: Sunday, November 22, 3:00 PM to 4:00 PM: time you made to chat with them. Text them to tell them and say sorry, in your own words; what came up is yours to tell or not.",
 		);
 		expect(apologyReasonPrompt('Sam', [call, party])).toBe(
-			"You called off plans with Sam for something else, and they don't know yet: Sunday, November 22, 3:00 PM to 4:00 PM: time you made to chat with them; Sunday, November 22, 3:00 PM to 5:00 PM: \"at Jo's party\". Text them to tell them of each and say sorry, in your own words; what came up is yours to tell or not.",
+			"You called off plans with Sam for something else, and haven't told them yet: Sunday, November 22, 3:00 PM to 4:00 PM: time you made to chat with them; Sunday, November 22, 3:00 PM to 5:00 PM: \"at Jo's party\". Text them to tell them of each and say sorry, in your own words; what came up is yours to tell or not.",
 		);
 	});
 });

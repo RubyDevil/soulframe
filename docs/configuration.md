@@ -614,11 +614,13 @@ What the code checks, whatever the settings say:
   close), and by a plan over it only when that turn listed it (`shown`): one it never weighed is a clash. The one it was broken on is told, at their next turn, and by an apology while texting first is on (or by a
   follow-up already planned, which an apology never replaces);
 - a plan made with someone who then ends it (stops, blocks it, is denied) no longer stands: nobody is left to call it
-  off with.
+  off with; if they come back (`store.unblock`, `store.undeny`), it is called off, its time perhaps someone else's
+  since.
 
 Each outcome is audited: `plan_added`, `plan_cancelled`, `plan_called_off` (a promise broken for someone else), or
 `plan_refused` with its reason (`unreadable` for a `plan` the code couldn't read). A refused plan is told, once, to the
-next turn with that person (when it was for, and why), so a promise the model made can be put right.
+next turn with that person that replies (when it was for, and why), so a promise the model made can be put right;
+once its time has passed, to own up to, and two weeks past, not at all.
 
 What others hear of a plan made with someone is its own words as its `share` (chosen by the model) and their levels
 allow (`sharing`), else its public words, also chosen by the model; group chats, with no one person, hear an `open`
