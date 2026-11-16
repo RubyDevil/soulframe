@@ -7,7 +7,7 @@
  */
 
 import { planReasonProblem } from './config/hours.js';
-import { addDays, agendaOn, CLOCK, localDateOf, onlineMinutesByWeekday, parseClock, zonedToUtc, type CalendarEvent, type Hours, type LocalDate } from './schedule.js';
+import { addDays, agendaOn, CLOCK, localDateOf, onlineMinutesByWeekday, parseClock, zonedToUtc, type Busy, type CalendarEvent, type Hours, type LocalDate } from './schedule.js';
 import { DAY, MINUTE, type Settings } from './settings.js';
 import type { Store, StoredEvent } from './store.js';
 
@@ -23,14 +23,17 @@ export type PlanProposal =
 	| { day: number; from: string; to: string; online: true }
 	| { cancel: number };
 
+/** What a refused plan clashed with: a busy block's reason ("at work"), and the event it is when a plan made it. */
+export type Clash = Pick<Busy, 'reason' | 'event'>;
+
 /**
  * What `checkPlan` decided: a plan to add (store.addEvent's), one of its own to call off, or why it was refused, with
- * the time the plan was for (once its times read) and what it would have clashed with ("at work"), if anything.
+ * the time the plan was for (once its times read) and the busy block it would have clashed with, if any.
  */
 export type PlanCheck =
 	| { add: Parameters<Store['addEvent']>[1] }
 	| { cancel: StoredEvent }
-	| { refused: string; block?: { start: number; end: number }; clash?: string };
+	| { refused: string; block?: { start: number; end: number }; clash?: Clash };
 
 /** The persona's hours with its calendar: its standing plans from the store, laid over each drawn day (schedule.ts agendaOn). */
 export const calendarHours = (hours: Hours, store: Store): Hours => ({
@@ -45,10 +48,10 @@ const instantsOf = (event: Pick<CalendarEvent, 'day' | 'from' | 'to'>, timeZone:
 
 const overlaps = (a: { start: number; end: number }) => (b: { start: number; end: number }) => a.start < b.end && b.start < a.end;
 
-/** The online time of `spans` (breaks left out), the spans that overlap (on different channels) as one. */
-const joinedOnline = (spans: readonly { kind: string; start: number; end: number }[]) =>
+/** The online time of `spans` (breaks left out; with `everywhere`, those of some channels only too), the spans that overlap as one. */
+const joinedOnline = (spans: readonly { kind: string; start: number; end: number; on?: readonly unknown[] }[], { everywhere = false } = {}) =>
 	spans
-		.filter((span) => span.kind === 'online')
+		.filter((span) => span.kind === 'online' && (!everywhere || !span.on))
 		.sort((a, b) => a.start - b.start)
 		.reduce<{ start: number; end: number }[]>((out, span) => {
 			const last = out.at(-1);
@@ -66,11 +69,14 @@ const covered = (block: { start: number; end: number }, spans: readonly { start:
  * (one of its own plans still ahead), or `refused` with why. Every plan: on a day from today to `plans.maxDays` ahead,
  * 15 minutes at least, starting after `now`.
  * - Busy (a plan of its own, `plans`): at most `plans.maxHours`, its reason as config/hours.ts planReasonProblem
- *   allows, over no other busy plan, at most `plans.perWeek` made in any 7 days.
+ *   allows, over no other plan (busy, or time made to chat: a promise to someone), at most `plans.perWeek` made in any
+ *   7 days.
  * - Online (time made to chat, `makeTime`): from 7 AM to midnight, at most `makeTime.maxMinutes`, over no busy block
- *   of that day, not wholly online then already, never making the day's online time longer than its schedule's
- *   longest day and one such time (`makeTime.maxMinutes`), at most one for the person in `makeTime.perPersonDays`.
- * - Cancel: one of its own plans (`source` persona), standing and not over.
+ *   of that day, not online for every channel then already, never making the day's online time longer than its
+ *   schedule's longest day and one such time (`makeTime.maxMinutes`), at most one for the person in
+ *   `makeTime.perPersonDays`.
+ * - Cancel: one of its own plans (`source` persona) of a kind it may make, standing and not over; time made to chat
+ *   only with whom it was made for.
  * `hours` must carry its calendar (`calendarHours`), so the day it checks is the one the agenda will draw.
  */
 export function checkPlan(
@@ -92,12 +98,14 @@ export function checkPlan(
 		today?: LocalDate;
 	},
 ): PlanCheck {
-	const refused = (reason: string, more: { block?: { start: number; end: number }; clash?: string } = {}) => ({ refused: reason, ...more });
+	const refused = (reason: string, more: { block?: { start: number; end: number }; clash?: Clash } = {}) => ({ refused: reason, ...more });
 	const { timezone } = hours;
 	if ('cancel' in proposal) {
 		const event = store.eventById(proposal.cancel);
 		if (!event || event.persona !== hours.id || event.cancelledAt !== null) return refused('no_such_plan');
-		if (event.source !== 'persona') return refused('not_its_own');
+		// Time made to chat is a promise to someone: only they can be told it's off
+		if (event.source !== 'persona' || (event.kind === 'online' && event.personId !== personId)) return refused('not_its_own');
+		if (!(event.kind === 'online' ? settings.makeTime : settings.plans).enabled) return refused('off');
 		if (instantsOf(event, timezone).end <= now) return refused('over');
 		return { cancel: event };
 	}
@@ -113,7 +121,7 @@ export function checkPlan(
 	if (to - from < SHORTEST_MINUTES) return refused('too_short');
 	const block = instantsOf({ day, from, to }, timezone);
 	/** Refused, saying the time it was for. */
-	const refusedAt = (reason: string, clash?: string) => refused(reason, { block, ...(clash !== undefined && { clash }) });
+	const refusedAt = (reason: string, clash?: Clash) => refused(reason, { block, ...(clash && { clash: { reason: clash.reason, ...(clash.event !== undefined && { event: clash.event }) } }) });
 	if (block.start <= now) return refusedAt('past');
 
 	if (online) {
@@ -124,8 +132,9 @@ export function checkPlan(
 		// The day before's blocks may run into it: a night shift until 8 AM
 		const before = agendaOn(hours, addDays(day, -1));
 		const busy = [...before.busy, ...agenda.busy].find(overlaps(block));
-		if (busy) return refusedAt('busy', busy.reason);
-		const already = covered(block, joinedOnline([...before.spans, ...agenda.spans]));
+		if (busy) return refusedAt('busy', busy);
+		// Online on one channel only is time it may still make for every channel (the person's may not be one)
+		const already = covered(block, joinedOnline([...before.spans, ...agenda.spans], { everywhere: true }));
 		if (already >= block.end - block.start) return refusedAt('already_online');
 		// Its day's online time is that of its own spans, as its schedule's longest day counts it, and what the plan adds
 		const online = joinedOnline(agenda.spans);
@@ -140,29 +149,33 @@ export function checkPlan(
 	if (to - from > maxHours * 60) return refusedAt('too_long');
 	const problem = 'busy' in proposal ? planReasonProblem(proposal.busy) : 'missing';
 	if (problem) return refusedAt(`reason_${problem}`);
-	const near = store.events(hours.id, addDays(day, -1), addDays(day, 1)).filter((event) => event.kind === 'busy');
-	const other = near.find((event) => overlaps(block)(instantsOf(event, timezone)));
-	if (other) return refusedAt('clash', other.what);
+	const other = store.events(hours.id, addDays(day, -1), addDays(day, 1)).find((event) => overlaps(block)(instantsOf(event, timezone)));
+	// Over time made to chat it would break a promise, and that time is only for the person it was made for to call off
+	if (other) return other.kind === 'busy' ? refusedAt('clash', { reason: other.what, event: other.id }) : refusedAt('clash_online');
 	if (store.eventsMadeSince(hours.id, now - 7 * DAY, { kind: 'busy' }) >= perWeek) return refusedAt('week_cap');
 	return { add: { kind: 'busy', day, from, to, what: proposal.busy.trim(), personId, source: 'persona' } };
 }
 
 /**
- * Its coming plans as a prompt lists them (prompts.ts calendarPrompt): those standing from now to `maxDays` ahead, at
- * most `shown`, each with its instants and, for time made to chat, the name of whom it is for.
+ * Its coming plans as a turn with the person (`personId`) lists them (prompts.ts calendarPrompt): those standing from
+ * now to `maxDays` ahead, at most `shown`, each with its instants; a busy one with its reason, time made to chat with
+ * whom it is for (`them`, `someone` else, never named, or none for the app's). `id` only for one it may call off with
+ * them (`checkPlan`): its own, of a kind `settings` lets it make, and time made to chat only with them.
  */
-export function comingPlans(store: Store, hours: Hours, { now, maxDays, shown }: { now: number; maxDays: number; shown: number }) {
+export function comingPlans(store: Store, hours: Hours, { now, settings, personId }: { now: number; settings: Settings['calendar']; personId: number }) {
 	const today = localDateOf(now, hours.timezone);
+	const cancellable = (event: StoredEvent) =>
+		event.source === 'persona' && (event.kind === 'online' ? settings.makeTime.enabled && event.personId === personId : settings.plans.enabled);
 	return store
-		.events(hours.id, addDays(today, -1), addDays(today, maxDays))
+		.events(hours.id, addDays(today, -1), addDays(today, settings.plans.maxDays))
 		.map((event) => ({ event, ...instantsOf(event, hours.timezone) }))
 		.filter(({ end }) => end > now)
-		.slice(0, shown)
+		.slice(0, settings.shown)
 		.map(({ event, start, end }) => ({
-			id: event.id,
+			id: cancellable(event) ? event.id : null,
 			start,
 			end,
 			busy: event.kind === 'busy' ? event.what : null,
-			with: event.kind === 'online' && event.personId !== null ? store.personById(event.personId).name : null,
+			for: event.kind === 'busy' || event.personId === null ? null : event.personId === personId ? ('them' as const) : ('someone' as const),
 		}));
 }

@@ -554,12 +554,12 @@ export const SettingsSchema = z
 		calendar: z
 			.object({
 				enabled: z.boolean().default(false),
-				/** Plans of its own: somewhere it will be (busy, so offline then), or calling one of them off. */
+				/** Plans of its own: somewhere it will be ("at the dentist": busy, so offline then), or calling one of them off. */
 				plans: z
 					.object({
 						/** Whether a DM turn may make one (with `enabled`). */
 						enabled: z.boolean().default(true),
-						/** The furthest ahead one may be, in days (0: later today). */
+						/** The furthest ahead any plan may be, its own or time made to chat, in days (0: later today only). */
 						maxDays: z.number().int().min(0).max(365).default(60),
 						/** The most it makes in any 7 days. */
 						perWeek: z.number().int().min(1).max(20).default(4),
@@ -568,7 +568,7 @@ export const SettingsSchema = z
 					})
 					.strict()
 					.default({}),
-				/** Time it makes to chat with someone, at an hour it would be offline: online then, for everyone. */
+				/** Time it makes to chat with someone, at an hour it would be offline: online then, for everyone; called off only with them. */
 				makeTime: z
 					.object({
 						/** Whether a DM turn may make some (with `enabled`). */
@@ -580,7 +580,7 @@ export const SettingsSchema = z
 					})
 					.strict()
 					.default({}),
-				/** How many of its coming plans a DM turn and an opener list, with their numbers (to call one off). */
+				/** How many of its coming plans a DM turn and an opener list, with the number of each it may call off there. */
 				shown: z.number().int().min(1).max(20).default(6),
 			})
 			.strict()

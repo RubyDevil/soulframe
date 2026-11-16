@@ -365,7 +365,8 @@ function personaReport(persona: Persona, options: { settings: Settings; now: num
 Indented lines describing the persona, run with `settings` (its brain's) and its own pacing and relationship over them,
 a `ConfigError` if they don't fit (as from `createBrain`, which `samplePrompt` runs): its prompt's length, now (or
 `status`), today's and tomorrow's agenda, today's interruptions, whether it texts first (a line only when
-`initiative.enabled`) and its models.
+`initiative.enabled`) and its models. It reads no store, so the agenda is its schedule's routine, without its calendar's
+plans.
 
 ### `samplePrompt`
 
@@ -1003,8 +1004,8 @@ failed?: true }[]; links: (LinkPreview & { looked?: true })[] }`. A photo keeps 
   deny list and makes the people with it `active` again, unless another of their accounts is still listed;
   `clearMinorCaution` takes the flag off an account. They answer whether the account was on the list, and `undeny` is
   audited for each persona. These lists protect people: use them for a mistake you checked, not as routine.
-- **`forgetPerson`**: deletes one person (their messages, notes, familiarity and affinity, accounts and the audit lines
-  about them) in one transaction. The deny list and minor flags are kept, so a deny-listed account stays so. Someone
+- **`forgetPerson`**: deletes one person (their messages, notes, familiarity and affinity, accounts, the plans its
+  calendar keeps from turns with them, and the audit lines about them) in one transaction. The deny list and minor flags are kept, so a deny-listed account stays so. Someone
   who asked to stop, was blocked or denied is kept too, since forgetting them would let the persona answer them
   again; `{ includeEnded: true }` forgets them as well. Answers whether anyone was forgotten.
 - **`resetPersona`**: deletes everything one persona knows: its people and their messages (ended people kept, as
@@ -1040,7 +1041,8 @@ read only while it is on:
   reads it. Answers whether it stood. **`eventById`**: one by id, standing or called off.
 - **`events`**: the persona's standing plans from one date to another, both included, in order: what its agenda lays
   over each drawn day. **`eventsMadeSince`**: how many it made itself since a time, called off or not, by kind and
-  person when given: what its guardrails count. A forgotten person's plans stay, with `personId` `null`.
+  person when given: what its guardrails count. A forgotten person's plans made in turns with them go with them; the
+  app's stay, with `personId` `null`.
 
 ### `StoredEvent`
 
@@ -1053,7 +1055,7 @@ interface StoredEvent {
 	from: number; // minutes of that day
 	to: number;   // past 1440: past midnight
 	what: string; // a busy plan's reason, completing "you're ..."; '' for online time
-	personId: number | null; // whom it was made with (time made to chat is for them); null once forgotten
+	personId: number | null; // whom it was made with (time made to chat is for them); null for an app plan of someone forgotten
 	source: 'persona' | 'app'; // the persona's own, made in a DM turn, or the app's (addEvent)
 	createdAt: number;
 	cancelledAt: number | null; // null while it stands

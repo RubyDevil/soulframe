@@ -563,13 +563,26 @@ describe('calendar events over the agenda', () => {
 		expect(times(late)).toEqual([['17:30', '18:00'], ['20:00', '00:15']]);
 	});
 
-	it('drops a short break inside time it made to chat: it is online then already', () => {
+	it('keeps of a short break only what lies outside time it made to chat: it is online then already', () => {
 		const lunch = hoursOf({ days: { 'mon-sun': { breaks: [{ start: ['12:30', '12:30'], minutes: [15, 15] }], online: [{ start: ['20:00', '20:00'], end: ['22:00', '22:00'] }] } } });
 		const keyed = (events: CalendarEvent[]): Hours => ({ ...lunch, events: () => events });
 		expect(times(agendaOn(keyed([online(7, SAT, 12, 13)]), date(SAT)).spans)).toEqual([['12:00', '13:00'], ['20:00', '22:00']]);
-		// Not one it only overlaps
+		// One it only overlaps: the rest of the break after it, so the time made is online all through
 		const overlapping = agendaOn(keyed([online(8, SAT, 11, 12.6)]), date(SAT)).spans;
-		expect(overlapping.map((span) => span.kind)).toEqual(['online', 'break', 'online']);
+		expect(overlapping.map((span) => [span.kind, ...times([span])[0]!])).toEqual([['online', '11:00', '12:36'], ['break', '12:36', '12:45'], ['online', '20:00', '22:00']]);
+		expect(spanAt(keyed([online(8, SAT, 11, 12.6)]), at(SAT, 12, 33))?.kind).toBe('online');
+		// A break on one channel only, the same
+		const forum = hoursOf({ days: { 'mon-sun': { breaks: [{ start: ['12:30', '12:30'], minutes: [15, 15], on: ['forum'] }] } } });
+		expect(spanAt({ ...forum, events: () => [online(9, SAT, 12.6, 14)] }, at(SAT, 12, 40), 'forum')?.kind).toBe('online');
+	});
+
+	it("never makes time to chat inside a busy block of the day before that runs into it: a night shift until 8 AM", () => {
+		const nights = hoursOf({ days: { 'mon-sun': { busy: [{ reason: 'at work', start: ['22:00', '22:00'], end: ['08:00', '08:00'] }] } } });
+		// One the app added without checking, 7:00 to 9:00: online from 8:00 only
+		const hours: Hours = { ...nights, events: (from, to) => [online(10, SAT, 7, 9)].filter((event) => keyOf(event.day) >= keyOf(from) && keyOf(event.day) <= keyOf(to)) };
+		expect(times(agendaOn(hours, date(SAT)).spans)).toEqual([['08:00', '09:00']]);
+		expect(spanAt(hours, at(SAT, 7, 30))).toBeNull();
+		expect(busyAt(hours, at(SAT, 7, 30))?.reason).toBe('at work');
 	});
 
 	it("cuts the online time of the day before that runs past midnight into a plan's, and lists the plan on its own day", () => {

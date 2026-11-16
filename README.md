@@ -23,8 +23,8 @@ pace of its replies. You write an adapter for each channel, and the package stay
   the rest; optionally one Markdown file per persona, its config as frontmatter.
 - **Realistic schedules:** online hours, breaks and busy blocks, drawn per day from a seed; the persona knows its usual
   week and its coming days, so what it says about Thursday is what it will do.
-- **A calendar of its own, opt-in:** plans it mentions become real (offline at the dentist, back after), and it can
-  make time for someone, every plan checked in code.
+- **A calendar of its own, opt-in:** a plan it makes in a chat goes in its calendar once the code has checked it
+  (offline at the dentist, back after), and it can make time for someone.
 - **Human pacing:** one conversation at a time, with reading, typing and interruptions timed like a person's.
 - **Long-term memory:** people, history, notes and relationships in a single SQLite file.
 - **Texting first, opt-in:** it follows up on what people told it, checks in on friends gone quiet and shares its day,

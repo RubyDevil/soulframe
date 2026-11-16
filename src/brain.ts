@@ -27,7 +27,6 @@ import {
 	openerTask,
 	shareReasonPrompt,
 	calendarPrompt,
-	clockText,
 	refusedPlanPrompt,
 	planDayText,
 	groupChatGateQuestions,
@@ -146,14 +145,19 @@ const numberOf = (value: unknown) => {
 	return Number.isFinite(number) ? number : null;
 };
 
-/** A `plan` answer read as calendar.ts checks it, or undefined for none or one it can't read: the code checks the rest. */
+/**
+ * A `plan` answer read as calendar.ts checks it (numbers as numeric strings too, `online` as "true" too), or undefined
+ * for none or one it can't read: the code checks the rest, and audits what it refuses.
+ */
 const planOf = (value: unknown): PlanProposal | undefined => {
 	if (typeof value !== 'object' || value === null) return undefined;
 	const { cancel, day, from, to, busy, online } = value as Record<string, unknown>;
-	if (typeof cancel === 'number') return { cancel };
-	if (typeof day !== 'number' || typeof from !== 'string' || typeof to !== 'string') return undefined;
-	if (online === true) return { day, from, to, online };
-	return typeof busy === 'string' ? { day, from, to, busy } : undefined;
+	const number = numberOf(cancel);
+	if (number !== null) return { cancel: number };
+	const days = numberOf(day);
+	if (days === null || typeof from !== 'string' || typeof to !== 'string') return undefined;
+	if (online === true || online === 'true') return { day: days, from: from.trim(), to: to.trim(), online: true };
+	return typeof busy === 'string' ? { day: days, from: from.trim(), to: to.trim(), busy } : undefined;
 };
 
 /** A follow-up the model planned: `{ days, about }` with a whole number of days from 0 and a note, false (or "false") to drop it; else none. */
@@ -386,12 +390,17 @@ export function createBrain({
 	/** The rules on `channel`: the 18+ line on an adult one, the sfw line of an sfw policy, then the app's. */
 	const rulesOn = (channel: Channel) => [...(channel.adult ? [ADULTS_ONLY_RULE] : []), ...(policy.sfw ? [SFW_RULE] : []), ...(policy.rules ?? [])];
 
-	/** Its usual week (settings.context.week), the same in every prompt with a time line: drawn once from its schedule. */
-	const week = settings.context.week ? usualWeekPrompt(usualWeek(persona.schedule)) : undefined;
+	/** Its usual week on each channel (settings.context.week; online time on others left out), the same in every prompt there with a time line: made once from its schedule. */
+	const weeks = new Map<ChannelId, string>();
+	const weekOn = (channel: ChannelId) => {
+		if (!settings.context.week) return undefined;
+		if (!weeks.has(channel)) weeks.set(channel, usualWeekPrompt(usualWeek(persona.schedule, channel)));
+		return weeks.get(channel);
+	};
 	// Every prompt's text is in prompts.ts (and the channel's, in the app's Channel); this only fills in the persona.
 	// `dated`: a task with a time line, which its usual week goes with
 	const system = (channel: Channel, task: string, dated = false) =>
-		systemPrompt({ personaPrompt: persona.prompt, name: persona.name, identity, ...(dated && { week }), style, channel, rules: rulesOn(channel), task });
+		systemPrompt({ personaPrompt: persona.prompt, name: persona.name, identity, ...(dated && { week: weekOn(channel.id) }), style, channel, rules: rulesOn(channel), task });
 
 	const { initiative, calendar } = settings;
 	/** Whether a DM turn may plan a follow-up (settings.initiative.followUps): off, its prompt says nothing of it. */
@@ -405,14 +414,11 @@ export function createBrain({
 	/** The plan its calendar didn't take at the last kept turn with them, as their next turn is told (prompts.ts refusedPlanPrompt), if any. */
 	const refusedPlan = (personId: number) => {
 		const kept = calendar.enabled ? store.get(persona.id, refusedKey(personId)) : null;
-		if (!kept) return undefined;
-		const { reason, start, end, clash, cancel } = JSON.parse(kept) as { reason: string; start?: number; end?: number; clash?: string; cancel?: number };
-		const when = start !== undefined && end !== undefined ? `${dateTimeText(start, persona.timezone)} to ${clockText(end, persona.timezone)}` : undefined;
-		return refusedPlanPrompt({ reason, ...(when && { when }), ...(clash !== undefined && { clash }), ...(cancel !== undefined && { cancel }) });
+		return kept ? refusedPlanPrompt(JSON.parse(kept) as Parameters<typeof refusedPlanPrompt>[0], persona.timezone) : undefined;
 	};
-	/** Its coming plans, as DM turns and openers list them (prompts.ts calendarPrompt); none while its calendar is off. */
-	const calendarLines = () =>
-		calendar.enabled ? calendarPrompt(comingPlans(store, hours, { now: now(), maxDays: calendar.plans.maxDays, shown: calendar.shown }), persona.timezone) : undefined;
+	/** Its coming plans, as DM turns and openers with the person list them (prompts.ts calendarPrompt); none while its calendar is off. */
+	const calendarLines = (personId: number) =>
+		calendar.enabled ? calendarPrompt(comingPlans(store, hours, { now: now(), settings: calendar, personId }), persona.timezone) : undefined;
 	/** Where the plan its calendar didn't take is kept for the next turn with them (kv), until a turn with them is kept. */
 	const refusedKey = (personId: number) => `calendarRefused:${personId}`;
 	/**
@@ -425,7 +431,7 @@ export function createBrain({
 		if ('refused' in checked) {
 			store.audit(persona.id, 'plan_refused', { personId, reason: checked.refused });
 			if (checked.refused !== 'already_online') {
-				const told = { reason: checked.refused, ...(checked.block && { start: checked.block.start, end: checked.block.end }), ...(checked.clash !== undefined && { clash: checked.clash }), ...('cancel' in proposal && { cancel: proposal.cancel }) };
+				const told: Parameters<typeof refusedPlanPrompt>[0] = { reason: checked.refused, ...(checked.block && { block: checked.block }), ...(checked.clash && { clash: checked.clash }), ...('cancel' in proposal && { cancel: proposal.cancel }) };
 				store.set(persona.id, refusedKey(personId), JSON.stringify(told));
 			}
 			return;
@@ -628,7 +634,7 @@ export function createBrain({
 		const { start, end } = situation.span;
 		const firstNew = dm?.firstNew;
 		const waited = context.awayContext && firstNew !== undefined && firstNew < start;
-		const away = waited ? { since: firstNew, reason: busyAt(hours, firstNew)?.reason ?? null } : null;
+		const away = waited ? { since: firstNew, busy: busyAt(hours, firstNew) } : null;
 		const endingSoon = !!dm && end - at <= Math.min(WRAP_UP_MS, (end - start) / 3);
 		// The coming days as they are on this channel: a span only on others is no time to talk here
 		const today = localDateOf(at, persona.timezone);
@@ -750,7 +756,7 @@ export function createBrain({
 				...(photos || links ? { media: { photos, links } } : {}),
 				...(followingUp && { followUp: { maxDays: initiative.followUps.maxDays, pending: pendingPlan(person.id) } }),
 				...(planning && { plan: planning }),
-				calendar: calendarLines(),
+				calendar: calendarLines(person.id),
 				refusedPlan: refusedPlan(person.id),
 			});
 			const messages: LlmMessage[] = [
@@ -843,7 +849,7 @@ export function createBrain({
 				}),
 				relationship: settings.context.relationship ? relationshipNow(person) : undefined,
 				...(photos || links ? { media: { photos, links } } : {}),
-				calendar: calendarLines(),
+				calendar: calendarLines(person.id),
 			});
 			const messages: LlmMessage[] = [
 				{ role: 'system', content: system(channel, task, true) },

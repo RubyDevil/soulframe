@@ -645,7 +645,8 @@ export function createStore(db: Database, now: () => number = Date.now) {
 		},
 		/**
 		 * Forgets one person: their messages, notes, familiarity and affinity, accounts, the relationship levels shown to
-		 * them (and a plan its calendar didn't take, to tell them about) and the audit lines about them. The deny list and minor flags (keyed by account, shared by every persona) are
+		 * them, the plans its calendar keeps from turns with them (and one it didn't take, to tell them about) and the
+		 * audit lines about them. The deny list and minor flags (keyed by account, shared by every persona) are
 		 * kept, so a forgotten account that was deny-listed stays so. Someone who asked to stop, was blocked or denied
 		 * (`state` not `active`) is kept too, since forgetting them would let the persona answer them again, unless
 		 * `includeEnded`. Answers whether anyone was forgotten (false: no such person, or they were kept).
@@ -657,6 +658,8 @@ export function createStore(db: Database, now: () => number = Date.now) {
 				db.prepare('DELETE FROM messages WHERE person_id = ?').run(personId);
 				db.prepare('DELETE FROM identities WHERE person_id = ?').run(personId);
 				db.prepare('DELETE FROM kv WHERE persona = ? AND key IN (?, ?)').run(row.persona, `relationship:${personId}`, `calendarRefused:${personId}`);
+				// Plans made in a turn with them came from their conversation; the app's stay, without them
+				db.prepare("DELETE FROM events WHERE person_id = ? AND source = 'persona'").run(personId);
 				db.prepare("DELETE FROM audit WHERE persona = ? AND json_extract(detail, '$.personId') = ?").run(row.persona, personId);
 				db.prepare('DELETE FROM people WHERE id = ?').run(personId);
 			});

@@ -52,7 +52,7 @@ const TALK_WORDS = /\b(?:online|chat(?:ting)?|text(?:ing)?|messag(?:e|es|ing)|wi
  * Why the reason of a plan the persona made itself (calendar.ts) is refused, or null: it completes "you're ..." as a
  * busy reason does, never sleep and never school (in any conversation: what the model writes is held to the strictest),
  * never talking with them (`online`: a busy plan is offline time), and only words, in one short line (letters, digits,
- * spaces, and , . ' ’ & -), so a plan can carry no instructions.
+ * spaces, and , . ' ’ & -): a few plain words at most, which every prompt quotes as data (prompts.ts busyText).
  */
 export const planReasonProblem = (reason: string): string | null => {
 	const text = reason.trim();

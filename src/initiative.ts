@@ -4,6 +4,7 @@
  * These guardrails apply whatever the settings say: the settings may only make it rarer.
  */
 
+import { busyText } from './prompts.js';
 import { weightedPick, type Rng } from './rng.js';
 import { addDays, agendaOn, localDateOf, zonedToUtc, type Busy, type Hours, type Span } from './schedule.js';
 import { DAY, HOUR, MINUTE, type Settings } from './settings.js';
@@ -154,7 +155,8 @@ const busyJustBefore = (persona: Hours, span: Span): Busy | null =>
  * Sharing its day (settings.initiative.sharing), as the span open now opens: when it comes online within JUST_BACK_MS
  * of a busy block's end, and it is still within JUST_BACK_MS of the span's start, at `chance`. One of its people at
  * rest, `reachable`, whom an opener may go to now, with no plan pending, at `minFamiliarity` and `minAffinity` (faded,
- * as for check-ins), picked by closeness, is planned to hear about it (`about`: the block's reason) at a random moment
+ * as for check-ins), picked by closeness, is planned to hear about it (`about`: the block's reason, as prompts.ts busyText
+ * says it) at a random moment
  * of the next JUST_BACK_MS, given up an hour into the span (it is not just back any more), and audited
  * (`share_planned`). Answers it, or null.
  */
@@ -173,7 +175,7 @@ export function planShare({ store, persona, settings, span, now, rng, reachable 
 	});
 	const [person] = pickSome(rng, candidates, 1);
 	if (!person) return null;
-	const opener = store.planOpener(persona.id, person.id, { kind: 'share', about: busy.reason, dueAt: now + rng() * (until - now), expiresAt: Math.min(span.end, span.start + 2 * JUST_BACK_MS) });
+	const opener = store.planOpener(persona.id, person.id, { kind: 'share', about: busyText(busy), dueAt: now + rng() * (until - now), expiresAt: Math.min(span.end, span.start + 2 * JUST_BACK_MS) });
 	store.audit(persona.id, 'share_planned', { personId: person.id, about: busy.reason, dueAt: opener.dueAt });
 	return opener;
 }

@@ -126,16 +126,28 @@ describe('checkPlan: time made to chat (online)', () => {
 		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
 		const nights: Hours = { id: 'robin', timezone: 'UTC', schedule: ScheduleSchema.parse({ days: { 'mon-sun': { busy: [{ reason: 'at work', start: ['22:00', '22:00'], end: ['08:00', '08:00'] }], online: [{ start: ['17:00', '17:00'], end: ['21:00', '21:00'] }] } } }) };
 		const check = (proposal: PlanProposal) => checkPlan(proposal, { store, hours: calendarHours(nights, store), settings: ON, now: NOW, personId: sam.id });
-		expect(check({ ...call, day: 2, from: '07:15', to: '08:15' })).toMatchObject({ refused: 'busy', clash: 'at work' });
+		expect(check({ ...call, day: 2, from: '07:15', to: '08:15' })).toMatchObject({ refused: 'busy', clash: { reason: 'at work' } });
 		expect(check({ ...call, day: 2, from: '08:00', to: '09:00' })).toHaveProperty('add');
+	});
+
+	it('counts as online already only what is online for every channel: time made there reaches the person on any', () => {
+		const store = memoryStore(() => NOW);
+		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const forum: Hours = { ...ROBIN, schedule: ScheduleSchema.parse({ days: { 'mon-sun': { online: [{ start: ['19:00', '19:00'], end: ['23:00', '23:00'], on: ['forum'] }] } } }) };
+		const check = (proposal: PlanProposal) => checkPlan(proposal, { store, hours: calendarHours(forum, store), settings: ON, now: NOW, personId: sam.id });
+		expect(check({ ...call, day: 1, from: '20:00', to: '21:00' })).toHaveProperty('add');
+		const everywhere: Hours = { ...ROBIN, schedule: ScheduleSchema.parse({ days: { 'mon-sun': { online: [{ start: ['19:00', '19:00'], end: ['23:00', '23:00'] }] } } }) };
+		expect(checkPlan({ ...call, day: 1, from: '20:00', to: '21:00' }, { store, hours: calendarHours(everywhere, store), settings: ON, now: NOW, personId: sam.id })).toMatchObject({ refused: 'already_online' });
 	});
 
 	it('says the time a refused plan was for, and what it clashed with', () => {
 		const { check, add } = setUp();
 		// Thursday 16:00 to 17:30: at work until 17:00
-		expect(check({ ...call, day: 3, from: '16:00', to: '17:30' })).toEqual({ refused: 'busy', block: { start: Date.UTC(2026, 10, 19, 16), end: Date.UTC(2026, 10, 19, 17, 30) }, clash: 'at work' });
-		add(dinner);
-		expect(check({ ...dinner, from: '21:00', to: '23:00', busy: 'at the cinema' })).toMatchObject({ refused: 'clash', clash: "at a friend's for dinner" });
+		expect(check({ ...call, day: 3, from: '16:00', to: '17:30' })).toEqual({ refused: 'busy', block: { start: Date.UTC(2026, 10, 19, 16), end: Date.UTC(2026, 10, 19, 17, 30) }, clash: { reason: 'at work' } });
+		const plan = add(dinner);
+		expect(check({ ...dinner, from: '21:00', to: '23:00', busy: 'at the cinema' })).toMatchObject({ refused: 'clash', clash: { reason: "at a friend's for dinner", event: plan.id } });
+		// Time made to chat over that plan: the plan it clashed with, as a busy block
+		expect(check({ ...call, day: 5, from: '19:00', to: '20:00' })).toMatchObject({ refused: 'busy', clash: { reason: "at a friend's for dinner", event: plan.id } });
 		// Before its times read, no time to say
 		expect(check({ ...dinner, from: '6pm' })).toEqual({ refused: 'times' });
 	});
@@ -172,6 +184,21 @@ describe('checkPlan: time made to chat (online)', () => {
 	it('is refused while making time is off', () => {
 		expect(setUp(settingsOf({ calendar: { enabled: true, makeTime: { enabled: false } } }).calendar).check(call)).toMatchObject({ refused: 'off' });
 	});
+
+	it('keeps a promise: no plan of its own over time made to chat, whoever it was made for', () => {
+		const { add, check, store } = setUp();
+		add(call);
+		// Sunday the 22nd, over the time made with Sam: refused in Sam's turn and in Kim's
+		const over = { day: 6, from: '14:00', to: '18:00', busy: 'at the cinema' };
+		expect(check(over)).toEqual({ refused: 'clash_online', block: { start: Date.UTC(2026, 10, 22, 14), end: Date.UTC(2026, 10, 22, 18) } });
+		const kim = store.createPerson('robin', 'chat', 'kim', 'Kim');
+		expect(checkPlan(over, { store, hours: calendarHours(ROBIN, store), settings: ON, now: NOW, personId: kim.id })).toMatchObject({ refused: 'clash_online' });
+		// The app's online time too
+		store.addEvent('robin', { kind: 'online', day: { year: 2026, month: 11, day: 23 }, from: 600, to: 660 });
+		expect(check({ ...over, day: 7, from: '10:30', to: '12:00' })).toMatchObject({ refused: 'clash_online' });
+		// Next to it is fine
+		expect(check({ ...over, from: '16:00', to: '18:00' })).toHaveProperty('add');
+	});
 });
 
 describe('checkPlan: calling a plan off', () => {
@@ -189,6 +216,27 @@ describe('checkPlan: calling a plan off', () => {
 		store.cancelEvent(plan.id);
 		expect(check({ cancel: plan.id })).toMatchObject({ refused: 'no_such_plan' });
 	});
+
+	it('calls off time made to chat only with whom it was made for: a promise to them', () => {
+		const { add, check, store, hours } = setUp();
+		const made = add(call);
+		const kim = store.createPerson('robin', 'chat', 'kim', 'Kim');
+		expect(checkPlan({ cancel: made.id }, { store, hours, settings: ON, now: NOW, personId: kim.id })).toMatchObject({ refused: 'not_its_own' });
+		expect(check({ cancel: made.id })).toEqual({ cancel: made });
+	});
+
+	it('calls off only a kind of plan it may make now', () => {
+		const { add, store, hours, sam } = setUp();
+		const plan = add(dinner);
+		const made = add(call);
+		const cancel = (id: number, settings: typeof ON) => checkPlan({ cancel: id }, { store, hours, settings, now: NOW, personId: sam.id });
+		const noPlans = settingsOf({ calendar: { enabled: true, plans: { enabled: false } } }).calendar;
+		const noTime = settingsOf({ calendar: { enabled: true, makeTime: { enabled: false } } }).calendar;
+		expect(cancel(plan.id, noPlans)).toMatchObject({ refused: 'off' });
+		expect(cancel(made.id, noPlans)).toEqual({ cancel: made });
+		expect(cancel(made.id, noTime)).toMatchObject({ refused: 'off' });
+		expect(cancel(plan.id, noTime)).toEqual({ cancel: plan });
+	});
 });
 
 describe('calendarHours and comingPlans', () => {
@@ -198,15 +246,45 @@ describe('calendarHours and comingPlans', () => {
 		const made = add(call);
 		expect(agendaOn(hours, plan.day).busy.map((block) => block.reason)).toEqual(["at a friend's for dinner"]);
 		expect(agendaOn(ROBIN, plan.day).busy).toEqual([]);
-		expect(comingPlans(store, hours, { now: NOW, maxDays: 60, shown: 6 })).toEqual([
-			{ id: plan.id, start: Date.UTC(2026, 10, 21, 18), end: Date.UTC(2026, 10, 21, 22), busy: "at a friend's for dinner", with: null },
-			{ id: made.id, start: Date.UTC(2026, 10, 22, 15), end: Date.UTC(2026, 10, 22, 16), busy: null, with: sam.name },
+		const coming = (now: number, settings: { plans?: { enabled?: boolean; maxDays?: number }; makeTime?: { enabled?: boolean }; shown?: number } = {}, personId = sam.id) =>
+			comingPlans(store, hours, { now, settings: settingsOf({ calendar: { enabled: true, ...settings } }).calendar, personId });
+		expect(coming(NOW)).toEqual([
+			{ id: plan.id, start: Date.UTC(2026, 10, 21, 18), end: Date.UTC(2026, 10, 21, 22), busy: "at a friend's for dinner", for: null },
+			{ id: made.id, start: Date.UTC(2026, 10, 22, 15), end: Date.UTC(2026, 10, 22, 16), busy: null, for: 'them' },
 		]);
-		expect(comingPlans(store, hours, { now: NOW, maxDays: 60, shown: 1 })).toHaveLength(1);
-		// One that is over, or past maxDays, is not listed
-		expect(comingPlans(store, hours, { now: Date.UTC(2026, 10, 21, 23), maxDays: 60, shown: 6 }).map((coming) => coming.id)).toEqual([made.id]);
-		expect(comingPlans(store, hours, { now: NOW, maxDays: 5, shown: 6 }).map((coming) => coming.id)).toEqual([plan.id]);
+		expect(coming(NOW, { shown: 1 })).toHaveLength(1);
+		// One that is over, or past plans.maxDays, is not listed
+		expect(coming(Date.UTC(2026, 10, 21, 23)).map((plan) => plan.start)).toEqual([Date.UTC(2026, 10, 22, 15)]);
+		expect(coming(NOW, { plans: { maxDays: 5 } }).map((plan) => plan.start)).toEqual([Date.UTC(2026, 10, 21, 18)]);
 		store.cancelEvent(plan.id);
-		expect(comingPlans(store, hours, { now: NOW, maxDays: 60, shown: 6 }).map((coming) => coming.id)).toEqual([made.id]);
+		expect(coming(NOW).map((plan) => plan.start)).toEqual([Date.UTC(2026, 10, 22, 15)]);
+	});
+
+	it('names nobody to anyone else, and numbers only the plans it may call off with them', () => {
+		const { add, store, hours, sam } = setUp();
+		const plan = add(dinner);
+		const made = add(call);
+		const app = store.addEvent('robin', { kind: 'busy', day: { year: 2026, month: 11, day: 24 }, from: 600, to: 700, what: 'at a team day' });
+		const appTime = store.addEvent('robin', { kind: 'online', day: { year: 2026, month: 11, day: 25 }, from: 600, to: 700 });
+		const kim = store.createPerson('robin', 'chat', 'kim', 'Kim');
+		const coming = (personId: number, settings = ON) => comingPlans(store, hours, { now: NOW, settings, personId }).map(({ id, busy, for: madeFor }) => ({ id, busy, for: madeFor }));
+		expect(coming(sam.id)).toEqual([
+			{ id: plan.id, busy: "at a friend's for dinner", for: null },
+			{ id: made.id, busy: null, for: 'them' },
+			{ id: null, busy: 'at a team day', for: null },
+			{ id: null, busy: null, for: null },
+		]);
+		// To Kim: Sam's time is someone else's, never named, and not Kim's to call off
+		expect(coming(kim.id)).toEqual([
+			{ id: plan.id, busy: "at a friend's for dinner", for: null },
+			{ id: null, busy: null, for: 'someone' },
+			{ id: null, busy: 'at a team day', for: null },
+			{ id: null, busy: null, for: null },
+		]);
+		expect(JSON.stringify(comingPlans(store, hours, { now: NOW, settings: ON, personId: kim.id }))).not.toContain('Sam');
+		// A kind it may not make now is listed without its number
+		expect(coming(sam.id, settingsOf({ calendar: { enabled: true, plans: { enabled: false } } }).calendar).map((coming) => coming.id)).toEqual([null, made.id, null, null]);
+		expect(coming(sam.id, settingsOf({ calendar: { enabled: true, makeTime: { enabled: false } } }).calendar).map((coming) => coming.id)).toEqual([plan.id, null, null, null]);
+		expect(appTime.id).toBeGreaterThan(app.id);
 	});
 });

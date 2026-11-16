@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { calendarHours } from '../src/calendar.js';
 import { followUpWindow, openerBlock, planCheckIns, planShare, REST_MS } from '../src/initiative.js';
 import type { Rng } from '../src/rng.js';
 import { spanAt } from '../src/schedule.js';
@@ -214,6 +215,17 @@ describe('planShare', () => {
 		expect(opener).toMatchObject({ personId: alex.id, kind: 'share', about: 'at the gym', dueAt: EVENING });
 		expect(opener!.expiresAt).toBeLessThanOrEqual(Date.UTC(2026, 9, 15, 20));
 		expect(store.auditLog('test', 1)[0]).toMatchObject({ kind: 'share_planned', detail: { personId: alex.id, about: 'at the gym' } });
+	});
+
+	it('quotes the words of a plan it is back from, as data, as every prompt says them', () => {
+		const store = memoryStore(() => EVENING);
+		const alex = friend(store, 'alex', { familiarity: 0.7, affinity: 0.5, quietDays: 1 });
+		const plan = store.addEvent('test', { kind: 'busy', day: { year: 2026, month: 10, day: 15 }, from: 17 * 60 + 30, to: 18 * 60 + 50, what: "at a cousin's birthday", source: 'persona' });
+		const hours = calendarHours(persona, store);
+		const opener = planShare({ store, persona: hours, settings: ON, span: spanAt(hours, EVENING)!, now: EVENING, rng: () => 0 });
+		expect(opener).toMatchObject({ personId: alex.id, kind: 'share', about: `busy ("at a cousin's birthday")` });
+		expect(store.auditLog('test', 1)[0]).toMatchObject({ kind: 'share_planned', detail: { about: "at a cousin's birthday" } });
+		expect(plan.id).toBeGreaterThan(0);
 	});
 
 	it('plans nothing without a busy block just before, late in its online time, at an unlucky draw, or while off', () => {

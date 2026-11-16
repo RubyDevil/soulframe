@@ -537,35 +537,36 @@ failed or budget-refused opener is not tried again.
 Its calendar, off by default: plans laid over the agenda its schedule draws, its own (made in a DM turn) and the
 app's (`store.addEvent`). A plan of its own is somewhere it will be ("at a friend's for dinner", busy and so offline
 then); time it makes to chat is online time for everyone at an hour it would be offline. The model proposes, in the
-`plan` field of a DM turn's answer; the code checks each against guardrails no setting relaxes (below) and drops,
+`plan` field of a DM turn's answer; the code checks each against guardrails no setting relaxes (below) and refuses,
 audited, one that doesn't fit. DM turns and openers list its coming plans, and its coming days and its "now" and
 "next" lines include them. See [concepts](./concepts.md#its-calendar).
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `enabled` | boolean | `false` | Whether it has a calendar. Off, no event is read (the app's neither) and no prompt says anything of it. |
-| `plans.enabled` | boolean | `true` | A DM turn may make a plan of its own, or call one off. |
+| `plans.enabled` | boolean | `true` | A DM turn may make a plan of its own, or call one of its own off. |
 | `plans.maxDays` | integer, 0 to 365 | `60` | The furthest ahead any plan may be, in days (0: later today); how far ahead its coming plans are listed. |
 | `plans.perWeek` | integer, 1 to 20 | `4` | The most plans of its own it makes in any 7 days, those called off counting too. |
 | `plans.maxHours` | number, 1 to 24 | `12` | The longest plan of its own. |
-| `makeTime.enabled` | boolean | `true` | A DM turn may make time to chat with the person at an hour it would be offline. |
+| `makeTime.enabled` | boolean | `true` | A DM turn may make time to chat with the person at an hour it would be offline, or call off time it made for them. |
 | `makeTime.maxMinutes` | integer, 15 to 240 | `120` | The longest time it makes. |
 | `makeTime.perPersonDays` | number, 1 to 90 | `7` | At least this many days between two made for the same person. |
-| `shown` | integer, 1 to 20 | `6` | How many of its coming plans a DM turn and an opener list, each with its number (to call it off). |
+| `shown` | integer, 1 to 20 | `6` | How many of its coming plans a DM turn and an opener list, with its number each one that conversation may call off. |
 
 What the code checks, whatever the settings say:
 
 - every plan is at least 15 minutes, on a day from today to `plans.maxDays` (counted from the date its turn was written,
   so a turn kept just past midnight keeps its day), and starts after the turn that made it;
-- a plan of its own has a reason of 2 to 40 characters, only letters, digits, spaces and `, . ' ’ & -` (so it can carry
-  no instructions), never sleep and never school (in any conversation), never talking with them ("online", "chatting":
-  a busy plan is time away from the phone), and lies over no other plan of its own; over its routine it wins (an
-  appointment cuts a work day in two);
+- a plan of its own has a reason of 2 to 40 characters, only letters, digits, spaces and `, . ' ’ & -` (a few plain
+  words, which every prompt quotes as data), never sleep and never school (in any conversation), never talking with
+  them ("online", "chatting": a busy plan is time away from the phone), and lies over no other plan, time made to chat
+  included (a promise to someone); over its routine it wins (an appointment cuts a work day in two);
 - time made to chat lies between 7 AM and midnight, over no busy block (its routine's, one of the day before that runs
-  into it, as a night shift until 8 AM, or a plan's), adds online time
-  (it isn't online then already), and never makes the day's online time longer than its schedule's longest day by
-  more than `makeTime.maxMinutes`;
-- it calls off only its own plans, still ahead; a plan called off still counts toward `perWeek` and `perPersonDays`.
+  into it, as a night shift until 8 AM, or a plan's), adds online time (it isn't online for every channel then
+  already), and never makes the day's online time longer than its schedule's longest day by more than
+  `makeTime.maxMinutes`;
+- it calls off only its own plans of a kind it may make now, still ahead, and time made to chat only with whom it was
+  made for; a plan called off still counts toward `perWeek` and `perPersonDays`.
 
 Each outcome is audited: `plan_added`, `plan_cancelled`, or `plan_refused` with its reason. A refused plan is told,
 once, to the next turn with that person (when it was for, and why), so a promise the model made can be put right;
@@ -668,8 +669,8 @@ For a config check command (none of them starts anything or touches the network)
 - **`settingsWarnings(settings)`**: the same for settings: a reply that may be written again more than once
   (`pacing.burst.maxRestarts`), and no text provider.
 - **`personaReport(persona, { settings, now, status? })`**: lines describing what is in effect: its prompt's length,
-  what it is doing now (or `status`), today's and tomorrow's agenda, today's
-  interruptions and its models.
+  what it is doing now (or `status`), today's and tomorrow's agenda (its routine: it reads no store, so no calendar),
+  today's interruptions and its models.
 - **`samplePrompt({ persona, settings, identity?, style?, channel, extraLines?, now, policy? })`**: the system prompt of
   a sample DM turn on `channel`, built by the brain itself on a throwaway in-memory store. Offline at `now`, it is
   taken a minute into the next span on that channel, so the lines about its day show.

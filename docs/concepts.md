@@ -82,22 +82,23 @@ plan made it, past midnight too, and daylight saving changes are handled (a time
 the moment of the jump).
 
 A span may be limited to some channels with `on:` (a list of `ChannelId`s); left out, it counts on every channel the
-persona has. `spanAt(persona, at, channel?)` answers the span open at a moment, `fullyOnline(persona, channel, at)`
-whether it is a full `online` span, and `watchSpans` calls you back whenever the span on a channel changes.
+persona has. `spanAt(hours, at, channel?)` answers the span open at a moment, `fullyOnline(hours, channel, at)`
+whether it is a full `online` span, and `watchSpans` calls you back whenever the span on a channel changes: give them
+`brain.hours`, its hours with [its calendar](#its-calendar) (the persona itself while that is off).
 
 While a span is open, the brain tells the model its **situation**, each part behind a `settings.context` toggle:
 
 - what it is doing now: free and online until about a time, or on a short break from a busy block;
 - what comes next: back to that busy block, the next busy block within 36 hours, when it will be online again;
 - the coming days, exactly as its agenda drew them (`daysAhead`, 3 by default): "Tomorrow you're at work from about
-  9:10 AM to 5:20 PM and online from about 7:45 PM to 11:50 PM. …", so "are you free Thursday?" gets the answer the
-  code will keep;
+  9:10 AM to 5:20 PM and online from about 7:45 PM to 11:50 PM. …", so "are you free Thursday?" can be answered
+  from the day the code will keep;
 - in a DM, that the person's messages came in while it was offline (and where it was);
 - in a DM near the end of a span (the last 10 minutes, or the last third of a shorter span), a nudge to wrap up and
   say bye rather than vanish.
 
 Every prompt with a time line (DM turns, openers, group-chat lines) also gives its **usual week** (`week`), made from
-the schedule alone, every range at its middle: "Monday to Friday you're at work from about 9:00 AM to 5:15 PM and
+the schedule alone, every range at its middle, with the online time of that prompt's channel: "Monday to Friday you're at work from about 9:00 AM to 5:15 PM and
 online from about 7:30 PM to 11:45 PM. Saturday and Sunday you're …". It reads the same every day, early in the
 prompt, where a provider's prompt cache keeps it, and it never words the night as sleep: offline is offline.
 
@@ -217,10 +218,10 @@ Off by default (`settings.initiative.enabled`). With it on, a persona may start 
     thresholds) it hasn't heard from in `quietDays`. As each span of its online time opens, each such person is drawn,
     about once in `meanDays` of their silence, up to twice as often for the closest, so people apart for months drift
     off the list; it goes at a random moment of the span, and is dropped if they talk before it does (`planCheckIns`,
-    initiative.ts:121).
+    initiative.ts:122).
   - **Sharing its day** (`initiative.sharing`, off by default): when a span opens within 30 minutes of a busy block's
     end, now and then (`chance`), it texts one of the people closest to it about it ("at the gym"), within the next
-    30 minutes (`planShare`, initiative.ts:161). The model makes up what happened, keeping to its notes on itself.
+    30 minutes (`planShare`, initiative.ts:163). The model makes up what happened, keeping to its notes on itself.
 
   A follow-up is kept only with the turn that planned it (`Turn.keep`). Every later turn with them sees it, so once
   they talk about it the model drops it, and once its day has come their own turn is asked to bring it up. It may go
@@ -229,7 +230,7 @@ Off by default (`settings.initiative.enabled`). With it on, a persona may start 
   channel reaches, at most what `perDay` leaves.
 - **Which channels.** Only those the app allows: `queue.allowInitiative(channel, conversationOf)` (see
   [channels](./channels.md#texting-first-allowinitiative)), on the channel of the last message between them.
-- **The guardrails**, which no setting relaxes (`openerBlock`, initiative.ts:30): never to anyone who never wrote to
+- **The guardrails**, which no setting relaxes (`openerBlock`, initiative.ts:31): never to anyone who never wrote to
   it, who is not `active`, deny-listed on any account or flagged as possibly under 18; never while a reply to them is
   owed or within two hours of the last message either way; at most one opener left unanswered (nothing more goes
   until they write), and `personGapHours` between two, doubled for each one in a row they ignored; `perDay` in any 24
@@ -254,7 +255,7 @@ Off by default (`settings.calendar.enabled`). With it on, a persona keeps its pl
 when it tells someone "it's my cousin's birthday on Saturday", it is at the birthday that evening, offline, its time
 lines say so, and afterwards it is back from it.
 
-- **What is in it.** Events laid over the agenda its schedule draws (`agendaOn`, schedule.ts:445): a **busy** plan
+- **What is in it.** Events laid over the agenda its schedule draws (`agendaOn`, schedule.ts:446): a **busy** plan
   (somewhere it will be, offline then, its reason completing "you're ...") takes its time out of the day's spans and
   busy blocks, a work day cut in two around a dentist's hour; **time made to chat** is online time for every channel,
   joined to the online time it touches. The routine stays as drawn underneath (`routineOn`), and interruptions stay
@@ -262,18 +263,22 @@ lines say so, and afterwards it is back from it.
 - **Who puts plans in it.** The persona, in a DM turn: its answer's `plan` is a plan of its own, time it makes to chat
   with the person, or one of its plans called off by its number. The app, with `store.addEvent` (a holiday, a team
   day): those are its own to check, and only it calls them off.
-- **The guardrails**, which no setting relaxes (`checkPlan`, calendar.ts:76): the model only proposes. A plan of its
-  own has a short reason of plain words, never sleep or school, over no other plan of its own, at most
-  `plans.perWeek` a week; time made to chat lies between 7 AM and midnight, over no busy block, never makes the day's
-  online time longer than its schedule's longest day and one such time, and comes once per person in
-  `makeTime.perPersonDays`. So nobody can talk it into being online all night, or into a day stacked with time made
-  for one person after another. A plan is only kept with the turn that made it (`Turn.keep`), and each outcome is
-  audited (`plan_added`, `plan_cancelled`, `plan_refused` with the reason).
+- **The guardrails**, which no setting relaxes (`checkPlan`, calendar.ts:82): the model only proposes. A plan of its
+  own has a short reason of plain words, never sleep or school, over no other plan (time made to chat is a promise to
+  someone: a plan of its own can't break it), at most `plans.perWeek` a week; time made to chat lies between 7 AM and
+  midnight, over no busy block, never makes the day's online time longer than its schedule's longest day and one such
+  time, and comes once per person in `makeTime.perPersonDays`; only the person it was made for can hear it called
+  off. So nobody can talk it into being online all night, or into a day stacked with time made for one person after
+  another. A plan is only kept with the turn that made it (`Turn.keep`), and each outcome is audited (`plan_added`,
+  `plan_cancelled`, `plan_refused` with the reason). Forgetting a person (`store.forgetPerson`) forgets the plans made
+  in turns with them.
 - **A plan it didn't keep.** The model may have promised what the code then refused ("sure, 3 tomorrow" while at
   work): the next turn with that person is told, once, which plan its calendar didn't take and why ("you're at work
   then"), so it can put it right ("oh wait, i'm at work at 3, after 7:30?").
-- **What the model sees.** DM turns and openers list its coming plans, with their numbers (`calendar.shown`), and
-  the plans are in its time lines (now, next, the coming days) like any other block.
+- **What the model sees.** DM turns and openers list its coming plans (`calendar.shown`), a number on each it may
+  call off in that conversation; time made with someone else is "for someone else", never named. The plans are in
+  its time lines (now, next, the coming days) like any other block, a plan's words always quoted as data
+  (`busy ("at a cousin's birthday")`).
 - **Reading it.** `brain.hours` is the persona's hours with its calendar: the reply queue reads them, and so should
   your own `spanAt`, `fullyOnline` and `watchSpans`, so a plan moves your view of its online time too.
 

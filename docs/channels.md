@@ -277,15 +277,18 @@ If your platform delivers messages that came in while you were disconnected, pas
 
 ## Presence: `watchSpans` and `fullyOnline`
 
-`watchSpans(persona, channelId, runtime, onChange)` calls `onChange(span)` right away and whenever the span on that
+`watchSpans(brain.hours, channelId, runtime, onChange)` calls `onChange(span)` right away and whenever the span on that
 channel opens, closes or changes (checked every 30 seconds), and answers a function that stops watching. Use it to
 show the persona online, to join or leave group chats, to start a posting schedule.
 
 The reply queue does not need it: it checks the hours itself, for openers too ([texting first](#texting-first-allowinitiative)).
 But anything else the persona does on its own initiative should check them:
 
-- **Group chats, posts and joining a group chat** only in full online time: `fullyOnline(persona, channelId, runtime.now())`.
-- **DMs** in any span, breaks included: `spanAt(persona, runtime.now(), channelId)`.
+- **Group chats, posts and joining a group chat** only in full online time: `fullyOnline(brain.hours, channelId, runtime.now())`.
+- **DMs** in any span, breaks included: `spanAt(brain.hours, runtime.now(), channelId)`.
+
+`brain.hours` is the persona's hours with its calendar (the persona itself while that is off): give it to
+`watchSpans` too, so a plan of its own moves your view of its online time as it moves the reply queue's.
 
 ## Texting first: `allowInitiative`
 

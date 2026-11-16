@@ -43,6 +43,13 @@ const SCHEDULES = [
 			},
 		},
 	},
+	// Short breaks in a free day (time made to chat may cover them), on one channel some days
+	{
+		days: {
+			'mon-thu': { breaks: [{ start: ['09:00', '11:00'], minutes: [10, 30] }, { start: ['13:00', '17:00'], minutes: [5, 20], on: ['chat'] }], online: [{ start: ['19:00', '20:00'], end: ['22:00', '23:00'] }] },
+			'fri-sun': { breaks: [{ start: ['10:00', '16:00'], minutes: [15, 30], chance: 0.8 }] },
+		},
+	},
 	// A night shift until 8 AM, online before and after it
 	{
 		days: {
@@ -113,14 +120,23 @@ describe.each(Array.from({ length: 150 }, (_, seed) => seed))('plans over the ag
 			expect(agenda.busy.filter((block) => block.event === event.id)).toEqual([{ reason: event.what, start, end, day: date, event: event.id }]);
 		}
 		expect(agenda.busy.filter((block) => block.event !== undefined).every((block) => busyEvents.some(({ event }) => event.id === block.event))).toBe(true);
-		// Time made to chat is online, for every channel, wherever no busy block is
+		// Time made to chat is online, for every channel, wherever no busy block is (the day before's routine too: a night shift)
 		const allBusy = [...agendaOn(hours, addDays(date, -1)).busy, ...agenda.busy, ...busyEvents];
 		for (const event of events.filter((event) => event.kind === 'online' && keyOf(event.day) === keyOf(date))) {
 			const { start, end } = instantsOf(event, timezone);
 			for (let at = start; at < end; at += 5 * MINUTE) {
 				if (allBusy.some((block) => block.start <= at && at < block.end)) continue;
-				expect(spanAt(hours, at, 'forum'), `online at ${new Date(at).toISOString()} for ${JSON.stringify(event)}`).not.toBeNull();
+				expect(spanAt(hours, at, 'forum')?.kind, `online at ${new Date(at).toISOString()} for ${JSON.stringify(event)}`).toBe('online');
 			}
+		}
+		const before = routineOn(persona, addDays(date, -1)).busy;
+		for (const span of agenda.spans.filter((span) => span.event !== undefined)) {
+			for (const busy of [...before, ...agenda.busy]) expect(overlaps(span, busy), `made ${JSON.stringify(span)} in ${JSON.stringify(busy)}`).toBe(false);
+		}
+		// A short break is never inside online time for every channel, even in part: there it is online
+		const everywhere = agenda.spans.filter((span) => span.kind === 'online' && !span.on);
+		for (const pause of agenda.spans.filter((span) => span.kind === 'break')) {
+			for (const span of everywhere) expect(overlaps(pause, span), `break ${JSON.stringify(pause)} in ${JSON.stringify(span)}`).toBe(false);
 		}
 		// The routine as drawn, and the same day laid out afresh (no cache) as from the cache
 		expect(routineOn(hours, date)).toEqual(agendaOn(persona, date));
@@ -141,7 +157,16 @@ describe.each(Array.from({ length: 60 }, (_, seed) => seed))('the checks of the 
 		const people = ['sam', 'kim', 'lee'].map((name) => store.createPerson('robin', 'chat', name, name).id);
 		const hours = calendarHours(persona, store);
 		const longest = (Math.max(...onlineMinutesByWeekday(persona.schedule)) + settings.makeTime.maxMinutes) * MINUTE;
-		const onlineOn = (day: LocalDate) => agendaOn(hours, day).spans.filter((span) => span.kind === 'online').reduce((sum, span) => sum + span.end - span.start, 0);
+		/** A day's online time: its online spans (one channel's and time made for every channel may overlap) as one. */
+		const onlineOn = (day: LocalDate) => {
+			let total = 0;
+			let reach = -Infinity;
+			for (const span of agendaOn(hours, day).spans.filter((span) => span.kind === 'online').sort((a, b) => a.start - b.start)) {
+				total += Math.max(0, span.end - Math.max(span.start, reach));
+				reach = Math.max(reach, span.end);
+			}
+			return total;
+		};
 		for (let step = 0; step < 40; step++) {
 			now += int(rng, 0, 12) * 60 * MINUTE;
 			const personId = pick(rng, people);
@@ -176,9 +201,8 @@ describe.each(Array.from({ length: 60 }, (_, seed) => seed))('the checks of the 
 				} else {
 					expect(planReasonProblem(plan.what!)).toBeNull();
 					expect(plan.to - plan.from).toBeLessThanOrEqual(settings.plans.maxHours * 60);
-					for (const other of store.events('robin', addDays(plan.day, -1), addDays(plan.day, 1)).filter((event) => event.kind === 'busy')) {
-						expect(overlaps(instantsOf(other, timezone), block)).toBe(false);
-					}
+					// Over no other plan: busy, or time made to chat (a promise)
+					for (const other of store.events('robin', addDays(plan.day, -1), addDays(plan.day, 1))) expect(overlaps(instantsOf(other, timezone), block)).toBe(false);
 					expect(store.eventsMadeSince('robin', now - 7 * DAY, { kind: 'busy' })).toBeLessThan(settings.plans.perWeek);
 				}
 				store.addEvent('robin', plan);
@@ -186,6 +210,7 @@ describe.each(Array.from({ length: 60 }, (_, seed) => seed))('the checks of the 
 				if (plan.kind === 'online') expect(onlineOn(plan.day)).toBeLessThanOrEqual(longest);
 			} else if ('cancel' in checked) {
 				expect(checked.cancel.source).toBe('persona');
+				if (checked.cancel.kind === 'online') expect(checked.cancel.personId).toBe(personId);
 				expect(store.cancelEvent(checked.cancel.id)).toBe(true);
 				outcomes.cancelled++;
 			} else {
@@ -197,6 +222,18 @@ describe.each(Array.from({ length: 60 }, (_, seed) => seed))('the checks of the 
 					expect([...agendaOn(hours, addDays(day, -1)).busy, ...agendaOn(hours, day).busy].some((busy) => overlaps(busy, checked.block!))).toBe(true);
 				}
 				if (checked.refused === 'past') expect(checked.block!.start).toBeLessThanOrEqual(now);
+				// Online already means for every channel, all of the time asked
+				if (checked.refused === 'already_online') {
+					const plan = proposal as { day: number };
+					const day = addDays(today, plan.day);
+					const everywhere = [...agendaOn(hours, addDays(day, -1)).spans, ...agendaOn(hours, day).spans].filter((span) => span.kind === 'online' && !span.on);
+					for (let at = checked.block!.start; at < checked.block!.end; at += 5 * MINUTE) expect(everywhere.some((span) => span.start <= at && at < span.end)).toBe(true);
+				}
+				if (checked.refused === 'clash_online') {
+					const plan = proposal as { day: number };
+					const day = addDays(today, plan.day);
+					expect(store.events('robin', addDays(day, -1), addDays(day, 1)).some((event) => event.kind === 'online' && overlaps(instantsOf(event, timezone), checked.block!))).toBe(true);
+				}
 			}
 		}
 	});
@@ -206,7 +243,7 @@ describe('the property tests themselves', () => {
 	it('are not trivial: across the seeds plans are added, called off, and refused for every kind of reason', () => {
 		expect(outcomes.added).toBeGreaterThan(100);
 		expect(outcomes.cancelled).toBeGreaterThan(5);
-		for (const reason of ['busy', 'night', 'too_long', 'too_soon', 'past', 'day', 'too_far', 'times', 'clash', 'week_cap', 'reason_sleep', 'reason_online', 'reason_characters', 'no_such_plan']) {
+		for (const reason of ['busy', 'night', 'too_long', 'too_soon', 'past', 'day', 'too_far', 'times', 'clash', 'clash_online', 'already_online', 'week_cap', 'reason_sleep', 'reason_online', 'reason_characters', 'no_such_plan']) {
 			expect([...outcomes.refused], reason).toContain(reason);
 		}
 	});

@@ -438,9 +438,10 @@ const withCalendar = new WeakMap<ScheduleConfig, Map<string, DayAgenda>>();
 
 /**
  * The persona's agenda for one local date: its routine (`routineOn`), with its calendar's events over it (`withEvents`):
- * those of that date, and the busy ones of the dates either side, which may reach into its blocks past midnight. A day
- * with events is kept for those exact events (the newest 16 days per schedule), so it is laid out again only once they
- * change: placing them is the costly part, every time in its time zone.
+ * those of that date, and the busy ones of the dates either side, which may reach into its blocks past midnight (as may
+ * the day before's routine busy blocks, a night shift until 8 AM, into time made to chat). A day with events is kept
+ * for those exact events (the newest 16 days per schedule), so it is laid out again only once they change: placing
+ * them is the costly part, every time in its time zone.
  */
 export function agendaOn(hours: Hours, date: LocalDate): DayAgenda {
 	const routine = routineOn(hours, date);
@@ -451,7 +452,7 @@ export function agendaOn(hours: Hours, date: LocalDate): DayAgenda {
 	const key = JSON.stringify([hours.id, hours.timezone, date, near]);
 	let agenda = days.get(key);
 	if (!agenda) {
-		agenda = withEvents(routine, near, hours.timezone);
+		agenda = withEvents(routine, near, hours.timezone, routineOn(hours, addDays(date, -1)).busy);
 		days.set(key, agenda);
 		if (days.size > CACHED_DAYS) days.delete(days.keys().next().value!);
 	}
@@ -486,17 +487,19 @@ const sameDay = (a: LocalDate, b: LocalDate) => a.year === b.year && a.month ===
  * A drawn day with its calendar's events over it (`events`: those of its date and of the dates either side). Every busy
  * event takes its time out of the day's spans and busy blocks (a dentist's hour cuts a work day in two); those of its
  * date are busy blocks of its own. An online event of its date is online time for every channel outside every busy
- * block, joined to the online time it touches, a short break inside it gone.
+ * block (the day before's too, `before`: a night shift until 8 AM), joined to the online time it touches; a short break
+ * is what is left of it outside online time for every channel.
  */
-function withEvents(routine: DayAgenda, events: readonly CalendarEvent[], timeZone: string): DayAgenda {
+function withEvents(routine: DayAgenda, events: readonly CalendarEvent[], timeZone: string, before: readonly Busy[] = []): DayAgenda {
 	const instants = (event: CalendarEvent) => ({ start: zonedToUtc(event.day, event.from, timeZone), end: zonedToUtc(event.day, event.to, timeZone) });
 	const busyEvents: Busy[] = events.filter((event) => event.kind === 'busy').map((event) => ({ reason: event.what, ...instants(event), day: event.day, event: event.id }));
 	const own = <B extends { day: LocalDate }>(blocks: B[]) => blocks.filter((block) => sameDay(block.day, routine.day));
 	const busy = tidy([...without(routine.busy, busyEvents), ...own(busyEvents)]);
 	const made: Span[] = own(events.filter((event) => event.kind === 'online').map((event) => ({ kind: 'online' as const, ...instants(event), day: event.day, event: event.id })));
-	const online = joined(tidy([...without(routine.spans, busyEvents), ...without(made, busyEvents.concat(busy))]));
-	// A short break inside online time for every channel is that time already
-	const spans = online.filter((span) => span.kind !== 'break' || !online.some((other) => other.kind === 'online' && !other.on && other.start <= span.start && span.end <= other.end));
+	const online = joined(tidy([...without(routine.spans, busyEvents), ...without(made, [...busyEvents, ...busy, ...before])]));
+	// A short break is DM time within online time for every channel: only what lies outside it stays a break
+	const everywhere = online.filter((span) => span.kind === 'online' && !span.on);
+	const spans = tidy(online.flatMap((span) => (span.kind === 'break' ? without([span], everywhere) : [span])));
 	return { ...routine, spans, busy };
 }
 
@@ -588,9 +591,10 @@ const quarter = (minutes: number) => Math.round(minutes / 15) * 15;
 /**
  * How each weekday usually goes, Monday first, from the config alone (never a drawn day, so it stays the same every
  * day): every block at the middle of its ranges, rounded to the quarter hour, with its chance; a break at its middle
- * start, as long as its middle length. What a prompt says of the persona's usual week (prompts.ts usualWeekPrompt).
+ * start, as long as its middle length; with `channel`, only the online time on it (`isOn`). What a prompt says of the
+ * persona's usual week (prompts.ts usualWeekPrompt).
  */
-export function usualWeek(schedule: ScheduleConfig): UsualDay[] {
+export function usualWeek(schedule: ScheduleConfig, channel?: ChannelId): UsualDay[] {
 	return WEEKDAYS.map((_, index) => {
 		const weekday = index as Weekday;
 		const plan = planFor(schedule, weekday);
@@ -599,9 +603,9 @@ export function usualWeek(schedule: ScheduleConfig): UsualDay[] {
 			return { kind, ...(reason !== undefined && { reason }), from: quarter(from), to: quarter(to), chance: block.chance };
 		};
 		const blocks: UsualBlock[] = [
-			...(plan?.online ?? []).map((block) => ranged('online', block)),
+			...(plan?.online ?? []).filter((block) => isOn(block, channel)).map((block) => ranged('online', block)),
 			...(plan?.busy ?? []).map((block) => ranged('busy', block, block.reason)),
-			...(plan?.breaks ?? []).map((block) => {
+			...(plan?.breaks ?? []).filter((block) => isOn(block, channel)).map((block) => {
 				const from = quarter(pick(MIDDLE, rangeOf(block.start)));
 				return { kind: 'break' as const, from, to: from + between(MIDDLE, ...block.minutes), chance: block.chance };
 			}),

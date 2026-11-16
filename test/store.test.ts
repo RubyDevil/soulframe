@@ -446,22 +446,30 @@ describe('calendar events', () => {
 		expect(store.eventsMadeSince('kim', 0)).toBe(0);
 	});
 
-	it('keeps the plans of someone forgotten without them, sweeps those called off, and resets with the persona', () => {
+	it("forgets the plans made in turns with someone forgotten, keeps the app's without them, sweeps those called off, and resets with the persona", () => {
 		let at = 1_000;
 		const store = memoryStore(() => at);
 		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const kim = store.createPerson('robin', 'chat', 'kim', 'Kim');
 		const call = store.addEvent('robin', { kind: 'online', day: friday, from: 600, to: 700, personId: sam.id, source: 'persona' });
+		const party = store.addEvent('robin', { kind: 'busy', day: friday, from: 1000, to: 1100, what: "at Sam's party", personId: sam.id, source: 'persona' });
+		const apps = store.addEvent('robin', { kind: 'online', day: friday, from: 1200, to: 1260, personId: sam.id });
+		const kims = store.addEvent('robin', { kind: 'online', day: friday, from: 400, to: 460, personId: kim.id, source: 'persona' });
 		const off = store.addEvent('robin', { kind: 'busy', day: friday, from: 800, to: 900, what: 'at the dentist' });
 		store.addEvent('kim', { kind: 'busy', day: friday, from: 800, to: 900, what: 'at the gym' });
 		store.cancelEvent(off.id);
 		store.set('robin', `calendarRefused:${sam.id}`, '{"reason":"busy"}');
 		expect(store.forgetPerson(sam.id)).toBe(true);
-		expect(store.eventById(call.id)?.personId).toBeNull();
+		// What came of their conversation goes with them; the app's plan stays, without them; another's is untouched
+		expect(store.eventById(call.id)).toBeUndefined();
+		expect(store.eventById(party.id)).toBeUndefined();
+		expect(store.eventById(apps.id)?.personId).toBeNull();
+		expect(store.eventById(kims.id)?.personId).toBe(kim.id);
 		expect(store.get('robin', `calendarRefused:${sam.id}`)).toBeNull();
 		at = 5_000;
 		store.sweep(2_000);
 		expect(store.eventById(off.id)).toBeUndefined();
-		expect(store.eventById(call.id)).toBeDefined();
+		expect(store.eventById(apps.id)).toBeDefined();
 		store.resetPersona('robin');
 		expect(store.events('robin', friday, friday)).toEqual([]);
 		expect(store.events('kim', friday, friday)).toHaveLength(1);
