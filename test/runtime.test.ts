@@ -1713,6 +1713,98 @@ describe('someone who writes in bursts (pacing.burst)', () => {
 		}
 	});
 
+	/** A conversation recording each call as `<call> @<ms after 20:00>`, its typing(true) taking `typingMs` to return. */
+	const timed = (typingMs = 0, typingRefreshMs?: number) => {
+		const events: string[] = [];
+		const conversation: Conversation = {
+			channel: NOTED_DM,
+			...(typingRefreshMs !== undefined && { typingRefreshMs }),
+			typing: async (on) => {
+				events.push(`typing ${on ? 'on' : 'off'} @${Date.now() - EVENING}`);
+				if (on && typingMs) await sleep(typingMs);
+			},
+			send: async (text) => void events.push(`send ${text.length} @${Date.now() - EVENING}`),
+		};
+		return { events, conversation };
+	};
+
+	it('notices a newer message that came while a typing call was under way, before its wait began', async () => {
+		const run = start();
+		vi.spyOn(run.brain, 'compose').mockResolvedValueOnce({ messages: ['x'.repeat(70)], action: 'none' });
+		// Each typing(true) takes half a second to return, as a platform's call may
+		const { events, conversation } = timed(500);
+		const say = (text: string) => run.queue.handle(run.brain.incoming(NOTED_DM, 'user-1', 'Sam', text), conversation, text);
+		try {
+			await say('hi');
+			// Typing from 5 s: the newer message lands 200 ms into its call
+			await vi.advanceTimersByTimeAsync(5_200);
+			await say('one more thing');
+			await vi.advanceTimersByTimeAsync(MINUTE);
+			// Noticed 2 s after it came (with this rng), not when the 20.4 s draft would have been typed
+			expect(events.slice(0, 2)).toEqual(['typing on @5000', 'typing off @7200']);
+			expect(logged(run.log, 'reply_restarted')).toHaveLength(1);
+		} finally {
+			run.close();
+		}
+	});
+
+	it('measures half a first message over all of it, thinking pauses included', async () => {
+		// 70 characters: 20.4 s of typing in three stretches, with two 2 s pauses: 24.4 s in all
+		const run = start({ settings: timelineOf({ pacing: { thinkingPauses: { chance: 1, minChars: 1, max: 2, seconds: [2, 2] } } }) });
+		vi.spyOn(run.brain, 'compose').mockResolvedValueOnce({ messages: ['x'.repeat(70)], action: 'none' });
+		const { conversation } = timed();
+		const say = (text: string) => run.queue.handle(run.brain.incoming(NOTED_DM, 'user-1', 'Sam', text), conversation, text);
+		try {
+			await say('hi');
+			// 9 s into it, past its first stretch (6.8 s) but well under half of it all
+			await vi.advanceTimersByTimeAsync(14_000);
+			await say('one more thing');
+			await vi.advanceTimersByTimeAsync(MINUTE);
+			expect(logged(run.log, 'reply_restarted')).toHaveLength(1);
+			expect(logged(run.log, 'reply_after_turn')).toEqual([]);
+		} finally {
+			run.close();
+		}
+	});
+
+	it("counts the model's time after the reading as typed: well into it, a newer message waits for a turn of its own", async () => {
+		const run = start();
+		// Read for 1 s while the model writes for 15 s: 14 s of the 20.4 s count as typed
+		vi.spyOn(run.brain, 'compose').mockImplementationOnce(async () => {
+			await sleep(15_000);
+			return { messages: ['x'.repeat(70)], action: 'none' };
+		});
+		const { events, conversation } = timed();
+		const say = (text: string) => run.queue.handle(run.brain.incoming(NOTED_DM, 'user-1', 'Sam', text), conversation, text);
+		try {
+			await say('hi');
+			// 2 s into the 6.4 s it still shows: 16 of 20.4 s typed
+			await vi.advanceTimersByTimeAsync(21_000);
+			await say('one more thing');
+			await vi.advanceTimersByTimeAsync(MINUTE);
+			expect(logged(run.log, 'reply_restarted')).toEqual([]);
+			expect(logged(run.log, 'reply_after_turn')).toEqual([{ personId: 1, platform: 'forum' }]);
+			expect(events.slice(0, 3)).toEqual(['typing on @19000', 'send 70 @25400', 'typing off @25400']);
+		} finally {
+			run.close();
+		}
+	});
+
+	it('stops typing at once when the queue stops, not at the end of what it was typing', async () => {
+		const run = start();
+		vi.spyOn(run.brain, 'compose').mockResolvedValueOnce({ messages: ['x'.repeat(70)], action: 'none' });
+		const { events, conversation } = timed();
+		try {
+			await run.queue.handle(run.brain.incoming(NOTED_DM, 'user-1', 'Sam', 'hi'), conversation, 'hi');
+			await vi.advanceTimersByTimeAsync(10_000);
+			run.queue.stop();
+			await vi.advanceTimersByTimeAsync(MINUTE);
+			expect(events).toEqual(['typing on @5000', 'typing off @10000']);
+		} finally {
+			run.close();
+		}
+	});
+
 	it('notices the first of two newer messages in its lag: the second never puts that off', async () => {
 		const run = start();
 		vi.spyOn(run.brain, 'compose').mockResolvedValueOnce({ messages: ['x'.repeat(70)], action: 'none' });
@@ -2209,6 +2301,30 @@ describe('texting first (settings.initiative)', () => {
 	/** The newest opener outcome audited for the person, else whether one is still pending. */
 	const outcomeOf = (store: Store, personId: number) =>
 		store.auditLog('test', 50).find((row) => row.kind.startsWith('opener_') && row.detail.personId === personId)?.kind ?? (store.pendingOpener(personId) ? 'pending' : 'none');
+
+	it('types the rest of an opener as planned once its first message went out, a message of theirs meanwhile getting its turn after', async () => {
+		const opener = async () => JSON.stringify({ reply: `so?\n${'x'.repeat(70)}` });
+		const { queue, brain, store, sam, conversation } = setUpOpener({ settings: timelineOf({ initiative: { enabled: true }, pacing: { ...FAST, typingDurationSeconds: [1.5, 45] } }), opener });
+		const events: string[] = [];
+		const typed = { ...conversation, typing: async (on: boolean) => void events.push(`typing ${on ? 'on' : 'off'} @${Date.now()}`), send: async (text: string) => void events.push(`send ${text.length} @${Date.now()}`) };
+		queue.allowInitiative('chat', async () => typed);
+		queue.start();
+		try {
+			// Until the second message of the opener is being typed
+			for (let i = 0; i < 120 && events.filter((event) => event.startsWith('typing on')).length < 2; i++) await vi.advanceTimersByTimeAsync(1_000);
+			const second = Number(events.at(-1)!.split('@')[1]);
+			await vi.advanceTimersByTimeAsync(5_000);
+			await queue.handle(brain.incoming(OPEN_DM, 'sam', 'Sam', 'it went great'), typed, 'it went great');
+			await vi.advanceTimersByTimeAsync(2 * MINUTE);
+			const sentAt = events.find((event) => event.startsWith('send 70'));
+			// 70 characters at 3.5 a second, plus 0.4 s, as planned
+			expect(Number(sentAt!.split('@')[1]) - second).toBe(20_400);
+			// Their message gets its own turn after
+			expect(store.history(sam.id).at(-1)).toMatchObject({ direction: 'out', text: 'omg congrats!!' });
+		} finally {
+			queue.stop();
+		}
+	});
 
 	it('texts first at a tick once nothing else wants it, on a channel allowed for it', async () => {
 		const { store, queue, sam, sent, conversation } = setUpOpener();

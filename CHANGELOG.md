@@ -123,9 +123,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   time to every reply. Typing still shows only once there is a reply: it never types and then sends nothing.
 - **A message that comes in while a reply is typed restarts it only before half of its first message is typed.** Past
   half, the draft goes out and the message gets a turn of its own after, as someone halfway through a text finishes it;
-  before, any message until the first send dropped the draft, so typing went off and on again.
+  before, any message until the first send dropped the draft, so typing went off and on again. Half is of the whole
+  first message, its thinking pauses and the model's time counted as typed included. An opener whose first message went
+  out types the rest as planned.
 - **A draft that starts over stops typing once the newer message is noticed** (after the `pacing.watching` lag), not
-  when it would have been typed out.
+  when it would have been typed out, even in the middle of a typing refresh; `queue.stop()` ends every typing at once.
 - **Faster defaults for a live chat**, measured on texting-style conversations against a live model:
   `pacing.watching` noticing lag `medianSeconds` 1.5 (was 4), `p90Seconds` 4 (was 8), `delaySeconds` `[0.5, 10]` (was
   `[2, 20]`); `pacing.burst.settleSeconds` `[0.5, 2]` (was `[2, 5]`); `pacing.typingCharsPerSecond` `[4.5, 8]` (was
@@ -167,7 +169,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - A model that now and then answers nothing at all (one in testing did, about one call in twenty) failed the turn into a
-  retry 1 to 4 minutes later, a long silence in a live chat: the model client now asks once more at once.
+  retry 1 to 4 minutes later, a long silence in a live chat: the model client now asks once more at once. An answer
+  cut at its `maxTokens` with no text is not asked again (it would be cut the same way): the error says so.
 - A model that takes only its default temperature (OpenAI's reasoning models, among others) failed every request with
   a 400: the model client now asks again without a `temperature` when a provider refuses one, and sends that model
   none from then on. OpenAI's `gpt-5` models still get none from the start.
@@ -185,8 +188,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   model, never `llm.model`), the description stored in place of its URL, and the chat model reads only that. It takes
   `pacing.looking` per photo (default `[1.5, 5]` s), and a description that fails or takes over
   `perception.timeoutSeconds` (default 15) leaves a photo that "wouldn't load" (or only its `alt`) instead of holding the reply up. A link
-- A model that now and then answers nothing at all (one in testing did, about one call in twenty) failed the turn into a
-  retry 1 to 4 minutes later, a long silence in a live chat: the model client now asks once more at once.
   is only its preview card (from the app, or `createBrain`'s new `previewLink`), else its site's name: the prompt says
   it has not opened it and must not claim to have. soulframe fetches no URL itself. New `perception` settings,
   `store.setMedia`, a `media` column on `messages` added on open, `LlmMessage.images`, and an `image_unseen` audit

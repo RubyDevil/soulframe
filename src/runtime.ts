@@ -125,9 +125,17 @@ interface TurnState {
 	keep?: () => void;
 	/** It is an opener (settings.initiative): a message of theirs meanwhile stops it (`superseded`) and gets a turn of its own. */
 	opener?: true;
-	/** Cuts the typing wait under way short once it is `superseded`, after the lag of noticing (`typingWait`). */
-	notice?: () => void;
-	/** When the typing of its first message began, and how long it lasts: past RESTART_BEFORE of it, a newer message no longer makes it start over. */
+	/**
+	 * When it notices the newer message that makes its draft start over (`superseded`), or that it must stop (`stop()`):
+	 * every typing wait ends by then, one under way and one that starts later alike (`typingWait`).
+	 */
+	noticeBy?: number;
+	/** Ends the typing wait under way at `noticeBy`, once that is set or moved sooner. */
+	wake?: () => void;
+	/**
+	 * When the typing of its first message began, counting the time the model wrote after the reading as typed, and how
+	 * long the whole message takes, pauses included: past RESTART_BEFORE of it, a newer message no longer makes it start over.
+	 */
 	typing?: { from: number; ms: number };
 }
 
@@ -324,29 +332,34 @@ export function createReplyQueue({
 			paused() ?? (!stillWanted() ? 'ended' : state?.superseded && state.sent === 0 ? 'superseded' : 'done');
 
 	/**
-	 * Waits `ms` while a turn types, cut short once a newer message of theirs makes its draft start over (`notice`, when it
-	 * is `superseded`): after the lag of noticing it (`watching`), as someone typing sees a new message come in and stops,
-	 * rather than typing a draft out to its end first.
+	 * Waits `ms` while a turn types, cut short at `state.noticeBy`: once a newer message of theirs makes its draft start
+	 * over, after the lag of noticing it, as someone typing sees a new message come in and stops, rather than typing a
+	 * draft out to its end first; at once when the queue stops. A wait that starts after the message came (while a typing
+	 * call was under way, say) ends by then too.
 	 */
 	const typingWait = (state: TurnState, ms: number) =>
 		new Promise<void>((resolve) => {
-			/** When the wait ends: its end, or sooner once it noticed a newer message (a later one never puts that off). */
-			let due = runtime.now() + ms;
+			const end = runtime.now() + ms;
+			let timer: unknown;
 			const done = () => {
 				timers.clearTimeout(timer);
-				if (state.notice === notice) state.notice = undefined;
+				if (state.wake === wake) state.wake = undefined;
 				resolve();
 			};
-			let timer = timers.setTimeout(done, ms);
-			const notice = () => {
-				const lag = watchingMs(runtime.rng, pacing);
-				if (runtime.now() + lag >= due) return;
-				due = runtime.now() + lag;
+			const wake = () => {
 				timers.clearTimeout(timer);
-				timer = timers.setTimeout(done, lag);
+				timer = timers.setTimeout(done, Math.max(0, Math.min(end, state.noticeBy ?? end) - runtime.now()));
 			};
-			state.notice = notice;
+			state.wake = wake;
+			wake();
 		});
+
+	/** A newer message of theirs makes the draft start over: it is noticed after the lag it has watching (an earlier notice holds). */
+	const noticeNewer = (state: TurnState) => {
+		const by = runtime.now() + watchingMs(runtime.rng, pacing);
+		if (state.noticeBy === undefined || by < state.noticeBy) state.noticeBy = by;
+		state.wake?.();
+	};
 
 	/**
 	 * Sends the messages in order, typing before each, and records each one once sent (a dry run only logs it); either
@@ -395,7 +408,9 @@ export function createReplyQueue({
 		const typeOut = async (text: string, spent: number) => {
 			const plan = typingPlan(text, runtime.rng, pacing);
 			const first = spent > 0 ? Math.max(pacing.typingDurationSeconds[0] * SECOND, plan.typing[0]! - spent) : plan.typing[0]!;
-			if (state && !sent) state.typing = { from: runtime.now(), ms: first };
+			// The whole message, pauses included, typed since the model's time after the reading began counting
+			const whole = [...plan.typing, ...plan.pauses].reduce((sum, ms) => sum + ms, 0);
+			if (state && !sent) state.typing = { from: runtime.now() - spent, ms: whole };
 			await typing(true);
 			let reason: Stop = await typeFor(first);
 			for (const [i, pause] of plan.pauses.entries()) {
@@ -716,6 +731,7 @@ export function createReplyQueue({
 		state.writing = false;
 		state.keep = undefined;
 		state.typing = undefined;
+		state.noticeBy = undefined;
 		state.restarts++;
 		runtime.log(persona.id, 'reply_restarted', { personId, platform: conversation.channel.id, restarts: state.restarts });
 		await quietEnd(personId);
@@ -939,7 +955,8 @@ export function createReplyQueue({
 		if (during?.opener) {
 			if (!during.superseded) runtime.log(persona.id, 'opener_superseded_by_message', { personId, platform: conversation.channel.id });
 			during.superseded = true;
-			during.notice?.();
+			// Only before its first message goes out does it stop: what is left of a sent one is typed as planned
+			if (during.sent === 0) noticeNewer(during);
 			owedAfter.set(personId, conversation);
 			return;
 		}
@@ -949,7 +966,7 @@ export function createReplyQueue({
 			if (burst.restartOnNewMessage && during.writing && during.restarts < burst.maxRestarts && !typedOn) {
 				if (!during.superseded) runtime.log(persona.id, 'reply_superseded', { personId, platform: conversation.channel.id });
 				during.superseded = true;
-				during.notice?.();
+				noticeNewer(during);
 			} else {
 				owedAfter.set(personId, conversation);
 				runtime.log(persona.id, 'reply_after_turn', { personId, platform: conversation.channel.id });
@@ -1142,6 +1159,11 @@ export function createReplyQueue({
 		},
 		stop() {
 			stopped = true;
+			// Typing under way ends now, not at the end of what it was typing
+			for (const state of active.values()) {
+				state.noticeBy = runtime.now();
+				state.wake?.();
+			}
 			initiating.clear();
 			timers.clearInterval(tick);
 			timers.clearTimeout(lease);

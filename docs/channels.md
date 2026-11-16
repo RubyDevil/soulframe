@@ -191,7 +191,8 @@ described above: one `typing(true)` per message, the typing time, the send, one 
   default). Give how long one signal shows, or a little less, and the queue calls `typing(true)` again at that rhythm
   until the message is sent. It checks the halt switch, `queue.stop()` and the person's state at each one, so a reply
   cut short stops typing then, not at the end of the typing time. A newer message of theirs that makes the draft start
-  over stops typing once it is noticed (the `pacing.watching` lag), with or without `typingRefreshMs`.
+  over stops typing once it is noticed (the `pacing.watching` lag), with or without `typingRefreshMs`, and
+  `queue.stop()` stops every typing at once.
 - **`markRead()`**: shows the person their messages were read (a read receipt). The queue calls it as it starts
   writing a reply (again for a draft written again with a newer message), and reads what they wrote while the model
   writes, as long as that takes (15 to 25 characters a second by default, 0.3 to 20 seconds, plus `pacing.looking` per photo): typing starts once both

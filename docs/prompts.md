@@ -278,8 +278,8 @@ The brain fills it in at brain.ts:730-756. Each slot:
 | `personNotes` | `person.summary`, written by the model |
 | `channel` | the `Channel` (its `invitations` and `actions`) |
 | `memory` | `settings.memory` (`personNotes`, `selfNotes`) |
-| `extraLines` | `options.extraLines?.(person) ?? []`: the reply queue passes `Conversation.extraLines` (runtime.ts:765) |
-| `invitation` | `options.invitation` where `channel.invitations`, else nothing (brain.ts:724); the queue passes the name of `Conversation.invitation` (runtime.ts:739, :765) |
+| `extraLines` | `options.extraLines?.(person) ?? []`: the reply queue passes `Conversation.extraLines` (runtime.ts:781) |
+| `invitation` | `options.invitation` where `channel.invitations`, else nothing (brain.ts:724); the queue passes the name of `Conversation.invitation` (runtime.ts:755, :781) |
 | `joinNow` | `fullyOnline(hours, channel.id, now())`: a full online span is open on the channel (brain.ts:723) |
 | `time` | `directMessageTimePrompt` |
 | `minorCaution` | `!!channel.adult && minorCautioned(person)` (brain.ts:721) |
@@ -472,7 +472,7 @@ export const BREAK_INVITE_PROMPT = "You're only on for a few minutes, so you can
 
 DM turn only. Present when the channel has `invitations` and a name is passed: the app attaches
 `Conversation.invitation` (`{ name, join }`, runtime.ts:89) to the conversation, the reply queue keeps it from the
-incoming message (runtime.ts:1103) and passes its `name` to `compose` where `channel.invitations` (runtime.ts:739, :765). The
+incoming message (runtime.ts:1120) and passes its `name` to `compose` where `channel.invitations` (runtime.ts:755, :781). The
 name is the app's data, quoted as a JSON string. With a full online span open on the channel (`joinNow`) the line asks
 for a decision; on a break `BREAK_INVITE_PROMPT` takes its place, and the turn reports `inviteWaits` (brain.ts:769).
 Rendered (`joinNow` true, name `Friday "movie" night`):
@@ -1032,8 +1032,8 @@ No links in the post.
 export const POST_REQUEST = '[post] Write the post.';
 ```
 
-The one `user` message of a post. The canned model (`createCannedLlm`, llm.ts:216-227) answers its fixed post when
-the last message is exactly this text (llm.ts:222); its other answers are fixed DM replies. Neither is prompt text.
+The one `user` message of a post. The canned model (`createCannedLlm`, llm.ts:220-231) answers its fixed post when
+the last message is exactly this text (llm.ts:226); its other answers are fixed DM replies. Neither is prompt text.
 
 ## Typed screening (Decisions)
 
@@ -1473,7 +1473,7 @@ other text.
 - `STOP_ACK` (safety.ts:9): "got it, I won't message you again. take care!" and `MINOR_EXIT` (safety.ts:10): "sorry,
   I only chat with adults, so I'm going to stop here. take care!" are sent to the person by the code, never to the
   model.
-- The canned model's answers (llm.ts:217, :222) are fixed replies, and a fixed photo description, for dry runs.
+- The canned model's answers (llm.ts:221, :226) are fixed replies, and a fixed photo description, for dry runs.
 - `report.ts` (`personaReport`, `personaWarnings`, `settingsWarnings`) writes config-check lines for the operator. Only `samplePrompt`
   shows a prompt, built by the brain itself.
 

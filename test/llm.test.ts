@@ -246,6 +246,14 @@ describe('createConfiguredLlm', () => {
 		expect(fetch).toHaveBeenCalledTimes(2);
 	});
 
+	it('asks nothing more when the answer was cut at its limit, and says so', async () => {
+		const cut = new Response(JSON.stringify({ choices: [{ message: { content: '' }, finish_reason: 'length' }], usage: { total_tokens: 400 } }), { status: 200 });
+		const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(cut);
+		const { llm } = setUp(0);
+		await expect(llm.complete([{ role: 'user', content: 'hey' }], { task: 'directMessage' })).rejects.toThrow('LLM answered no text: its answer limit (maxTokens 400) was spent');
+		expect(fetch).toHaveBeenCalledTimes(1);
+	});
+
 	it('refuses to call the model once the day is spent', async () => {
 		const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => answer('ok', 600));
 		const { llm } = setUp(500);

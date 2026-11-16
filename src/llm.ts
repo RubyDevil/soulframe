@@ -197,17 +197,21 @@ export function createConfiguredLlm({
 					noTemperature.add(which);
 					answered = await request(false);
 				}
-				const body = answered as { choices?: { message?: { content?: string } }[]; usage?: { total_tokens?: number } };
+				const body = answered as { choices?: { message?: { content?: string }; finish_reason?: string }[]; usage?: { total_tokens?: number } };
 				const answer = body.choices?.[0]?.message?.content?.trim();
+				// Cut at its answer limit: a model that reasons first may have spent it all before writing
+				const spent = body.choices?.[0]?.finish_reason === 'length';
 				// A provider that reports no usage is counted at about four characters a token
 				const images = messages.reduce((sum, message) => sum + (message.images?.length ?? 0), 0);
 				meter?.add(body.usage?.total_tokens ?? Math.ceil((JSON.stringify(messages, (key, value: unknown) => (key === 'images' ? undefined : value)).length + (answer?.length ?? 0)) / 4) + images * IMAGE_TOKENS);
-				return answer;
+				return { answer, spent };
 			});
-			// A model now and then answers nothing at all: asked once more at once, rather than the turn failing into a retry minutes later
-			const text = (await ask()) || (await ask());
-			if (!text) throw new Error('LLM answered no text');
-			return text;
+			// A model now and then answers nothing at all: asked once more at once, rather than the turn failing into a retry
+			// minutes later; not when its answer limit was spent, which it would be again
+			let asked = await ask();
+			if (!asked.answer && !asked.spent) asked = await ask();
+			if (!asked.answer) throw new Error(asked.spent ? `LLM answered no text: its answer limit (maxTokens ${used.maxTokens}) was spent` : 'LLM answered no text');
+			return asked.answer;
 		},
 	};
 }
