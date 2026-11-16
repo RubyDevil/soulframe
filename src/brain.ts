@@ -85,8 +85,11 @@ export interface Turn {
 	 * Saves what the turn wrote and decided (its notes on the person and on itself, a block or an action, audited):
 	 * nothing of it is stored before. The reply queue calls it once the turn is kept (its first message sent, or its
 	 * messages marked handled), never for a draft it drops to write the reply again. Calling it again does nothing.
+	 * `delivered` (true when left out): whether its reply reached them. Only a reply that did makes its calendar's plan
+	 * and tells them what the calendar owed them: one cut short before its first message, unreachable, or rehearsed in a
+	 * dry run promised them nothing.
 	 */
-	keep?: () => void;
+	keep?: (outcome?: { delivered?: boolean }) => void;
 }
 
 export interface ParsedTurn {
@@ -906,10 +909,12 @@ export function createBrain({
 			const invite = invitation === undefined ? {} : !joinNow ? { inviteWaits: true as const } : turn.acceptInvite && action === 'none' ? { acceptInvite: true as const } : {};
 			let kept = false;
 			// Stored only once the queue keeps the turn: a draft it drops leaves nothing behind
-			const keep = () => {
+			const keep = ({ delivered = true }: { delivered?: boolean } = {}) => {
 				if (kept) return;
 				kept = true;
 				const id = person.id;
+				// Its reply reached them, still in the conversation: only then is its plan made, and what it told them told
+				const spoke = !!reply && delivered && action !== 'block' && store.personById(id).state === 'active';
 				if (turn.notes !== undefined) store.updatePerson(id, { summary: clip(turn.notes, settings.memory.personNotes) });
 				if (turn.self !== undefined) store.set(persona.id, 'selfNotes', clip(turn.self, settings.memory.selfNotes));
 				// What the turn meant: familiarity grows by its importance (unrated, an ordinary chat), affinity moves one step at most
@@ -922,12 +927,13 @@ export function createBrain({
 				});
 				if (followingUp && turn.followUp !== undefined) planFollowUp(id, turn.followUp);
 				// Its last refused plan, and the plans it called off on them, were told to this turn, and by its reply to them (one
-				// that sends nothing, left on read, tells them nothing): a plan of this one may be refused in turn
-				if (calendar.enabled && reply) {
+				// that sends nothing, left on read, or never reached them, tells them nothing): a plan of this one may be refused in turn
+				if (calendar.enabled && spoke) {
 					store.set(persona.id, refusedKey(id), null);
 					told(id, owed.ids);
 				}
-				if (planning && turn.plan !== undefined) applyPlan(id, turn.plan, writtenAt);
+				// A plan never told them is no promise, and breaks none of anyone else's
+				if (planning && turn.plan !== undefined && spoke) applyPlan(id, turn.plan, writtenAt);
 				if (action === 'block') {
 					store.updatePerson(id, { state: 'blocked' });
 					store.audit(persona.id, 'blocked', { personId: id, platform: channel.id });
@@ -1003,13 +1009,13 @@ export function createBrain({
 			if (!parsed) throw new Error('LLM answered unreadable JSON');
 			const reply = parsed.reply ? clip(allowedLinksOnly(parsed.reply), channel.maxLength) : '';
 			let kept = false;
-			const keep = () => {
+			const keep = ({ delivered = true }: { delivered?: boolean } = {}) => {
 				if (kept) return;
 				kept = true;
 				if (parsed.notes !== undefined) store.updatePerson(person.id, { summary: clip(parsed.notes, settings.memory.personNotes) });
 				if (parsed.self !== undefined) store.set(persona.id, 'selfNotes', clip(parsed.self, settings.memory.selfNotes));
-				// Sent: the plans it told of are told (one it chose not to send leaves them for their next turn)
-				if (reply) told(person.id, owed.ids);
+				// Sent to them: the plans it told of are told (one it chose not to send, or that never reached them, leaves them for their next turn)
+				if (reply && delivered) told(person.id, owed.ids);
 			};
 			return { messages: reply ? splitReply(reply, runtime.rng, settings.pacing) : [], action: 'none', keep };
 		},

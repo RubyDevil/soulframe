@@ -531,7 +531,9 @@ interface Brain {
   until the turn's `keep()` is called, what it wrote and decided: the rewritten notes on the person and on itself, a
   block, an action (each audited then). The reply queue calls `keep()` once it keeps the turn (its first message sent,
   or its messages marked handled) and never for a draft it drops to write the reply again; call it yourself when you
-  use `compose` without the queue. The checks' own outcomes (a stop, a deny-listing, a minor caution) are stored at
+  use `compose` without the queue. `keep({ delivered: false })` says its reply never reached them (cut short before its
+  first message, unreachable, or rehearsed in a dry run; the queue says so itself): the turn's calendar plan is then
+  not made, and what the calendar owed them is not told. The checks' own outcomes (a stop, a deny-listing, a minor caution) are stored at
   once. `invitation` is a pending group-chat invitation's name, heeded only where `channel.invitations`; `extraLines`
   gives the application's lines for this turn. Throws when the model's answer can't be read (the queue retries). The
   answer, `Turn`, is:
@@ -543,7 +545,7 @@ interface Brain {
   	acceptInvite?: true;            // join the pending invitation
   	inviteWaits?: true;             // the invitation waits for full online time (a short break)
   	final?: true;                   // the code's goodbye: sent even though the person is no longer active
-  	keep?: () => void;              // stores what the turn wrote and decided; a second call does nothing
+  	keep?: (outcome?: { delivered?: boolean }) => void; // stores what it wrote and decided; a second call does nothing
   }
   ```
 
@@ -556,7 +558,8 @@ interface Brain {
   `opener`: a follow-up (its note), a check-in (how long they have been quiet) or a share (the busy block in `about`).
   What to text, or no message when the model chose not to. Builds the prompt from the
   history, notes, relationship and time as `compose` does (`openerTask`) and calls the model with
-  `task: 'initiative'`. Its `keep()` stores only the notes: familiarity and affinity move with their answer. Throws when
+  `task: 'initiative'`. Its `keep()` stores only the notes (and, sent, what it told them the calendar owed them, unless
+  `{ delivered: false }`): familiarity and affinity move with their answer. Throws when
   the answer can't be read. The reply queue calls it once the code's guardrails let the opener go
   ([concepts](./concepts.md#texting-first)); with `initiative.followUps` on, `compose`'s answer may plan a follow-up
   (stored by its `keep()`), and the queue plans check-ins and shares itself.

@@ -275,7 +275,8 @@ lines say so, and afterwards it is back from it.
   day and one such time, and comes once per person in `makeTime.perPersonDays`; lengths count as the time passes,
   daylight saving in it. Time made at an hour it is online anyway adds nothing but is kept, so the promise holds. So
   nobody can talk it into being online all night, nor one person into more than one such time a week. A plan is only
-  kept with the turn that made it (`Turn.keep`), and each outcome is audited (`plan_added`, `plan_cancelled`,
+  kept with the turn that made it (`Turn.keep`), once its reply reached them (none sent, rehearsed in a dry run or
+  unreachable, it promised nothing), and each outcome is audited (`plan_added`, `plan_cancelled`,
   `plan_called_off`, `plan_refused` with the reason, one it couldn't read too). The plans made with someone who then
   ends it (stops, blocks, is denied) no longer stand, and forgetting a person (`store.forgetPerson`) forgets them.
 - **Promises, and breaking them.** Time made to chat with someone, and a plan the model marked as with or for them

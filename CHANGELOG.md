@@ -14,9 +14,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   and so offline then, "at a cousin's birthday"), make time to chat with the person at an hour it would be offline, or
   call one of its plans off by its number (with a new plan in its place, `cancel` in it too: both or neither, a plan
   of theirs moved counted once); the app may add its own
-  (`store.addEvent`). The model only proposes: the
-  code checks each plan against guardrails no setting relaxes (a short reason of plain words, never sleep or school,
-  joined to other words, in other languages or look-alike letters too, never "them" or "their", over no other plan in its calendar but a promise it may break;
+  (`store.addEvent`). The model only proposes, and only a reply that reached them makes its plan (`Turn.keep` takes
+  `{ delivered }`: the reply queue says when nothing went out, or when a dry run rehearsed it). The code checks each
+  plan against guardrails no setting relaxes (a short reason of plain words, never sleep or school,
+  joined to other words, in other languages or look-alike letters too, never "them" or "their", over no other plan in
+  its calendar but a promise it may break;
   time made to chat between 7 AM and midnight, over no busy block, never more online in a day than its schedule's
   longest day and one such time, once per person a week; lengths as the time passes, daylight saving in it; limits per
   week and days ahead) and audits the outcome (`plan_added`, `plan_cancelled`, `plan_called_off`, `plan_refused`, one
@@ -35,7 +37,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   on weighing it as in life; measured on a live model, those facts are what it decides by. The one it was broken on is
   told at their next turn, to say sorry, and with texting first on, it texts them an apology first (a new `apology`
   opener kind: one for all it owes them, never in place of a follow-up the model planned, which tells them too). A
-  turn left on read tells them nothing. Making time again for whom it broke one on is no new favour:
+  turn left on read, or whose reply never reached them, tells them nothing. Making time again for whom it broke one on is no new favour:
   `makeTime.perPersonDays` doesn't count the broken time.
 - **Who hears what of its plans** (`calendar.sharing`, on by default). A plan's words are the person's it was made
   with, said as to them ("at your party"); every prompt says them with that person by name ("at Sam's party"), theirs

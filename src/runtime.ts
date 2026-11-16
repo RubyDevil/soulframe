@@ -122,7 +122,7 @@ interface TurnState {
 	/** How many times it started over. */
 	restarts: number;
 	/** Saves what the draft being sent wrote and decided (`Turn.keep`): once its first message is sent, or once it is committed. */
-	keep?: () => void;
+	keep?: (outcome?: { delivered?: boolean }) => void;
 	/** It is an opener (settings.initiative): a message of theirs meanwhile stops it (`superseded`) and gets a turn of its own. */
 	opener?: true;
 	/**
@@ -459,7 +459,8 @@ export function createReplyQueue({
 					// Something went out: the turn is kept, and no newer message makes it start over now
 					state.sent = sent;
 					state.writing = false;
-					state.keep?.();
+					// Reached them, unless rehearsed: a dry run changes nothing its calendar keeps
+					state.keep?.({ delivered: !runtime.dryRun });
 				}
 			} catch (error) {
 				stop = failedDelivery(error, personId, channel, sent);
@@ -720,7 +721,7 @@ export function createReplyQueue({
 			if (state.superseded) return yieldToThem();
 			if (paused()) return;
 			if (!composed.messages.length) {
-				composed.keep?.();
+				composed.keep?.({ delivered: false });
 				return close('declined');
 			}
 			state.keep = composed.keep;
@@ -823,7 +824,8 @@ export function createReplyQueue({
 				state.writing = false;
 				if (!runtime.dryRun) runtime.store.updatePerson(personId, { handledAt: through });
 				if (!composed.inviteWaits && invitations.get(personId) === invitation) invitations.delete(personId);
-				composed.keep?.();
+				// Kept already once a message went out; else nothing reached them (left on read, cut short, unreachable)
+				composed.keep?.({ delivered: false });
 			};
 			if (composed.messages.length) {
 				const { sent, stop } =
