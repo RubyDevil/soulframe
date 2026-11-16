@@ -224,8 +224,25 @@ describe('planShare', () => {
 		const hours = calendarHours(persona, store);
 		const opener = planShare({ store, persona: hours, settings: ON, span: spanAt(hours, EVENING)!, now: EVENING, rng: () => 0 });
 		expect(opener).toMatchObject({ personId: alex.id, kind: 'share', about: `busy ("at a cousin's birthday")` });
-		expect(store.auditLog('test', 1)[0]).toMatchObject({ kind: 'share_planned', detail: { about: "at a cousin's birthday" } });
+		expect(store.auditLog('test', 1)[0]).toMatchObject({ kind: 'share_planned', detail: { about: `busy ("at a cousin's birthday")`, openerId: opener!.id } });
 		expect(plan.id).toBeGreaterThan(0);
+	});
+
+	it("tells of a plan made with someone as its sharing allows, and forgets it with them", () => {
+		const store = memoryStore(() => EVENING);
+		const alex = friend(store, 'alex', { familiarity: 0.7, affinity: 0.5, quietDays: 1 });
+		const sam = friend(store, 'sam', { familiarity: 0.1 });
+		store.addEvent('test', { kind: 'busy', day: { year: 2026, month: 10, day: 15 }, from: 17 * 60 + 30, to: 18 * 60 + 50, what: 'at your party', public: 'at a party', personId: sam.id, source: 'persona' });
+		const hours = calendarHours(persona, store);
+		const opener = planShare({ store, persona: hours, settings: ON, span: spanAt(hours, EVENING)!, now: EVENING, rng: () => 0 });
+		// Alex, close enough for a personal plan: its words, Sam by name ("sam" here); the audit keeps what was told, and whose plan
+		expect(opener).toMatchObject({ personId: alex.id, about: `busy ("at sam's party")` });
+		expect(store.auditLog('test', 1)[0]!.detail).toMatchObject({ about: `busy ("at sam's party")`, madeWith: sam.id });
+		// Sam forgotten: nothing of their plan stays with Alex, and the share isn't sent
+		store.forgetPerson(sam.id);
+		expect(store.pendingOpener(alex.id)).toBeUndefined();
+		expect(JSON.stringify(store.auditLog('test')) + JSON.stringify(store.sentOpeners(alex.id))).not.toContain('party');
+		expect(store.auditLog('test', 1)[0]).toMatchObject({ kind: 'share_planned', detail: { personId: alex.id, openerId: opener!.id } });
 	});
 
 	it('plans nothing without a busy block just before, late in its online time, at an unlucky draw, or while off', () => {

@@ -16,7 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   moved counted once); the app may add its own
   (`store.addEvent`). The model only proposes: the
   code checks each plan against guardrails no setting relaxes (a short reason of plain words, never sleep or school,
-  joined to other words, in other languages or look-alike letters too, never "them" or "their", over no other plan of its own;
+  joined to other words, in other languages or look-alike letters too, never "them" or "their", over no other plan in its calendar but a promise it may break;
   time made to chat between 7 AM and midnight, over no busy block, never more online in a day than its schedule's
   longest day and one such time, once per person a week; lengths as the time passes, daylight saving in it; limits per
   week and days ahead) and audits the outcome (`plan_added`, `plan_cancelled`, `plan_called_off`, `plan_refused`, one
@@ -53,7 +53,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `StoredEvent` type. Their `events` table is made when the store opens; `sweep` deletes the events called off and over (the
   persona's own of the last 90 days kept, which its limits count), `resetPersona` a persona's calendar, and
   `forgetPerson` the plans made in turns with that person (the app's stay, without them; a promise to someone else
-  broken for them stays broken, for someone forgotten).
+  broken for them stays broken, for someone forgotten; refusals and shares kept for others keep nothing of their
+  plans; messages already sent stay in those others' history).
 - **Its week in the prompt.** Every prompt with a time line (DM turns, openers, group-chat lines) now gives its usual
   week, made from its `schedule` alone, every range at its middle, with the online time of the prompt's channel
   ("Monday to Friday you're at work from about 9:00 AM to 5:15 PM and online from about 7:30 PM to 11:45 PM. Saturday
@@ -76,9 +77,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   someone who wrote to it before, on the channels the app allows (`queue.allowInitiative(channel, conversationOf)`).
   This first kind is the follow-up: a DM turn may plan to text them again about something still ahead of them or
   something it promised (the `followUp` field of the DM answer format, `initiative.followUps`), and when the day
-  comes the persona decides whether to send it (`brain.composeOpener`, the new `models.initiative` task). The code
-  decides who and when, with guardrails no setting relaxes: never to anyone who never wrote, is not active, is
-  deny-listed or flagged; never with a reply owed or mid-conversation; one unanswered opener at most, with a gap
+  comes the persona decides whether to send it (`brain.composeOpener`, the new `models.initiative` task, its
+  `maxTokens` 500 so a reasoning model's thinking fits). The code decides who and when, with guardrails no setting
+  relaxes: never to anyone who never wrote, is not active, is deny-listed or flagged; never with a reply owed or
+  mid-conversation; one unanswered opener at most, with a gap
   (`personGapHours`) that doubles for each one ignored; `perDay` a day and one a day per account across personas; in a
   full online span with `spanEndMinutes` left, and only when no reply waits. Every DM turn sees the plan, so talking
   about it drops it; if they write first, the opener stops and their reply is asked to bring it up. Openers spend the budget DMs don't keep for themselves, and each outcome is
@@ -170,9 +172,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `[3.5, 7]`), a fast texter's speed; `pacing.typingDurationSeconds` `[0.8, 45]` (was `[1.5, 45]`);
   `pacing.readingDurationSeconds` `[0.3, 20]` (was `[1, 20]`). A short text in an active chat now shows typing about
   3 to 4 seconds after theirs and arrives a few seconds later. Set the old values to keep the old pace.
-- `models.initiative.maxTokens` defaults to 500 (was 300): on a reasoning model at `reasoningEffort: low`, an opener
-  that also had a plan to own up to spent all of 300 thinking 6 times in 16 (at 500, once). Set 300 to keep the old
-  limit.
 
 ### Removed
 

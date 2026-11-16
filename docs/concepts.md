@@ -211,7 +211,7 @@ once delivery was attempted.
 Off by default (`settings.initiative.enabled`). With it on, a persona may start a DM conversation itself: an
 **opener**. The code decides who and when; the model decides whether to text and what, and may decline.
 
-- **Where openers come from.** Three kinds, one plan at most per person:
+- **Where openers come from.** Four kinds, one plan at most per person:
   - **A follow-up**: when someone tells it about something still ahead of them (an interview, a trip) or it promises
     to get back to them, the DM turn may plan to text them again `days` ahead (`initiative.followUps`), with a short
     note of its own.
@@ -223,11 +223,14 @@ Off by default (`settings.initiative.enabled`). With it on, a persona may start 
   - **Sharing its day** (`initiative.sharing`, off by default): when a span opens within 30 minutes of a busy block's
     end, now and then (`chance`), it texts one of the people closest to it about it ("at the gym"), within the next
     30 minutes (`planShare`, initiative.ts:165). The model makes up what happened, keeping to its notes on itself.
+  - **An apology** (with its calendar on): when it breaks a promise to someone for someone else, it texts them to say
+    sorry, at once, for every plan it owes them. It takes a pending check-in's or share's place, but never a
+    follow-up's (that one tells them too), and is given up once the last plan is over or once they talk.
 
   A follow-up is kept only with the turn that planned it (`Turn.keep`). Every later turn with them sees it, so once
   they talk about it the model drops it, and once its day has come their own turn is asked to bring it up. It may go
-  from 6 AM that day, in the persona's time zone, until the end of the day after it. Check-ins and shares are the
-  code's: no turn sees them. They are planned once per span (a restart doesn't plan it again), for people an allowed
+  from 6 AM that day, in the persona's time zone, until the end of the day after it. Check-ins, shares and apologies
+  are the code's: no turn sees them. They are planned once per span (a restart doesn't plan it again), for people an allowed
   channel reaches, at most what `perDay` leaves.
 - **Which channels.** Only those the app allows: `queue.allowInitiative(channel, conversationOf)` (see
   [channels](./channels.md#texting-first-allowinitiative)), on the channel of the last message between them.
@@ -266,7 +269,7 @@ lines say so, and afterwards it is back from it.
   day): those are its own to check, and only it calls them off.
 - **The guardrails**, which no setting relaxes (`checkPlan`, calendar.ts:192): the model only proposes. A plan of its
   own has a short reason of plain words (never sleep or school, joined to other words, in other languages or look-alike
-  letters too; never "them" or "their"), over no other plan of its own, at most `plans.perWeek` a week; time made to chat lies
+  letters too; never "them" or "their"), over no other plan in its calendar (bar a promise it may break), at most `plans.perWeek` a week; time made to chat lies
   between 7 AM and midnight, over no busy block, never makes the day's online time longer than its schedule's longest
   day and one such time, and comes once per person in `makeTime.perPersonDays`; lengths count as the time passes,
   daylight saving in it. Time made at an hour it is online anyway adds nothing but is kept, so the promise holds. So
@@ -283,7 +286,7 @@ lines say so, and afterwards it is back from it.
   are what it decides by: it never broke a promise for someone less close, nearly always for someone much closer, and
   a few times in ten for someone about as close, or after letting them down twice. The one it was broken on is told at
   their next turn, to say sorry (the turn says what came up, or not), and while texting first is on it texts them an
-  apology (an `apology` opener) before then.
+  apology (an `apology` opener) before then, or tells them in a follow-up it already planned.
 - **Who hears what.** A plan's words are the person's it was made with: "at Sam's birthday", "at the clinic with Jo".
   The model ranks each as it makes it: `open` (anyone may hear it), `personal` (it names someone, their party),
   `confidential` (sensitive, or they asked to keep it quiet), and gives the words anyone may hear ("at a friend's

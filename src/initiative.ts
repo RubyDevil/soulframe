@@ -182,6 +182,7 @@ export function planShare({ store, persona, settings, span, now, rng, reachable 
 	// A plan made with someone else, as much of it as they may hear (calendar.ts heardOf), by the closeness it has with them
 	const about = busyText(busy, (block) => heardOf(block, viewer, settings.calendar.sharing, nameIn(store)));
 	const opener = store.planOpener(persona.id, person.id, { kind: 'share', about, dueAt: now + rng() * (until - now), expiresAt: Math.min(span.end, span.start + 2 * JUST_BACK_MS) });
-	store.audit(persona.id, 'share_planned', { personId: person.id, about: busy.reason, dueAt: opener.dueAt });
+	// What it was told, and of a plan made with someone, with whom: forgetting them forgets it here too (store.forgetPerson)
+	store.audit(persona.id, 'share_planned', { personId: person.id, about, dueAt: opener.dueAt, openerId: opener.id, ...(busy.madeWith !== undefined && { madeWith: busy.madeWith }) });
 	return opener;
 }

@@ -28,7 +28,7 @@ export type Share = 'open' | 'personal' | 'confidential';
 /**
  * What a DM turn may answer in its `plan` field (brain.ts parseTurn), its times local "HH:MM" on its `day` (0 today).
  * A busy plan may carry how widely its words may be told (`share`), the words anyone may hear (`public`), and whether it
- * is with or for the person (`withThem`): a promise to them, as time made to chat always is. A new plan may take the
+ * is with or for the person (`withThem`): a promise to them, as time made to chat is by its kind (`isPromise`). A new plan may take the
  * place of one listed (`replaces`, its number): both or neither, the day checked without that one (`checkPlan`).
  */
 export type PlanProposal =

@@ -1015,7 +1015,8 @@ failed?: true }[]; links: (LinkPreview & { looked?: true })[] }`. A photo keeps 
 - **`forgetPerson`**: deletes one person (their messages, notes, familiarity and affinity, accounts, the plans its
   calendar keeps from turns with them, and the audit lines about them) in one transaction. A promise to someone else
   broken for them stays broken, for someone forgotten (`cancelledBy` 0, its audit line without them), and a plan
-  refused to someone else for a plan made with them keeps only that plan's public words. The deny list and minor flags are kept, so a deny-listed account stays so. Someone
+  refused to someone else for a plan made with them keeps only that plan's public words; a share of its day with
+  someone else, just back from a plan made with them, keeps nothing of what it said (dropped if not sent). The deny list and minor flags are kept, so a deny-listed account stays so. Someone
   who asked to stop, was blocked or denied is kept too, since forgetting them would let the persona answer them
   again; `{ includeEnded: true }` forgets them as well. Answers whether anyone was forgotten.
 - **`resetPersona`**: deletes everything one persona knows: its people and their messages (ended people kept, as
@@ -1077,7 +1078,7 @@ interface StoredEvent {
 	source: 'persona' | 'app'; // the persona's own, made in a DM turn, or the app's (addEvent)
 	share: 'open' | 'personal' | 'confidential'; // how widely its words may be told to others (settings.calendar.sharing)
 	public: string | null; // the words anyone may hear of a busy one; null for none
-	withThem: boolean; // a plan with or for personId: a promise to them (time made to chat always is)
+	withThem: boolean; // a busy plan with or for personId: a promise to them (false for time made to chat, a promise by its kind)
 	createdAt: number;
 	cancelledAt: number | null; // null while it stands
 	cancelledBy: number | null; // in a turn with whom it was called off (0: someone since forgotten); null for the app's call

@@ -35,8 +35,8 @@ export interface CalendarEvent {
 	personId?: number | null;
 	/**
 	 * For one the persona made with someone: how widely its words may be told (calendar.ts sightOf; `personal` when left
-	 * out), the words anyone may hear instead (`public`), and whether it is a plan with or for that person, a promise
-	 * (time made to chat always is).
+	 * out), the words anyone may hear instead (`public`), and whether it is a busy plan with or for that person, a
+	 * promise (false for time made to chat, a promise by its kind: calendar.ts isPromise).
 	 */
 	share?: 'open' | 'personal' | 'confidential';
 	public?: string | null;

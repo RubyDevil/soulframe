@@ -108,7 +108,7 @@ export interface StoredEvent extends CalendarEvent {
 	/** How widely its words may be told, and the words anyone may hear (the persona's own plans): CalendarEvent's. */
 	share: NonNullable<CalendarEvent['share']>;
 	public: string | null;
-	/** A plan with or for `personId`, a promise to them (time made to chat always is). */
+	/** A busy plan with or for `personId`, a promise to them; false for time made to chat, a promise all the same (calendar.ts isPromise). */
 	withThem: boolean;
 	createdAt: number;
 	/** When it was called off; null while it stands. */
@@ -738,6 +738,16 @@ export function createStore(db: Database, now: () => number = Date.now) {
 				db.prepare('UPDATE events SET cancelled_by = 0 WHERE cancelled_by = ?').run(personId);
 				db.prepare("DELETE FROM audit WHERE persona = ? AND json_extract(detail, '$.personId') = ?").run(row.persona, personId);
 				db.prepare("UPDATE audit SET detail = json_remove(detail, '$.for') WHERE persona = ? AND json_extract(detail, '$.for') = ?").run(row.persona, personId);
+				// Its day shared with someone else, just back from a plan made with them: what that opener said goes (pending, it is dropped)
+				const shares = db
+					.prepare("SELECT id, json_extract(detail, '$.openerId') AS opener FROM audit WHERE persona = ? AND kind = 'share_planned' AND json_extract(detail, '$.madeWith') = ?")
+					.all(row.persona, personId) as unknown as { id: number; opener: number | null }[];
+				for (const share of shares) {
+					if (share.opener !== null) {
+						db.prepare("UPDATE openers SET about = '', closed_at = COALESCE(closed_at, ?), outcome = COALESCE(outcome, 'dropped') WHERE id = ?").run(now(), share.opener);
+					}
+					db.prepare("UPDATE audit SET detail = json_remove(detail, '$.about', '$.madeWith') WHERE id = ?").run(share.id);
+				}
 				// A plan refused to someone else for a plan made with them: that plan is gone, so only its public words stay, if any
 				const refusals = db.prepare("SELECT key, value FROM kv WHERE persona = ? AND key LIKE 'calendarRefused:%'").all(row.persona) as unknown as { key: string; value: string }[];
 				for (const { key, value } of refusals) {

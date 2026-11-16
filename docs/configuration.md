@@ -523,7 +523,8 @@ within `typingDurationSeconds`; a message of `thinkingPauses.minChars` or more t
 
 Texting first, off by default: the persona may start a DM conversation itself, through its reply queue, with someone
 who wrote to it before, on a channel the app allows (`queue.allowInitiative`): to follow up on something, to check in
-with someone close gone quiet, or to share its day. The code decides who and when, with
+with someone close gone quiet, to share its day, or to say sorry for a plan it called off on them (with its
+calendar on). The code decides who and when, with
 guardrails no setting relaxes; the model decides whether to text and what, and may decline. See
 [concepts](./concepts.md#texting-first).
 
@@ -590,7 +591,8 @@ What the code checks, whatever the settings say:
   never sleep and never school (in any conversation; joined to other words, as "highschool" or "sleepover", and in
   the other languages most likely too), never talking with them ("online", "chatting": a busy plan is time away from
   the phone), never "them" or "their" (whose is not sure; "you" and "your" mean the person it was made with, and anyone
-  else who may hear it hears their name: "at Sam's party"), and lies over no other plan of its own; over its routine
+  else who may hear it hears their name: "at Sam's party"), and lies over no other plan in its calendar (bar a promise
+  it may break), the app's too; over its routine
   it wins (an appointment cuts a work day in two); its public words, held to the same, never say "you" or "your"
   either (else they are left out), and own words that do are never `open` (at least `personal`: anyone else who
   hears them hears a name);
@@ -609,7 +611,8 @@ What the code checks, whatever the settings say:
 - a promise to someone (time made to chat with them, or a plan the model marked as with or for them) is called off in
   a turn with someone else, by its number or by a plan over it, only when that person is not less close to it than the
   one it was made with (their familiarity and, while it is kept, affinity levels, summed: one level apart is about as
-  close). The one it was broken on is told, at their next turn, and by an apology while texting first is on;
+  close). The one it was broken on is told, at their next turn, and by an apology while texting first is on (or by a
+  follow-up already planned, which an apology never replaces);
 - a plan made with someone who then ends it (stops, blocks it, is denied) no longer stands: nobody is left to call it
   off with.
 
