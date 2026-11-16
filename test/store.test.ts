@@ -421,6 +421,9 @@ describe('calendar events', () => {
 			expect(() => store.addEvent('robin', { kind: 'online', day: friday, from: from!, to: to! })).toThrow('Not a calendar block');
 		}
 		expect(() => store.addEvent('robin', { kind: 'busy', day: friday, from: 600, to: 700, what: '  ' })).toThrow('needs what it is');
+		for (const day of [{ year: 2026, month: 13, day: 1 }, { year: 2026, month: 2, day: 30 }, { year: 2026, month: 11, day: 0 }]) {
+			expect(() => store.addEvent('robin', { kind: 'online', day, from: 600, to: 700 })).toThrow('Not a date');
+		}
 		// Past midnight, up to 24 hours
 		expect(store.addEvent('robin', { kind: 'online', day: friday, from: 1380, to: 1500 }).to).toBe(1500);
 	});
@@ -462,5 +465,20 @@ describe('calendar events', () => {
 		store.resetPersona('robin');
 		expect(store.events('robin', friday, friday)).toEqual([]);
 		expect(store.events('kim', friday, friday)).toHaveLength(1);
+	});
+
+	it('sweeps a plan made before the cut and dated two days or more before it, and keeps the others', () => {
+		const nov23 = Date.UTC(2026, 10, 23);
+		let at = nov23 - 10 * 86_400_000;
+		const store = memoryStore(() => at);
+		const gym = (day: number) => store.addEvent('robin', { kind: 'busy', day: { year: 2026, month: 11, day }, from: 600, to: 700, what: 'at the gym' });
+		const old = gym(20);
+		// A day before the cut: not over everywhere yet
+		const recent = gym(22);
+		at = nov23;
+		// Made at the cut: it counts toward the limits of the days that follow
+		const late = gym(19);
+		store.sweep(nov23);
+		expect([old, recent, late].map((event) => store.eventById(event.id) !== undefined)).toEqual([false, true, true]);
 	});
 });

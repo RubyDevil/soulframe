@@ -555,12 +555,14 @@ audited, one that doesn't fit. DM turns and openers list its coming plans, and i
 
 What the code checks, whatever the settings say:
 
-- every plan is at least 15 minutes, on a day from today to `plans.maxDays`, and starts after the turn that made it;
+- every plan is at least 15 minutes, on a day from today to `plans.maxDays` (counted from the date its turn was written,
+  so a turn kept just past midnight keeps its day), and starts after the turn that made it;
 - a plan of its own has a reason of 2 to 40 characters, only letters, digits, spaces and `, . ' ’ & -` (so it can carry
   no instructions), never sleep and never school (in any conversation), never talking with them ("online", "chatting":
   a busy plan is time away from the phone), and lies over no other plan of its own; over its routine it wins (an
   appointment cuts a work day in two);
-- time made to chat lies between 7 AM and midnight, over no busy block (its routine's or a plan's), adds online time
+- time made to chat lies between 7 AM and midnight, over no busy block (its routine's, one of the day before that runs
+  into it, as a night shift until 8 AM, or a plan's), adds online time
   (it isn't online then already), and never makes the day's online time longer than its schedule's longest day by
   more than `makeTime.maxMinutes`;
 - it calls off only its own plans, still ahead; a plan called off still counts toward `perWeek` and `perPersonDays`.

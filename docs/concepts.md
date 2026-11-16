@@ -261,7 +261,7 @@ lines say so, and afterwards it is back from it.
 - **Who puts plans in it.** The persona, in a DM turn: its answer's `plan` is a plan of its own, time it makes to chat
   with the person, or one of its plans called off by its number. The app, with `store.addEvent` (a holiday, a team
   day): those are its own to check, and only it calls them off.
-- **The guardrails**, which no setting relaxes (`checkPlan`, calendar.ts:64): the model only proposes. A plan of its
+- **The guardrails**, which no setting relaxes (`checkPlan`, calendar.ts:76): the model only proposes. A plan of its
   own has a short reason of plain words, never sleep or school, over no other plan of its own, at most
   `plans.perWeek` a week; time made to chat lies between 7 AM and midnight, over no busy block, never makes the day's
   online time longer than its schedule's longest day and one such time, and comes once per person in

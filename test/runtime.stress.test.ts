@@ -12,6 +12,7 @@ import { createBrain } from '../src/brain.js';
 import { ProviderUnavailableError } from '../src/llm.js';
 import { seededRng, sleep, type Rng } from '../src/rng.js';
 import { createReplyQueue, createRuntime, UnreachableError, type Conversation } from '../src/runtime.js';
+import { spanAt } from '../src/schedule.js';
 import { MINOR_EXIT, STOP_ACK } from '../src/safety.js';
 import { MINUTE } from '../src/settings.js';
 import { memoryStore, NOTED_DM, personaOf, settingsOf, TEST_IDENTITY, testPersona } from './fixtures.js';
@@ -26,7 +27,7 @@ afterEach(() => {
 });
 
 /** What happened in one run, and the means to drive it. */
-const world = (seed: number, { interruptions = true, initiative = false }: { interruptions?: boolean; initiative?: boolean } = {}) => {
+const world = (seed: number, { interruptions = true, initiative = false, calendar = false }: { interruptions?: boolean; initiative?: boolean; calendar?: boolean } = {}) => {
 	vi.useFakeTimers();
 	vi.setSystemTime(START);
 	const luck: Rng = seededRng(`stress-luck-${seed}`);
@@ -37,8 +38,18 @@ const world = (seed: number, { interruptions = true, initiative = false }: { int
 		pacing: { interruptions: interruptions ? { meanMinutes: 12, minutes: [1, 3] } : { meanMinutes: 0 } },
 		// Texting first, at its most eager: check-ins after half a day, a share on each return
 		...(initiative && { initiative: { enabled: true, perDay: 8, personGapHours: 1, checkIns: { quietDays: 0.5, meanDays: 1 }, sharing: { enabled: true, chance: 1 } } }),
+		...(calendar && { calendar: { enabled: true } }),
 	});
 	const store = memoryStore();
+	if (calendar) {
+		// Two to four plans in the hour and a half that matters: busy (offline then) or time made after its hours
+		const day = { year: 2026, month: 10, day: 14 };
+		for (let i = 0; i < 2 + Math.floor(luck() * 3); i++) {
+			const from = 20 * 60 + Math.floor(luck() * 100);
+			if (luck() < 0.75) store.addEvent(persona.id, { kind: 'busy', day, from, to: from + 5 + Math.floor(luck() * 25), what: 'at the shop' });
+			else store.addEvent(persona.id, { kind: 'online', day, from: 23 * 60, to: 23 * 60 + 15 + Math.floor(luck() * 45) });
+		}
+	}
 	let halted = false;
 	const runtime = { ...createRuntime({ store, dryRun: false, haltFile: 'unused', rng: seededRng(`stress-queue-${seed}`) }), halted: () => halted };
 	vi.spyOn(runtime, 'log').mockImplementation(() => undefined);
@@ -52,6 +63,7 @@ const world = (seed: number, { interruptions = true, initiative = false }: { int
 	let texts = 0;
 	vi.spyOn(brain, 'compose').mockImplementation(async (personId) => {
 		if (composing.size) violations.push(`person ${personId} composes while ${[...composing]} does`);
+		if (!spanAt(brain.hours, Date.now(), NOTED_DM.id)) violations.push(`person ${personId} composed for at ${new Date(Date.now()).toISOString()}, offline (a plan of its own?)`);
 		composing.add(personId);
 		composed.push(personId);
 		try {
@@ -204,6 +216,31 @@ describe.each(Array.from({ length: 20 }, (_, seed) => seed))('texting first unde
 				// One unanswered opener at most: two openers in a row always have a message of theirs between them
 				const outs = run.store.history(person.id, 500).filter((m) => m.direction === 'in' || m.text.startsWith('opener'));
 				for (const [i, m] of outs.entries()) if (i && m.text.startsWith('opener')) expect(outs[i - 1]!.text.startsWith('opener'), `${from}: two openers in a row`).toBe(false);
+			}
+		} finally {
+			run.queue.stop();
+		}
+	});
+});
+
+describe.each(Array.from({ length: 30 }, (_, seed) => seed))('a calendar under random load (seed %i)', (seed) => {
+	it('keeps the same invariants, starts no turn in a plan that keeps it offline, and leaves nobody unanswered', async () => {
+		const run = world(seed, { calendar: true, interruptions: seed % 3 !== 0 });
+		run.queue.start();
+		try {
+			await run.play(35);
+			// Past every plan, every retry, and its hours (time made after 23:00 included)
+			await vi.advanceTimersByTimeAsync(START + 100 * MINUTE - Date.now());
+			expect(run.violations).toEqual([]);
+			expect(run.composing.size).toBe(0);
+			expect(run.brain.hours).not.toBe(run.persona);
+			for (const from of PEOPLE) {
+				const person = run.store.person(run.persona.id, NOTED_DM.id, from);
+				if (!person) continue;
+				if (person.state === 'active') expect(person.handledAt, `${person.name} is still owed a turn`).toBeGreaterThanOrEqual(person.lastInAt);
+				const recorded = run.sent.filter((s) => s.personId === person.id && s.text !== STOP_ACK).map((s) => s.text);
+				const stored = run.store.history(person.id, 500).filter((m) => m.direction === 'out' && m.text !== STOP_ACK).map((m) => m.text);
+				expect(stored).toEqual(recorded);
 			}
 		} finally {
 			run.queue.stop();

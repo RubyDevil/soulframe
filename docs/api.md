@@ -992,8 +992,8 @@ failed?: true }[]; links: (LinkPreview & { looked?: true })[] }`. A photo keeps 
 - **`get`**, **`set`**: small values by persona and key (`set` with `null` deletes). The package uses `selfNotes` and
   `lastOnlineAt` per persona, and the persona `'*'` for token counts and minor flags.
 - **`audit`**, **`auditLog`**: the audit log (newest first, default 50, for one persona or all).
-- **`sweep`**: deletes messages, audit lines, closed openers and calendar events called off before `before`. The
-  application sweeps its own tables.
+- **`sweep`**: deletes messages, audit lines and closed openers older than `before`, and the calendar events made before
+  it that were called off before it or are dated two days or more before it. The application sweeps its own tables.
 - **`block`**, **`unblock`**: by hand, for an operator. `block` makes an active person `blocked`: the persona ignores
   what they write and cuts a reply under way. `unblock` makes someone `stopped` (they asked to stop) or `blocked`
   `active` again. Both are audited with `source: 'manual'`, answer whether anything changed, and only touch the store:
@@ -1034,8 +1034,8 @@ read only while it is on:
 - **`addEvent`**: puts a plan in the persona's calendar: `busy`, offline from `from` to `to` (minutes of its local
   `day`; `to` past 1440 runs past midnight, 24 hours at most) with `what` as its reason, completing "you're ..." ("at
   the team day"); or `online`, time it is online for every channel. `source` is `'app'` unless given: the app's plans
-  are its own to check (the persona's own go through the code's guardrails before they get here). Throws on times that
-  make no block, or a busy plan without `what`. Answers it.
+  are its own to check (the persona's own go through the code's guardrails before they get here). Throws on a date that
+  doesn't exist, times that make no block, or a busy plan without `what`. Answers it.
 - **`cancelEvent`**: calls a plan off: it stays stored (a plan the persona made counts toward its limits) but no agenda
   reads it. Answers whether it stood. **`eventById`**: one by id, standing or called off.
 - **`events`**: the persona's standing plans from one date to another, both included, in order: what its agenda lays

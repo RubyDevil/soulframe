@@ -486,7 +486,7 @@ const sameDay = (a: LocalDate, b: LocalDate) => a.year === b.year && a.month ===
  * A drawn day with its calendar's events over it (`events`: those of its date and of the dates either side). Every busy
  * event takes its time out of the day's spans and busy blocks (a dentist's hour cuts a work day in two); those of its
  * date are busy blocks of its own. An online event of its date is online time for every channel outside every busy
- * block, joined to the online time it touches.
+ * block, joined to the online time it touches, a short break inside it gone.
  */
 function withEvents(routine: DayAgenda, events: readonly CalendarEvent[], timeZone: string): DayAgenda {
 	const instants = (event: CalendarEvent) => ({ start: zonedToUtc(event.day, event.from, timeZone), end: zonedToUtc(event.day, event.to, timeZone) });
@@ -494,7 +494,9 @@ function withEvents(routine: DayAgenda, events: readonly CalendarEvent[], timeZo
 	const own = <B extends { day: LocalDate }>(blocks: B[]) => blocks.filter((block) => sameDay(block.day, routine.day));
 	const busy = tidy([...without(routine.busy, busyEvents), ...own(busyEvents)]);
 	const made: Span[] = own(events.filter((event) => event.kind === 'online').map((event) => ({ kind: 'online' as const, ...instants(event), day: event.day, event: event.id })));
-	const spans = joined(tidy([...without(routine.spans, busyEvents), ...without(made, busyEvents.concat(busy))]));
+	const online = joined(tidy([...without(routine.spans, busyEvents), ...without(made, busyEvents.concat(busy))]));
+	// A short break inside online time for every channel is that time already
+	const spans = online.filter((span) => span.kind !== 'break' || !online.some((other) => other.kind === 'online' && !other.on && other.start <= span.start && span.end <= other.end));
 	return { ...routine, spans, busy };
 }
 

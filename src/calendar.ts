@@ -7,7 +7,7 @@
  */
 
 import { planReasonProblem } from './config/hours.js';
-import { addDays, agendaOn, CLOCK, localDateOf, onlineMinutesByWeekday, parseClock, zonedToUtc, type CalendarEvent, type Hours } from './schedule.js';
+import { addDays, agendaOn, CLOCK, localDateOf, onlineMinutesByWeekday, parseClock, zonedToUtc, type CalendarEvent, type Hours, type LocalDate } from './schedule.js';
 import { DAY, MINUTE, type Settings } from './settings.js';
 import type { Store, StoredEvent } from './store.js';
 
@@ -45,6 +45,18 @@ const instantsOf = (event: Pick<CalendarEvent, 'day' | 'from' | 'to'>, timeZone:
 
 const overlaps = (a: { start: number; end: number }) => (b: { start: number; end: number }) => a.start < b.end && b.start < a.end;
 
+/** The online time of `spans` (breaks left out), the spans that overlap (on different channels) as one. */
+const joinedOnline = (spans: readonly { kind: string; start: number; end: number }[]) =>
+	spans
+		.filter((span) => span.kind === 'online')
+		.sort((a, b) => a.start - b.start)
+		.reduce<{ start: number; end: number }[]>((out, span) => {
+			const last = out.at(-1);
+			if (last && span.start <= last.end) last.end = Math.max(last.end, span.end);
+			else out.push({ start: span.start, end: span.end });
+			return out;
+		}, []);
+
 /** How much of `block` the `spans` cover, in ms (spans that don't overlap one another). */
 const covered = (block: { start: number; end: number }, spans: readonly { start: number; end: number }[]) =>
 	spans.reduce((sum, span) => sum + Math.max(0, Math.min(block.end, span.end) - Math.max(block.start, span.start)), 0);
@@ -63,7 +75,22 @@ const covered = (block: { start: number; end: number }, spans: readonly { start:
  */
 export function checkPlan(
 	proposal: PlanProposal,
-	{ store, hours, settings, now, personId }: { store: Store; hours: Hours; settings: Settings['calendar']; now: number; personId: number },
+	{
+		store,
+		hours,
+		settings,
+		now,
+		personId,
+		today = localDateOf(now, hours.timezone),
+	}: {
+		store: Store;
+		hours: Hours;
+		settings: Settings['calendar'];
+		now: number;
+		personId: number;
+		/** The date its `day` counts from: the persona's when the turn was written (a turn kept past midnight means the day it was written on); now's unless given. */
+		today?: LocalDate;
+	},
 ): PlanCheck {
 	const refused = (reason: string, more: { block?: { start: number; end: number }; clash?: string } = {}) => ({ refused: reason, ...more });
 	const { timezone } = hours;
@@ -76,9 +103,10 @@ export function checkPlan(
 	}
 	const online = 'online' in proposal;
 	if (!(online ? settings.makeTime : settings.plans).enabled) return refused('off');
-	if (!Number.isInteger(proposal.day) || proposal.day < 0 || proposal.day > settings.plans.maxDays) return refused('day');
+	if (!Number.isInteger(proposal.day) || proposal.day < 0) return refused('day');
+	if (proposal.day > settings.plans.maxDays) return refused('too_far');
 	if (!CLOCK.test(proposal.from) || !CLOCK.test(proposal.to)) return refused('times');
-	const day = addDays(localDateOf(now, timezone), proposal.day);
+	const day = addDays(today, proposal.day);
 	const from = parseClock(proposal.from);
 	// An end on the clock before its start is the next day's
 	const to = parseClock(proposal.to) + (parseClock(proposal.to) <= from ? 24 * 60 : 0);
@@ -93,12 +121,15 @@ export function checkPlan(
 		if (to - from > maxMinutes) return refusedAt('too_long');
 		if (from < MAKE_TIME_FROM || to > MAKE_TIME_TO) return refusedAt('night');
 		const agenda = agendaOn(hours, day);
-		const busy = agenda.busy.find(overlaps(block));
+		// The day before's blocks may run into it: a night shift until 8 AM
+		const before = agendaOn(hours, addDays(day, -1));
+		const busy = [...before.busy, ...agenda.busy].find(overlaps(block));
 		if (busy) return refusedAt('busy', busy.reason);
-		const onlineSpans = agenda.spans.filter((span) => span.kind === 'online');
-		const already = covered(block, onlineSpans);
+		const already = covered(block, joinedOnline([...before.spans, ...agenda.spans]));
 		if (already >= block.end - block.start) return refusedAt('already_online');
-		const total = onlineSpans.reduce((sum, span) => sum + span.end - span.start, 0) + block.end - block.start - already;
+		// Its day's online time is that of its own spans, as its schedule's longest day counts it, and what the plan adds
+		const online = joinedOnline(agenda.spans);
+		const total = online.reduce((sum, span) => sum + span.end - span.start, 0) + block.end - block.start - covered(block, online);
 		// One made time's worth over its longest day at most: nobody stacks a day with more
 		if (total > (Math.max(...onlineMinutesByWeekday(hours.schedule)) + maxMinutes) * MINUTE) return refusedAt('too_much');
 		if (store.eventsMadeSince(hours.id, now - perPersonDays * DAY, { kind: 'online', personId }) > 0) return refusedAt('too_soon');

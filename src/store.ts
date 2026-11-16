@@ -466,12 +466,18 @@ export function createStore(db: Database, now: () => number = Date.now) {
 			) as unknown as { at: number; persona: string; kind: string; detail: string }[];
 			return rows.map((row) => ({ ...row, detail: JSON.parse(row.detail) as Record<string, unknown> }));
 		},
-		/** Deletes messages, audit lines, closed openers and calendar events called off older than `before` (the app sweeps its own tables). */
+		/**
+		 * Deletes messages, audit lines, closed openers and calendar events older than `before`: an event made before it
+		 * and called off before it, or dated two days or more before it (over in every time zone). The app sweeps its own
+		 * tables.
+		 */
 		sweep(before: number) {
 			db.prepare('DELETE FROM messages WHERE at < ?').run(before);
 			db.prepare('DELETE FROM audit WHERE at < ?').run(before);
 			db.prepare('DELETE FROM openers WHERE closed_at IS NOT NULL AND closed_at < ?').run(before);
-			db.prepare('DELETE FROM events WHERE cancelled_at IS NOT NULL AND cancelled_at < ?').run(before);
+			const over = new Date(before - 2 * 86_400_000);
+			const overDay = dayKey({ year: over.getUTCFullYear(), month: over.getUTCMonth() + 1, day: over.getUTCDate() });
+			db.prepare('DELETE FROM events WHERE created_at < ? AND ((cancelled_at IS NOT NULL AND cancelled_at < ?) OR day < ?)').run(before, before, overDay);
 		},
 		/**
 		 * Puts a plan in the persona's calendar (settings.calendar), laid over its agenda while the calendar is on: `busy`,
@@ -486,6 +492,8 @@ export function createStore(db: Database, now: () => number = Date.now) {
 		): StoredEvent {
 			const { kind, day, from, to, what = '', personId = null, source = 'app' } = event;
 			if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || from >= 1440 || to <= from || to - from > 1440) throw new Error(`Not a calendar block: ${from} to ${to} minutes`);
+			const date = new Date(Date.UTC(day.year, day.month - 1, day.day));
+			if (date.getUTCFullYear() !== day.year || date.getUTCMonth() + 1 !== day.month || date.getUTCDate() !== day.day) throw new Error(`Not a date: ${JSON.stringify(day)}`);
 			if (kind === 'busy' && !what.trim()) throw new Error('A busy plan needs what it is');
 			const id = Number(
 				db

@@ -46,7 +46,7 @@ describe('checkPlan: a plan of its own (busy)', () => {
 	});
 
 	it.each<[string, Partial<typeof dinner>]>([
-		['day', { day: 61 }],
+		['too_far', { day: 61 }],
 		['day', { day: -1 }],
 		['day', { day: 1.5 }],
 		['times', { from: '6pm' }],
@@ -68,6 +68,15 @@ describe('checkPlan: a plan of its own (busy)', () => {
 		['reason_length', { busy: 'at a very long event with far too many words in it' }],
 	])('refuses it with %s: %j', (reason, change) => {
 		expect(setUp().check({ ...dinner, ...change })).toMatchObject({ refused: reason });
+	});
+
+	it('counts its day from the date the turn was written, when given: one kept past midnight keeps its day', () => {
+		const { check, store, sam, hours } = setUp();
+		// Written Monday 23:59, kept Tuesday 00:01: "day 1" is still Tuesday
+		const kept = Date.UTC(2026, 10, 17, 0, 1);
+		expect(checkPlan({ ...dinner, day: 1 }, { store, hours, settings: ON, now: kept, personId: sam.id, today: { year: 2026, month: 11, day: 16 } })).toMatchObject({ add: { day: { day: 17 } } });
+		expect(checkPlan({ ...dinner, day: 1 }, { store, hours, settings: ON, now: kept, personId: sam.id })).toMatchObject({ add: { day: { day: 18 } } });
+		expect(check({ ...dinner, day: 0, from: '21:00', to: '22:30' })).toMatchObject({ add: { day: { day: 16 } } });
 	});
 
 	it('refuses one over another plan of its own, near midnight too, but not over its routine', () => {
@@ -110,6 +119,15 @@ describe('checkPlan: time made to chat (online)', () => {
 		['already_online', { day: 1, from: '20:00', to: '21:00' }],
 	])('refuses it with %s: %j', (reason, change) => {
 		expect(setUp().check({ ...call, ...change })).toMatchObject({ refused: reason });
+	});
+
+	it('refuses time over a busy block of the day before that runs into it: a night shift until 8 AM', () => {
+		const store = memoryStore(() => NOW);
+		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const nights: Hours = { id: 'robin', timezone: 'UTC', schedule: ScheduleSchema.parse({ days: { 'mon-sun': { busy: [{ reason: 'at work', start: ['22:00', '22:00'], end: ['08:00', '08:00'] }], online: [{ start: ['17:00', '17:00'], end: ['21:00', '21:00'] }] } } }) };
+		const check = (proposal: PlanProposal) => checkPlan(proposal, { store, hours: calendarHours(nights, store), settings: ON, now: NOW, personId: sam.id });
+		expect(check({ ...call, day: 2, from: '07:15', to: '08:15' })).toMatchObject({ refused: 'busy', clash: 'at work' });
+		expect(check({ ...call, day: 2, from: '08:00', to: '09:00' })).toHaveProperty('add');
 	});
 
 	it('says the time a refused plan was for, and what it clashed with', () => {

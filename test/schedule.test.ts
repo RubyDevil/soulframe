@@ -563,6 +563,15 @@ describe('calendar events over the agenda', () => {
 		expect(times(late)).toEqual([['17:30', '18:00'], ['20:00', '00:15']]);
 	});
 
+	it('drops a short break inside time it made to chat: it is online then already', () => {
+		const lunch = hoursOf({ days: { 'mon-sun': { breaks: [{ start: ['12:30', '12:30'], minutes: [15, 15] }], online: [{ start: ['20:00', '20:00'], end: ['22:00', '22:00'] }] } } });
+		const keyed = (events: CalendarEvent[]): Hours => ({ ...lunch, events: () => events });
+		expect(times(agendaOn(keyed([online(7, SAT, 12, 13)]), date(SAT)).spans)).toEqual([['12:00', '13:00'], ['20:00', '22:00']]);
+		// Not one it only overlaps
+		const overlapping = agendaOn(keyed([online(8, SAT, 11, 12.6)]), date(SAT)).spans;
+		expect(overlapping.map((span) => span.kind)).toEqual(['online', 'break', 'online']);
+	});
+
 	it("cuts the online time of the day before that runs past midnight into a plan's, and lists the plan on its own day", () => {
 		const hours = withCalendar([busy(6, TUE, 0, 2, 'out with friends')]);
 		expect(times(agendaOn(hours, date(MON)).spans.filter((span) => span.kind === 'online'))).toEqual([['20:00', '00:00']]);

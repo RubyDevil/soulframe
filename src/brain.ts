@@ -420,8 +420,8 @@ export function createBrain({
 	 * refused, each audited. A refused one is kept for the next turn with them to hear about (`refusedPlanPrompt`), but
 	 * for time made to chat when it is online then anyway: no promise is broken.
 	 */
-	const applyPlan = (personId: number, proposal: PlanProposal) => {
-		const checked = checkPlan(proposal, { store, hours, settings: calendar, now: now(), personId });
+	const applyPlan = (personId: number, proposal: PlanProposal, writtenAt: number) => {
+		const checked = checkPlan(proposal, { store, hours, settings: calendar, now: now(), personId, today: localDateOf(writtenAt, persona.timezone) });
 		if ('refused' in checked) {
 			store.audit(persona.id, 'plan_refused', { personId, reason: checked.refused });
 			if (checked.refused !== 'already_online') {
@@ -725,6 +725,8 @@ export function createBrain({
 			const photos = history.some((m) => m.media?.images.length);
 			const links = history.some((m) => m.media?.links.length);
 
+			// The time its prompt is written at: a plan's day counts from its date, even if the turn is kept past midnight
+			const writtenAt = now();
 			const task = directMessageTask({
 				selfNotes: selfNotes(),
 				personName: person.name,
@@ -784,7 +786,7 @@ export function createBrain({
 				if (followingUp && turn.followUp !== undefined) planFollowUp(id, turn.followUp);
 				// Its last refused plan was told to this turn: a plan of this one may be refused in turn
 				if (calendar.enabled) store.set(persona.id, refusedKey(id), null);
-				if (planning && turn.plan !== undefined) applyPlan(id, turn.plan);
+				if (planning && turn.plan !== undefined) applyPlan(id, turn.plan, writtenAt);
 				if (action === 'block') {
 					store.updatePerson(id, { state: 'blocked' });
 					store.audit(persona.id, 'blocked', { personId: id, platform: channel.id });

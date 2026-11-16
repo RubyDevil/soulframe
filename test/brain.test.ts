@@ -1590,6 +1590,20 @@ describe('its calendar (settings.calendar)', () => {
 		expect(seen[2]).not.toContain("didn't take");
 	});
 
+	it('counts a plan\'s day from when its turn was written, even when the turn is kept past midnight', async () => {
+		// 11:59 PM on Wednesday in Toronto, kept two minutes later, on Thursday: "tomorrow" is still Thursday
+		const clock = { now: Date.UTC(2026, 9, 15, 3, 59) };
+		const store = memoryStore(() => clock.now);
+		const llm: Llm = { complete: async () => JSON.stringify({ reply: 'busy tomorrow night', plan: { day: 1, from: '18:00', to: '20:00', busy: 'at the cinema' } }) };
+		const brain = createBrain({ settings: CALENDAR, persona, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => clock.now }, llm });
+		const decision = brain.incoming(DM.chat, 'sam', 'Sam', 'free tomorrow night?');
+		if (decision.kind !== 'reply') throw new Error('expected a reply');
+		const turn = await brain.compose(decision.person.id, DM.chat);
+		clock.now += 2 * MINUTE;
+		turn.keep?.();
+		expect(store.events('robin', { year: 2026, month: 10, day: 15 }, { year: 2026, month: 10, day: 16 }).map((event) => event.day.day)).toEqual([15]);
+	});
+
 	it('calls one of its plans off by its number', async () => {
 		const store = memoryStore(() => NOW);
 		const plan = store.addEvent('robin', { kind: 'busy', day: SATURDAY, from: 18 * 60, to: 22 * 60, what: 'at the cinema', source: 'persona' });
