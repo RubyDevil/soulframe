@@ -33,21 +33,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   with ("you're closer to Kim than to them; you've already called off plans with them twice this month"), and a line
   on weighing it as in life; measured on a live model, those facts are what it decides by. The one it was broken on is
   told at their next turn, to say sorry, and with texting first on, it texts them an apology first (a new `apology`
-  opener kind).
+  opener kind: one for all it owes them, never in place of a follow-up the model planned). Making time again for
+  whom it broke one on is no new favour: `makeTime.perPersonDays` doesn't count the broken time.
 - **Who hears what of its plans** (`calendar.sharing`, on by default). A plan's words are the person's it was made
   with, said as to them ("at your party"). The model ranks each as it makes it (`share`: `open`, `personal`,
   `confidential`) and gives the words anyone may hear (`public`); others hear its words, with that person by name ("at
   Sam's party"), as their relationship levels allow (`sharing.personal`, from "getting
   close"; `sharing.confidential`, from "one of the people closest to you" and "really fond", told in confidence, so
-  it asks them to keep it to themselves), and its public words otherwise; group chats hear only those. Sharing off,
-  nobody else ever hears a plan's own words, nor whom time was made for. Its notes about itself are not held to this
-  (documented).
+  it asks them to keep it to themselves), and its public words otherwise; group chats hear an `open` plan's words
+  and only the public words of the rest. A threshold left out keeps its default (`affinity: -1` drops that gate).
+  Sharing off, nobody else ever hears a plan's own words, nor whom time was made for. Its notes about itself are not
+  held to this (documented).
 - `brain.hours`: the persona's hours with its calendar (the persona itself while the calendar is off), which its reply
   queue reads; give them to `spanAt`, `fullyOnline` and `watchSpans` so a plan moves your view of its online time too.
 - The store's calendar: `addEvent`, `cancelEvent`, `eventById`, `events`, `eventsMadeSince`, `calledOffOn`, and the
   `StoredEvent` type. Their `events` table is made when the store opens; `sweep` deletes the events called off and over (the
   persona's own of the last 90 days kept, which its limits count), `resetPersona` a persona's calendar, and
-  `forgetPerson` the plans made in turns with that person (the app's stay, without them).
+  `forgetPerson` the plans made in turns with that person (the app's stay, without them; a promise to someone else
+  broken for them stays broken, for someone forgotten).
 - **Its week in the prompt.** Every prompt with a time line (DM turns, openers, group-chat lines) now gives its usual
   week, made from its `schedule` alone, every range at its middle, with the online time of the prompt's channel
   ("Monday to Friday you're at work from about 9:00 AM to 5:15 PM and online from about 7:30 PM to 11:45 PM. Saturday

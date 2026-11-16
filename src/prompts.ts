@@ -811,9 +811,9 @@ export const followUpReasonPrompt = (personName: string, about: string) =>
 export const checkInReasonPrompt = (personName: string, quietMs: number) =>
 	`You haven't talked with ${personName} in ${durationText(quietMs)}, and they came to mind. Text them only if you'd naturally reach out now: about something from your notes or your last chat, or just to see how they've been.`;
 
-/** Why it may text them first, to say sorry: a plan with them it called off for something else (`calledOffText`), which they don't know of yet. */
-export const apologyReasonPrompt = (personName: string, about: string) =>
-	`You called off a plan with ${personName} for something else, and they don't know yet: ${about}. Text them to tell them and say sorry, in your own words; what came up is yours to tell or not.`;
+/** Why it may text them first, to say sorry: the plans with them it called off for something else (`calledOffText` each), which they don't know of yet. */
+export const apologyReasonPrompt = (personName: string, plans: readonly string[]) =>
+	`You called off ${plans.length > 1 ? 'plans' : 'a plan'} with ${personName} for something else, and they don't know yet: ${plans.join('; ')}. Text them to tell them and say sorry, in your own words; what came up is yours to tell or not.`;
 
 /** Why it may text them first, sharing its day: the busy block it is just back from (its reason, as `busyText` says it). */
 export const shareReasonPrompt = (personName: string, reason: string) =>

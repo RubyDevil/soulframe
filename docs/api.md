@@ -1013,7 +1013,8 @@ failed?: true }[]; links: (LinkPreview & { looked?: true })[] }`. A photo keeps 
   `clearMinorCaution` takes the flag off an account. They answer whether the account was on the list, and `undeny` is
   audited for each persona. These lists protect people: use them for a mistake you checked, not as routine.
 - **`forgetPerson`**: deletes one person (their messages, notes, familiarity and affinity, accounts, the plans its
-  calendar keeps from turns with them, and the audit lines about them) in one transaction. The deny list and minor flags are kept, so a deny-listed account stays so. Someone
+  calendar keeps from turns with them, and the audit lines about them) in one transaction. A promise to someone else
+  broken for them stays broken, for someone forgotten (`cancelledBy` 0, its audit line without them). The deny list and minor flags are kept, so a deny-listed account stays so. Someone
   who asked to stop, was blocked or denied is kept too, since forgetting them would let the persona answer them
   again; `{ includeEnded: true }` forgets them as well. Answers whether anyone was forgotten.
 - **`resetPersona`**: deletes everything one persona knows: its people and their messages (ended people kept, as
@@ -1076,7 +1077,7 @@ interface StoredEvent {
 	withThem: boolean; // a plan with or for personId: a promise to them (time made to chat always is)
 	createdAt: number;
 	cancelledAt: number | null; // null while it stands
-	cancelledBy: number | null; // in a turn with whom it was called off; null for the app's call
+	cancelledBy: number | null; // in a turn with whom it was called off (0: someone since forgotten); null for the app's call
 }
 ```
 

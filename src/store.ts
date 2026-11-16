@@ -113,7 +113,7 @@ export interface StoredEvent extends CalendarEvent {
 	createdAt: number;
 	/** When it was called off; null while it stands. */
 	cancelledAt: number | null;
-	/** In a turn with whom it was called off (one with someone else: a promise broken for them); null for the app's call. */
+	/** In a turn with whom it was called off (one with someone else: a promise broken for them; 0 for someone since forgotten); null for the app's call. */
 	cancelledBy: number | null;
 }
 
@@ -567,11 +567,13 @@ export function createStore(db: Database, now: () => number = Date.now) {
 		cancelEvent(id: number, by: number | null = null): boolean {
 			return db.prepare('UPDATE events SET cancelled_at = ?, cancelled_by = ? WHERE id = ? AND cancelled_at IS NULL').run(now(), by, id).changes > 0;
 		},
-		/** How many plans the persona made with the person were called off in turns with someone else since `since`: promises it broke for others. */
+		/** How many promises the persona made the person (time made to chat, or a plan with them) were called off in turns with someone else since `since`: broken for others. */
 		calledOffOn(persona: string, personId: number, since: number): number {
 			return (
 				db
-					.prepare('SELECT COUNT(*) AS n FROM events WHERE persona = ? AND person_id = ? AND cancelled_by IS NOT NULL AND cancelled_by != person_id AND cancelled_at >= ?')
+					.prepare(
+						"SELECT COUNT(*) AS n FROM events WHERE persona = ? AND person_id = ? AND source = 'persona' AND (kind = 'online' OR with_them = 1) AND cancelled_by IS NOT NULL AND cancelled_by != person_id AND cancelled_at >= ?",
+					)
 					.get(persona, personId, since) as unknown as { n: number }
 			).n;
 		},
@@ -585,12 +587,15 @@ export function createStore(db: Database, now: () => number = Date.now) {
 			const rows = standingEvents.all(persona, dayKey(from), dayKey(to)) as unknown as EventRow[];
 			return rows.map(toEvent);
 		},
-		/** How many plans the persona made itself (`source` persona) since `since`, called off or not: of `kind`, and with `personId`, when given. */
-		eventsMadeSince(persona: string, since: number, { kind, personId }: { kind?: CalendarEvent['kind']; personId?: number } = {}): number {
+		/**
+		 * How many plans the persona made itself (`source` persona) since `since`, called off or not: of `kind`, and with
+		 * `personId`, when given; with `unbroken`, not those called off in a turn with someone else (promises broken).
+		 */
+		eventsMadeSince(persona: string, since: number, { kind, personId, unbroken = false }: { kind?: CalendarEvent['kind']; personId?: number; unbroken?: boolean } = {}): number {
 			return (
 				db
 					.prepare(
-						`SELECT COUNT(*) AS n FROM events WHERE persona = ? AND source = 'persona' AND created_at >= ?${kind ? ' AND kind = ?' : ''}${personId !== undefined ? ' AND person_id = ?' : ''}`,
+						`SELECT COUNT(*) AS n FROM events WHERE persona = ? AND source = 'persona' AND created_at >= ?${kind ? ' AND kind = ?' : ''}${personId !== undefined ? ' AND person_id = ?' : ''}${unbroken ? ' AND (cancelled_by IS NULL OR cancelled_by = person_id)' : ''}`,
 					)
 					.get(persona, since, ...(kind ? [kind] : []), ...(personId !== undefined ? [personId] : [])) as unknown as { n: number }
 			).n;
@@ -727,9 +732,12 @@ export function createStore(db: Database, now: () => number = Date.now) {
 				db.prepare('DELETE FROM messages WHERE person_id = ?').run(personId);
 				db.prepare('DELETE FROM identities WHERE person_id = ?').run(personId);
 				db.prepare('DELETE FROM kv WHERE persona = ? AND key IN (?, ?, ?)').run(row.persona, `relationship:${personId}`, `calendarRefused:${personId}`, `calendarCalledOff:${personId}`);
-				// Plans made in a turn with them came from their conversation; the app's stay, without them
+				// Plans made in a turn with them came from their conversation; the app's stay, without them. A promise to someone
+				// else broken for them stays broken (whom it was made with was let down), for someone forgotten (0)
 				db.prepare("DELETE FROM events WHERE person_id = ? AND source = 'persona'").run(personId);
+				db.prepare('UPDATE events SET cancelled_by = 0 WHERE cancelled_by = ?').run(personId);
 				db.prepare("DELETE FROM audit WHERE persona = ? AND json_extract(detail, '$.personId') = ?").run(row.persona, personId);
+				db.prepare("UPDATE audit SET detail = json_remove(detail, '$.for') WHERE persona = ? AND json_extract(detail, '$.for') = ?").run(row.persona, personId);
 				db.prepare('DELETE FROM people WHERE id = ?').run(personId);
 			});
 			return true;
@@ -757,6 +765,8 @@ export function createStore(db: Database, now: () => number = Date.now) {
 					// Those about people kept stay; so do none about anyone forgotten
 					const keep = (db.prepare("SELECT id FROM people WHERE persona = ? AND state != 'active'").all(persona) as unknown as { id: number }[]).map((p) => p.id);
 					db.prepare(`DELETE FROM audit WHERE persona = ? AND (json_extract(detail, '$.personId') IS NULL OR json_extract(detail, '$.personId') NOT IN (${keep.map(() => '?').join(', ')}))`).run(persona, ...keep);
+					// Nor whom a promise to one of them was broken for
+					db.prepare(`UPDATE audit SET detail = json_remove(detail, '$.for') WHERE persona = ? AND json_extract(detail, '$.for') NOT IN (${keep.map(() => '?').join(', ')})`).run(persona, ...keep);
 				}
 				return { people: ids.length, messages };
 			});

@@ -124,9 +124,21 @@ const TaskModelSchema = (defaults: { maxTokens: number; temperature: number }) =
 
 /**
  * The relationship levels from which someone hears the words of a plan made with someone else (calendar.sharing): its
- * familiarity and, while affinity is kept, its affinity, at least these (a level's `from`); false for nobody.
+ * familiarity and, while affinity is kept, its affinity, at least these (a level's `from`); false for nobody. Each key
+ * left out keeps its default (`from`), so setting one never drops the other: -1 is no affinity gate at all.
  */
-const ShareLevel = z.union([z.literal(false), z.object({ familiarity: z.number().min(0).max(1), affinity: z.number().min(-1).max(1).optional() }).strict()]);
+const shareLevel = (from: { familiarity: number; affinity?: number }) =>
+	z
+		.union([
+			z.literal(false),
+			z
+				.object({
+					familiarity: z.number().min(0).max(1).default(from.familiarity),
+					affinity: from.affinity === undefined ? z.number().min(-1).max(1).optional() : z.number().min(-1).max(1).default(from.affinity),
+				})
+				.strict(),
+		])
+		.default({});
 
 export const SettingsSchema = z
 	.object({
@@ -610,9 +622,12 @@ export const SettingsSchema = z
 					.object({
 						enabled: z.boolean().default(true),
 						/** A plan that names someone, their party: from these levels (each level's `from`, as relationship's levels set them; 0.48, "getting close"); false for nobody. */
-						personal: ShareLevel.default({ familiarity: 0.48 }),
-						/** A plan that is sensitive, or that they asked it to keep to itself: told in confidence, from these levels; false for nobody. */
-						confidential: ShareLevel.default({ familiarity: 0.82, affinity: 0.6 }),
+						personal: shareLevel({ familiarity: 0.48 }),
+						/**
+						 * A plan that is sensitive, or that they asked it to keep to itself: told in confidence, from these levels (0.82,
+						 * "very close", and affinity 0.6, "really like"); false for nobody.
+						 */
+						confidential: shareLevel({ familiarity: 0.82, affinity: 0.6 }),
 					})
 					.strict()
 					.default({}),

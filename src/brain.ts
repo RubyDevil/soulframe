@@ -169,21 +169,26 @@ const planOf = (value: unknown): PlanProposal | 'unreadable' | undefined => {
 	if (days === null || typeof from !== 'string' || typeof to !== 'string') return 'unreadable';
 	if (online === true || online === 'true') return { day: days, from: from.trim(), to: to.trim(), online: true };
 	if (typeof busy !== 'string') return 'unreadable';
-	// Its other fields as the model may write them; one it got wrong is left out (personal, no public words, not a promise)
+	// Its other fields as the model may write them, read to keep the most back: a share it wrote otherwise ("Private",
+	// "secret") as confidential, none as personal; a promise in any yes
 	const { public: shown, share, withThem } = value as Record<string, unknown>;
+	const shared = typeof share === 'string' && share.trim() ? shareOf(share) : undefined;
 	return {
 		day: days,
 		from: from.trim(),
 		to: to.trim(),
 		busy,
 		...(typeof shown === 'string' && shown.trim() && { public: shown }),
-		...(typeof share === 'string' && SHARES.includes(share as Share) && { share: share as Share }),
-		...((withThem === true || withThem === 'true') && { withThem: true }),
+		...(shared && { share: shared }),
+		...((withThem === true || withThem === 1 || (typeof withThem === 'string' && /^(?:true|yes|y|1)$/i.test(withThem.trim()))) && { withThem: true }),
 	};
 };
 
-/** The ways a plan's words may be shared (calendar.ts Share). */
-const SHARES: readonly Share[] = ['open', 'personal', 'confidential'];
+/** A `share` the model wrote: open or personal as written (any case), anything else (confidential, private, secret…) confidential. */
+const shareOf = (share: string): Share => {
+	const word = share.trim().toLowerCase();
+	return word === 'open' || word === 'personal' ? word : 'confidential';
+};
 
 /** A follow-up the model planned: `{ days, about }` with a whole number of days from 0 and a note, false (or "false") to drop it; else none. */
 const followUpOf = (value: unknown): ParsedTurn['followUp'] => {
@@ -333,6 +338,16 @@ const TREND_STEP = 0.05;
 /** How much of the way to familiarity its average moves at each new conversation. */
 const TREND_FOLLOW = 0.4;
 
+/** A promise it called off on someone for someone else, which they don't know of yet (kv `calendarCalledOff:<person id>`, a list). */
+interface CalledOff {
+	/** The plan's event. */
+	id: number;
+	start: number;
+	end: number;
+	kind: StoredEvent['kind'];
+	what: string;
+}
+
 /** The relationship as the DM prompt shows it, set once per conversation (kv `relationship:<person id>`). */
 interface Shown {
 	/** The conversation it was set for (`Person.conversations`). */
@@ -460,13 +475,18 @@ export function createBrain({
 	const refusedKey = (personId: number) => `calendarRefused:${personId}`;
 	/** Where the plans it called off on someone for someone else are kept, until a turn with them or an apology tells them (kv). */
 	const calledOffKey = (personId: number) => `calendarCalledOff:${personId}`;
-	/** The plans it called off on them for someone else, which they don't know of yet. */
-	const calledOffOn = (personId: number): { start: number; end: number; kind: StoredEvent['kind']; what: string }[] =>
-		JSON.parse(store.get(persona.id, calledOffKey(personId)) ?? '[]');
-	/** That it called plans with them off for someone else, as their next DM turn is told (prompts.ts calledOffPrompt), if any. */
-	const calledOffLines = (personId: number) => {
+	/** The plans it called off on them for someone else, which they don't know of yet: not one over two weeks ago, long past telling. */
+	const calledOffOn = (personId: number): CalledOff[] =>
+		(JSON.parse(store.get(persona.id, calledOffKey(personId)) ?? '[]') as CalledOff[]).filter((plan) => plan.end > now() - 14 * DAY);
+	/** They were told of these (by a kept turn, or an apology sent): only these leave, one called off meanwhile stays. */
+	const told = (personId: number, ids: readonly number[]) => {
+		const left = calledOffOn(personId).filter((plan) => !ids.includes(plan.id));
+		store.set(persona.id, calledOffKey(personId), left.length ? JSON.stringify(left) : null);
+	};
+	/** The plans it called off on them for someone else, as a turn tells them (prompts.ts calledOffText each), and which. */
+	const owedTo = (personId: number) => {
 		const plans = calendar.enabled ? calledOffOn(personId) : [];
-		return plans.length ? calledOffPrompt(plans.map((plan) => calledOffText(plan, persona.timezone))) : undefined;
+		return { plans: plans.map((plan) => calledOffText(plan, persona.timezone)), ids: plans.map((plan) => plan.id) };
 	};
 	/**
 	 * A promise to someone called off in a turn with someone else (`by`): called off, audited, and kept for their next
@@ -477,9 +497,16 @@ export function createBrain({
 		const personId = event.personId!;
 		store.cancelEvent(event.id, by);
 		store.audit(persona.id, 'plan_called_off', { personId, eventId: event.id, for: by });
-		const plan = { start: zonedToUtc(event.day, event.from, persona.timezone), end: zonedToUtc(event.day, event.to, persona.timezone), kind: event.kind, what: event.what };
-		store.set(persona.id, calledOffKey(personId), JSON.stringify([...calledOffOn(personId), plan]));
-		if (initiative.enabled) store.planOpener(persona.id, personId, { kind: 'apology', about: calledOffText(plan, persona.timezone), dueAt: now(), expiresAt: plan.end });
+		const plan = { id: event.id, start: zonedToUtc(event.day, event.from, persona.timezone), end: zonedToUtc(event.day, event.to, persona.timezone), kind: event.kind, what: event.what };
+		const owed = [...calledOffOn(personId), plan];
+		store.set(persona.id, calledOffKey(personId), JSON.stringify(owed));
+		// One apology for all it owes them, in place of an earlier one (or a check-in or share); never of a follow-up, the
+		// model's own plan: then their next turn tells them
+		const pending = store.pendingOpener(personId);
+		if (initiative.enabled && pending?.kind !== 'followUp') {
+			const until = Math.max(...owed.map((owing) => owing.end));
+			store.planOpener(persona.id, personId, { kind: 'apology', about: owedTo(personId).plans.join('; '), dueAt: now(), expiresAt: until });
+		}
 	};
 	/**
 	 * A plan a kept turn with the person made, if the code allows it (calendar.ts checkPlan): added, called off, or
@@ -666,10 +693,12 @@ export function createBrain({
 	/** Their relationship levels as their prompts describe them, setting nothing: those of their conversation, else as a new one would find them now. */
 	const levelsOf = (person: Person) => {
 		const shown = shownOf(person);
-		if (shown?.conversation === person.conversations) return { familiarity: shown.familiarity, affinity: shown.affinity };
+		// Those set for their conversation, while the level lists still hold them (an app may change its lists meanwhile)
+		const fits = shown && shown.familiarity < familiarityLevels.length && shown.affinity < affinityLevels.length;
+		if (fits && shown.conversation === person.conversations) return { familiarity: shown.familiarity, affinity: shown.affinity };
 		return {
-			familiarity: levelIndex(familiarityLevels, person.familiarity, shown?.familiarity ?? -1, relationship.hysteresis),
-			affinity: levelIndex(affinityLevels, person.affinity, shown?.affinity ?? -1, relationship.hysteresis),
+			familiarity: levelIndex(familiarityLevels, person.familiarity, fits ? shown.familiarity : -1, relationship.hysteresis),
+			affinity: levelIndex(affinityLevels, person.affinity, fits ? shown.affinity : -1, relationship.hysteresis),
 		};
 	};
 	/** How close it is to someone (calendar.ts closerOf): their familiarity level and, while it is kept, affinity level, summed. */
@@ -827,6 +856,8 @@ export function createBrain({
 
 			// The time its prompt is written at: a plan's day counts from its date, even if the turn is kept past midnight
 			const writtenAt = now();
+			// The plans it called off on them, told to this turn: only these are told once it is kept
+			const owed = owedTo(person.id);
 			const task = directMessageTask({
 				selfNotes: selfNotes(),
 				personName: person.name,
@@ -852,7 +883,7 @@ export function createBrain({
 				...(planning && { plan: planning }),
 				calendar: calendarLines(person),
 				refusedPlan: refusedPlan(person),
-				calledOff: calledOffLines(person.id),
+				calledOff: owed.plans.length ? calledOffPrompt(owed.plans) : undefined,
 			});
 			const messages: LlmMessage[] = [
 				{ role: 'system', content: system(channel, task, true) },
@@ -888,7 +919,7 @@ export function createBrain({
 				// Its last refused plan, and the plans it called off on them, were told to this turn: a plan of this one may be refused in turn
 				if (calendar.enabled) {
 					store.set(persona.id, refusedKey(id), null);
-					store.set(persona.id, calledOffKey(id), null);
+					told(id, owed.ids);
 				}
 				if (planning && turn.plan !== undefined) applyPlan(id, turn.plan, writtenAt);
 				if (action === 'block') {
@@ -925,15 +956,17 @@ export function createBrain({
 			const yourLast = history.findLast((m) => m.direction === 'out');
 			const photos = history.some((m) => m.media?.images.length);
 			const links = history.some((m) => m.media?.links.length);
-			// Why it may text them: a follow-up's note, how long they have been quiet, or what it is just back from
+			// Why it may text them: a follow-up's note, how long they have been quiet, what it is just back from, or what it
+			// owes them now (every plan it called off on them meanwhile too; none left, the one it was planned for)
 			const quietFor = now() - (history.at(-1)?.at ?? person.lastInAt);
+			const owed = opener.kind === 'apology' ? owedTo(person.id) : { plans: [], ids: [] };
 			const reason =
 				opener.kind === 'followUp'
 					? followUpReasonPrompt(person.name, opener.about)
 					: opener.kind === 'checkIn'
 						? checkInReasonPrompt(person.name, quietFor)
 						: opener.kind === 'apology'
-							? apologyReasonPrompt(person.name, opener.about)
+							? apologyReasonPrompt(person.name, owed.plans.length ? owed.plans : [opener.about])
 							: shareReasonPrompt(person.name, opener.about);
 			const task = openerTask({
 				selfNotes: selfNotes(),
@@ -967,8 +1000,8 @@ export function createBrain({
 				kept = true;
 				if (parsed.notes !== undefined) store.updatePerson(person.id, { summary: clip(parsed.notes, settings.memory.personNotes) });
 				if (parsed.self !== undefined) store.set(persona.id, 'selfNotes', clip(parsed.self, settings.memory.selfNotes));
-				// The apology sent: the plans it called off on them are told (one it chose not to send leaves them for their next turn)
-				if (opener.kind === 'apology' && reply) store.set(persona.id, calledOffKey(person.id), null);
+				// The apology sent: the plans it told of are told (one it chose not to send leaves them for their next turn)
+				if (reply) told(person.id, owed.ids);
 			};
 			return { messages: reply ? splitReply(reply, runtime.rng, settings.pacing) : [], action: 'none', keep };
 		},

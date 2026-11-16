@@ -264,7 +264,7 @@ lines say so, and afterwards it is back from it.
 - **Who puts plans in it.** The persona, in a DM turn: its answer's `plan` is a plan of its own, time it makes to chat
   with the person, or one of its plans called off by its number. The app, with `store.addEvent` (a holiday, a team
   day): those are its own to check, and only it calls them off.
-- **The guardrails**, which no setting relaxes (`checkPlan`, calendar.ts:171): the model only proposes. A plan of its
+- **The guardrails**, which no setting relaxes (`checkPlan`, calendar.ts:172): the model only proposes. A plan of its
   own has a short reason of plain words (never sleep or school, joined to other words, in other languages or look-alike
   letters too; never "them" or "their"), over no other plan of its own, at most `plans.perWeek` a week; time made to chat lies
   between 7 AM and midnight, over no busy block, never makes the day's online time longer than its schedule's longest
@@ -289,8 +289,8 @@ lines say so, and afterwards it is back from it.
   `confidential` (sensitive, or they asked to keep it quiet), and gives the words anyone may hear ("at a friend's
   birthday"). Others hear its words as their relationship levels allow (`calendar.sharing`: a `personal` plan from
   "getting close", a `confidential` one only from "one of the people closest to you" and "really fond", told in
-  confidence so it would ask them to keep it to themselves), and its public words otherwise; group chats hear only
-  those. With `calendar.sharing.enabled` off, nobody else ever hears a plan's own words, nor whom time was made for.
+  confidence so it would ask them to keep it to themselves), and its public words otherwise; group chats hear an
+  `open` plan's words, and only the public words of the rest. With `calendar.sharing.enabled` off, nobody else ever hears a plan's own words, nor whom time was made for.
   Its notes about itself (`self`) are not held to this: the model writes them, every conversation reads them, and what
   one person told it could reach another through them.
 - **A plan it didn't keep.** The model may have promised what the code then refused ("sure, 3 tomorrow" while at

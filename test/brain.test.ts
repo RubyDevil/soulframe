@@ -1532,7 +1532,8 @@ describe('parseTurn: plan', () => {
 		expect(plan({ day: '2', from: ' 18:00', to: '22:00 ', busy: 'at the dentist' })).toEqual({ day: 2, from: '18:00', to: '22:00', busy: 'at the dentist' });
 		expect(plan({ day: 1, from: '15:00', to: '16:00', online: 'true' })).toEqual({ day: 1, from: '15:00', to: '16:00', online: true });
 		expect(plan({ cancel: '4' })).toEqual({ cancel: 4 });
-		// What may be told of a plan of its own, and whether it is a promise: kept when well formed, else left out
+		// What may be told of a plan of its own, and whether it is a promise: kept when well formed; a share it can't read,
+		// as the closest kept (confidential), and a promise written loosely ("yes") as one: never told wider than meant
 		expect(plan({ day: 2, from: '18:00', to: '22:00', busy: "at Jo's party", public: "at a friend's", share: 'confidential', withThem: 'true' })).toEqual({
 			day: 2,
 			from: '18:00',
@@ -1542,7 +1543,9 @@ describe('parseTurn: plan', () => {
 			share: 'confidential',
 			withThem: true,
 		});
-		expect(plan({ day: 2, from: '18:00', to: '22:00', busy: 'x', public: 4, share: 'secret', withThem: 'yes' })).toEqual({ day: 2, from: '18:00', to: '22:00', busy: 'x' });
+		expect(plan({ day: 2, from: '18:00', to: '22:00', busy: 'x', public: 4, share: 'secret', withThem: 'yes' })).toEqual({ day: 2, from: '18:00', to: '22:00', busy: 'x', share: 'confidential', withThem: true });
+		expect(plan({ day: 2, from: '18:00', to: '22:00', busy: 'x', share: 'Personal', withThem: 'no' })).toEqual({ day: 2, from: '18:00', to: '22:00', busy: 'x', share: 'personal' });
+		expect(plan({ day: 2, from: '18:00', to: '22:00', busy: 'x', share: '  ', withThem: false })).toEqual({ day: 2, from: '18:00', to: '22:00', busy: 'x' });
 		// A day that isn't whole is left for the code to refuse (and audit), not dropped unseen
 		expect(plan({ day: 1.5, from: '15:00', to: '16:00', online: true })).toEqual({ day: 1.5, from: '15:00', to: '16:00', online: true });
 		// No plan: none
@@ -1711,6 +1714,64 @@ describe('its calendar (settings.calendar)', () => {
 		// Sent: told
 		(await brain.composeOpener(sam.id, DM.chat, apology)).keep?.();
 		expect(store.get('robin', `calendarCalledOff:${sam.id}`)).toBeNull();
+	});
+
+	it('owes one apology for every plan called off on someone, never in place of a follow-up, and tells them only what a turn named', async () => {
+		const store = memoryStore(() => NOW);
+		const sam = known(store, 'sam', 'Sam', 0.25, 0.2);
+		const kim = known(store, 'kim', 'Kim', 0.85, 0.7);
+		const party = store.addEvent('robin', { kind: 'busy', day: SATURDAY, from: 18 * 60, to: 22 * 60, what: "at Jo's party", personId: sam.id, source: 'persona', withThem: true });
+		const call = store.addEvent('robin', { kind: 'online', day: { ...SATURDAY, day: 18 }, from: 15 * 60, to: 16 * 60, personId: sam.id, source: 'persona' });
+		const settings = settingsOf({ calendar: { enabled: true }, initiative: { enabled: true } });
+		const { brain, seen, say } = robinFor(settings, [{ reply: 'ok', plan: { cancel: party.id } }, { reply: 'ok', plan: { cancel: call.id } }, { reply: 'sorry sam!!' }], store);
+		const PARTY = 'Saturday, October 17, 6:00 PM to 10:00 PM: "at Jo\'s party"';
+		const CALL = 'Sunday, October 18, 3:00 PM to 4:00 PM: time you made to chat with them';
+		await say('kim', 'Kim', 'skip the party?');
+		expect(store.pendingOpener(sam.id)).toMatchObject({ kind: 'apology', about: PARTY });
+		// A second one before it goes: one apology for both, until the last is over
+		await say('kim', 'Kim', 'and sunday too?');
+		const apology = store.pendingOpener(sam.id)!;
+		expect(apology).toMatchObject({ kind: 'apology', about: `${PARTY}; ${CALL}`, expiresAt: zonedToUtc({ ...SATURDAY, day: 18 }, 16 * 60, 'America/Toronto') });
+		const opener = await brain.composeOpener(sam.id, DM.chat, apology);
+		expect(seen[2]).toContain(`You called off plans with Sam for something else, and they don't know yet: ${PARTY}; ${CALL}. Text them`);
+		// Another called off while it was written stays owed: sending it tells them of only those it named
+		const later = store.addEvent('robin', { kind: 'online', day: { ...SATURDAY, day: 19 }, from: 15 * 60, to: 16 * 60, personId: sam.id, source: 'persona' });
+		store.cancelEvent(later.id, kim.id);
+		const owed = JSON.parse(store.get('robin', `calendarCalledOff:${sam.id}`)!);
+		store.set('robin', `calendarCalledOff:${sam.id}`, JSON.stringify([...owed, { id: later.id, start: NOW + 4 * DAY, end: NOW + 4 * DAY + HOUR, kind: 'online', what: '' }]));
+		opener.keep?.();
+		expect(JSON.parse(store.get('robin', `calendarCalledOff:${sam.id}`)!)).toEqual([expect.objectContaining({ id: later.id })]);
+		// A follow-up the model planned is its own: an apology never takes its place (their next turn tells them)
+		const followUp = store.planOpener('robin', sam.id, { kind: 'followUp', about: 'ask about the exam', dueAt: NOW + DAY, expiresAt: NOW + 2 * DAY });
+		const more = robinFor(settings, [{ reply: 'ok', plan: { day: 3, from: '19:00', to: '20:00', online: true } }], store);
+		store.addEvent('robin', { kind: 'online', day: SATURDAY, from: 19 * 60, to: 20 * 60, personId: sam.id, source: 'persona' });
+		await more.say('kim', 'Kim', 'saturday at 7?');
+		expect(store.pendingOpener(sam.id)).toMatchObject({ id: followUp.id, kind: 'followUp' });
+		expect(JSON.parse(store.get('robin', `calendarCalledOff:${sam.id}`)!)).toHaveLength(2);
+	});
+
+	it('lets a plan called off on someone go untold once it is two weeks past', async () => {
+		const store = memoryStore(() => NOW);
+		const sam = known(store, 'sam', 'Sam', 0.25, 0.2);
+		const old = { id: 1, start: NOW - 15 * DAY - HOUR, end: NOW - 15 * DAY, kind: 'online', what: '' };
+		const recent = { id: 2, start: NOW - 13 * DAY - HOUR, end: NOW - 13 * DAY, kind: 'busy', what: 'at the zoo with you' };
+		store.set('robin', `calendarCalledOff:${sam.id}`, JSON.stringify([old, recent]));
+		const { seen, say } = robinFor(CALENDAR, [], store);
+		await say('sam', 'Sam', 'hey');
+		expect(seen[0]).toContain('You called off a plan with them for something else, and they don\'t know yet: Thursday, October 1, 8:00 PM to 9:00 PM: "at the zoo with you". Tell them');
+		expect(store.get('robin', `calendarCalledOff:${sam.id}`)).toBeNull();
+	});
+
+	it('weighs closeness by the levels a conversation was shown while the level lists still hold them', async () => {
+		const store = memoryStore(() => NOW);
+		const sam = known(store, 'sam', 'Sam', 0.25, 0.2);
+		known(store, 'kim', 'Kim', 0.85, 0.7);
+		store.addEvent('robin', { kind: 'online', day: SATURDAY, from: 15 * 60, to: 16 * 60, personId: sam.id, source: 'persona' });
+		// Levels shown to Sam's conversation under longer lists than these: read from Sam's values instead
+		store.set('robin', `relationship:${sam.id}`, JSON.stringify({ conversation: sam.conversations, familiarity: 11, affinity: 11, trend: null, baseline: 0.25 }));
+		const { seen, say } = robinFor(CALENDAR, [], store);
+		await say('kim', 'Kim', 'hey');
+		expect(seen[0]).toContain("time you made to chat with Sam (you're closer to Kim than to Sam)");
 	});
 
 	it("tells someone close enough the words and the name of a plan made with someone else, by its share, and no one with sharing off", async () => {

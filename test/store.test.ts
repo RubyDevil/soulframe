@@ -268,10 +268,13 @@ describe('forgetting and resetting', () => {
 	it('keeps the ended people of a persona and their audit lines, unless includeEnded', () => {
 		const { store, ana, bo } = populated();
 		store.updatePerson(bo.id, { state: 'blocked' });
+		// A promise to Bo broken for Ana: kept about Bo, without Ana
+		store.audit('robin', 'plan_called_off', { personId: bo.id, eventId: 1, for: ana.id });
 		expect(store.resetPersona('robin')).toEqual({ people: 1, messages: 2 });
 		expect(store.personById(bo.id).state).toBe('blocked');
 		expect(store.history(bo.id)).toHaveLength(2);
-		expect(store.auditLog('robin').map((row) => row.detail.personId)).toEqual([bo.id]);
+		expect(store.auditLog('robin').map((row) => row.detail.personId)).toEqual([bo.id, bo.id]);
+		expect(store.auditLog('robin')[0]!.detail).toEqual({ personId: bo.id, eventId: 1 });
 		expect(() => store.personById(ana.id)).toThrow();
 		expect(store.resetPersona('robin', { includeEnded: true })).toEqual({ people: 1, messages: 2 });
 		expect(store.auditLog('robin')).toEqual([]);
@@ -445,12 +448,24 @@ describe('calendar events', () => {
 		at = 5_000;
 		store.cancelEvent(party.id, kim.id);
 		store.cancelEvent(call.id, kim.id);
-		// Called off with Sam, or by the app: no promise broken for someone else
+		// Called off with Sam, or by the app: no promise broken for someone else; nor a plan only told them
 		store.cancelEvent(own.id, sam.id);
+		const told = store.addEvent('robin', { kind: 'busy', day: saturday, from: 600, to: 700, what: 'at the gym', personId: sam.id, source: 'persona' });
+		store.cancelEvent(told.id, kim.id);
 		expect(store.eventById(party.id)?.cancelledBy).toBe(kim.id);
 		expect(store.calledOffOn('robin', sam.id, 0)).toBe(2);
 		expect(store.calledOffOn('robin', sam.id, 6_000)).toBe(0);
 		expect(store.calledOffOn('robin', kim.id, 0)).toBe(0);
+		// Time made for them, broken for someone else, is no time they had (`unbroken`); called off with them, it is
+		expect(store.eventsMadeSince('robin', 0, { kind: 'online', personId: sam.id })).toBe(2);
+		expect(store.eventsMadeSince('robin', 0, { kind: 'online', personId: sam.id, unbroken: true })).toBe(1);
+		// Kim forgotten: Sam was still let down, for someone forgotten, and the audit keeps it without Kim
+		store.audit('robin', 'plan_called_off', { personId: sam.id, eventId: party.id, for: kim.id });
+		store.forgetPerson(kim.id);
+		expect(store.eventById(party.id)?.cancelledBy).toBe(0);
+		expect(store.calledOffOn('robin', sam.id, 0)).toBe(2);
+		expect(store.eventsMadeSince('robin', 0, { kind: 'online', personId: sam.id, unbroken: true })).toBe(1);
+		expect(store.auditLog('robin')).toEqual([expect.objectContaining({ kind: 'plan_called_off', detail: { personId: sam.id, eventId: party.id } })]);
 	});
 
 	it('adds the columns plans gained to a calendar made before them', () => {

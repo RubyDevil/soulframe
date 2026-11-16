@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calendarHours, checkPlan, closerOf, comingPlans, isPromise, sightOf, toOthers, type PlanProposal } from '../src/calendar.js';
+import { calendarHours, checkPlan, closerOf, comingPlans, heardOf, isPromise, sightOf, toOthers, type PlanProposal } from '../src/calendar.js';
 import { ScheduleSchema } from '../src/config/hours.js';
 import { agendaOn, parseClock, spanAt, zonedToUtc, type Hours } from '../src/schedule.js';
 import { DAY, MINUTE } from '../src/settings.js';
@@ -288,6 +288,38 @@ describe('checkPlan: time made to chat (online)', () => {
 		expect(check({ ...over, from: '16:00', to: '18:00' })).toMatchObject({ add: {}, bumped: [] });
 	});
 
+	it('makes time over a plan with someone it breaks as the day will be without it, and lets whom it broke it on have time again soon', () => {
+		const { add, check, checkFor, store, sam, kim, close } = setUp();
+		close(kim.id, 6);
+		// Saturday evening: a party with Sam (a promise), and Kim, closer, wants that time: the day is checked without the party
+		const party = add({ ...dinner, busy: 'at your party', withThem: true });
+		const over = { ...call, day: 5, from: '19:00', to: '20:00' };
+		expect(checkFor(kim.id, over)).toMatchObject({ add: { kind: 'online', personId: kim.id }, bumped: [party] });
+		// Sunday: time made with Sam, broken for Kim, as the brain does it
+		const time = add(call);
+		const checked = checkFor(kim.id, { ...call, from: '15:00', to: '15:30' });
+		expect(checked).toMatchObject({ bumped: [time] });
+		store.cancelEvent(time.id, kim.id);
+		// Sam may have time again within makeTime.perPersonDays: making up for it is no new favour
+		const again = { ...call, day: 7, from: '17:00', to: '18:00' };
+		expect(check(again)).toMatchObject({ add: { kind: 'online', personId: sam.id } });
+		// But time they called off themselves still counts
+		const own = add(again);
+		store.cancelEvent(own.id);
+		expect(check({ ...again, from: '18:00', to: '19:00' })).toMatchObject({ refused: 'too_soon' });
+	});
+
+	it("counts a day's online time without the time it breaks, toward one made time's worth over its longest day", () => {
+		const { add, checkFor, store, kim, close } = setUp();
+		close(kim.id, 6);
+		// Saturday: the app's four hours online, and two made with Sam: its longest day (4 hours) and 2 more, the most
+		store.addEvent('robin', { kind: 'online', day: { year: 2026, month: 11, day: 21 }, from: 13 * 60, to: 17 * 60 });
+		const time = add({ ...call, day: 5, from: '10:00', to: '12:00' });
+		expect(checkFor(kim.id, { ...call, day: 5, from: '18:00', to: '19:00' })).toMatchObject({ refused: 'too_much' });
+		// Over half of Sam's: without it, the day holds Kim's two hours and the app's four
+		expect(checkFor(kim.id, { ...call, day: 5, from: '11:00', to: '13:00' })).toMatchObject({ add: { personId: kim.id }, bumped: [time] });
+	});
+
 	it('breaks a busy plan with someone only as a promise: one only told to them is no promise, and refused as a clash', () => {
 		const { add, checkFor, kim } = setUp();
 		const party = add({ ...dinner, busy: "at Jo's party", withThem: true });
@@ -459,8 +491,12 @@ describe('calendarHours and comingPlans', () => {
 		expect(sightOf({}, undefined, sharing)).toBe('full');
 		expect(sightOf(plan('confidential'), { id: 1, familiarity: 0 }, sharing)).toBe('full');
 		expect(sightOf(plan('open'), undefined, sharing)).toBe('full');
-		// A group chat knows no one: only what anyone may hear
+		// A group chat knows no one: what anyone may hear (an open plan's words, the rest's public words)
 		expect(sightOf(plan('personal'), undefined, sharing)).toBe('public');
+		expect(sightOf(plan('confidential'), undefined, sharing)).toBe('public');
+		const party = { reason: 'at your party', madeWith: 1, public: 'at a party' };
+		expect(heardOf({ ...party, share: 'open' }, undefined, sharing, () => 'Sam')).toEqual({ words: "at Sam's party" });
+		expect(heardOf({ ...party, share: 'personal' }, undefined, sharing, () => 'Sam')).toEqual({ words: 'at a party' });
 		expect(sightOf(plan('personal'), { id: 2, familiarity: 0.32 }, sharing)).toBe('public');
 		expect(sightOf(plan('personal'), { id: 2, familiarity: 0.48 }, sharing)).toBe('full');
 		expect(sightOf({ madeWith: 1 }, { id: 2, familiarity: 0.48 }, sharing)).toBe('full');

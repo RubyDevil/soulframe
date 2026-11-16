@@ -70,8 +70,9 @@ export type Sight = 'full' | 'confidence' | 'public';
 /**
  * What a prompt for `viewer` may tell of a plan (`madeWith`: the person it was made with in a DM turn, its words
  * theirs): all of it to them, of the routine and the app's; of one made with someone else, with sharing on, its words
- * as its `share` allows at the viewer's levels (settings.calendar.sharing; none in a group chat), else its public
- * words. Sharing off, nobody else ever hears its own words.
+ * as its `share` allows at the viewer's levels (settings.calendar.sharing): an `open` one's to anyone, a group chat's
+ * too (no viewer), the others' only to someone close enough; else its public words. Sharing off, nobody else ever
+ * hears its own words.
  */
 export function sightOf(plan: { madeWith?: number; share?: Share }, viewer: Viewer | undefined, sharing: Settings['calendar']['sharing']): Sight {
 	if (plan.madeWith === undefined || plan.madeWith === viewer?.id) return 'full';
@@ -228,22 +229,22 @@ export function checkPlan(
 		const { maxMinutes, perPersonDays } = settings.makeTime;
 		if (minutes > maxMinutes) return refusedAt('too_long');
 		if (from < MAKE_TIME_FROM || to > MAKE_TIME_TO) return refusedAt('night');
-		const agenda = agendaOn(hours, day);
-		// The day before's blocks may run into it: a night shift until 8 AM
-		const before = agendaOn(hours, addDays(day, -1));
+		// Promises to others then that this one calls off (time made with someone else is one-on-one time); one it may not, refused
 		const bumped = new Map<number, StoredEvent>();
-		for (const busy of [...before.busy, ...agenda.busy].filter(overlaps(block))) {
-			const event = busy.event === undefined ? undefined : store.eventById(busy.event);
-			if (event && bumpable(event)) bumped.set(event.id, event);
-			else return refusedAt('busy', busy);
+		for (const event of over.filter((event) => isPromise(event) && event.personId !== personId)) {
+			if (bumpable(event)) bumped.set(event.id, event);
+			else if (event.kind === 'online') return refusedAt('clash_online');
 		}
-		// Time made to chat with someone else then: one-on-one time, called off for this one, or refused
-		for (const event of over.filter((event) => event.kind === 'online' && isPromise(event) && event.personId !== personId)) {
-			if (!bumpable(event)) return refusedAt('clash_online');
-			bumped.set(event.id, event);
-		}
+		// The day as it will be once they are called off: what lay under them (work, a night shift) comes back
+		const rest: Hours = { ...hours, events: (from, to) => (hours.events?.(from, to) ?? []).filter((event) => !bumped.has(event.id)) };
+		const agenda = agendaOn(rest, day);
+		// The day before's blocks may run into it: a night shift until 8 AM
+		const before = agendaOn(rest, addDays(day, -1));
+		const busy = [...before.busy, ...agenda.busy].find(overlaps(block));
+		if (busy) return refusedAt('busy', busy);
 		const add = { add: { kind: 'online' as const, day, from, to, personId, source: 'persona' as const }, bumped: [...bumped.values()] };
-		const soon = store.eventsMadeSince(hours.id, now - perPersonDays * DAY, { kind: 'online', personId }) > 0;
+		// Time made for them lately (not that called off for someone else: making that up is no new favour)
+		const soon = store.eventsMadeSince(hours.id, now - perPersonDays * DAY, { kind: 'online', personId, unbroken: true }) > 0;
 		// Online on one channel only is time it may still make for every channel (the person's may not be one)
 		const already = covered(block, joinedOnline([...before.spans, ...agenda.spans], { everywhere: true }));
 		// Online then anyway, it adds nothing, but keeps the promise: no plan of its own can take that time now. Too soon for

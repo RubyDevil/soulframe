@@ -574,8 +574,10 @@ audited, one that doesn't fit. DM turns and openers list its coming plans, and i
 | `sharing.confidential.familiarity` | number, 0 to 1 | `0.82` | From which familiarity level (the shipped "one of the people closest to you") someone hears a `confidential` plan's words, told in confidence. |
 | `sharing.confidential.affinity` | number, -1 to 1 | `0.6` | And from which affinity level (the shipped "really fond"), while affinity is kept. |
 
-`sharing.personal` or `sharing.confidential` set to `false` shares those plans with nobody. The thresholds read best at
-a level's `from`, as `relationship.familiarity.levels` and `relationship.affinity.levels` set them.
+`sharing.personal` or `sharing.confidential` set to `false` shares those plans with nobody. A key left out keeps its
+default, so `confidential: { familiarity: 0.9 }` keeps its affinity of `0.6`; `affinity: -1` drops the affinity gate.
+The thresholds read best at a level's `from`, as `relationship.familiarity.levels` and `relationship.affinity.levels`
+set them.
 
 What the code checks, whatever the settings say:
 
@@ -600,7 +602,7 @@ What the code checks, whatever the settings say:
 - a promise to someone (time made to chat with them, or a plan the model marked as with or for them) is called off in
   a turn with someone else, by its number or by a plan over it, only when that person is not less close to it than the
   one it was made with (their familiarity and, while it is kept, affinity levels, summed: one level apart is about as
-  close). The one it was broken for is told, at their next turn, and by an apology while texting first is on;
+  close). The one it was broken on is told, at their next turn, and by an apology while texting first is on;
 - a plan made with someone who then ends it (stops, blocks it, is denied) no longer stands: nobody is left to call it
   off with.
 
@@ -609,8 +611,8 @@ Each outcome is audited: `plan_added`, `plan_cancelled`, `plan_called_off` (a pr
 next turn with that person (when it was for, and why), so a promise the model made can be put right.
 
 What others hear of a plan made with someone is its own words as its `share` (chosen by the model) and their levels
-allow (`sharing`), else its public words, also chosen by the model; group chats, with no one person, hear only the
-public words. A `confidential` plan is told in confidence: the model is told so, and to ask them to keep it to
+allow (`sharing`), else its public words, also chosen by the model; group chats, with no one person, hear an `open`
+plan's words and only the public words of the rest. A `confidential` plan is told in confidence: the model is told so, and to ask them to keep it to
 themselves. The persona's notes about itself (`self`), written by the model and read in every conversation, are not
 held to this: what one person told it could still reach another through them. Interruptions (`pacing.interruptions`)
 stay those of its routine.
