@@ -1733,7 +1733,7 @@ describe('its calendar (settings.calendar)', () => {
 		const apology = store.pendingOpener(sam.id)!;
 		expect(apology).toMatchObject({ kind: 'apology', about: `${PARTY}; ${CALL}`, expiresAt: zonedToUtc({ ...SATURDAY, day: 18 }, 16 * 60, 'America/Toronto') });
 		const opener = await brain.composeOpener(sam.id, DM.chat, apology);
-		expect(seen[2]).toContain(`You called off plans with Sam for something else, and they don't know yet: ${PARTY}; ${CALL}. Text them`);
+		expect(seen[2]).toContain(`You called off plans with Sam for something else, and they don't know yet: ${PARTY}; ${CALL}. Text them to tell them of each`);
 		// Another called off while it was written stays owed: sending it tells them of only those it named
 		const later = store.addEvent('robin', { kind: 'online', day: { ...SATURDAY, day: 19 }, from: 15 * 60, to: 16 * 60, personId: sam.id, source: 'persona' });
 		store.cancelEvent(later.id, kim.id);

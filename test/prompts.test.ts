@@ -845,11 +845,12 @@ describe('the calendar (planField, calendarPrompt)', () => {
 			"You called off a plan with them for something else, and they don't know yet: Sunday, November 22, 3:00 PM to 4:00 PM: time you made to chat with them. Tell them in this reply and say sorry, in your own words; what came up is yours to tell or not.",
 		);
 		expect(calledOffPrompt([call, party])).toContain('You called off plans with them for something else');
+		expect(calledOffPrompt([call, party])).toContain('. Tell them of each in this reply and say sorry');
 		expect(apologyReasonPrompt('Sam', [call])).toBe(
 			"You called off a plan with Sam for something else, and they don't know yet: Sunday, November 22, 3:00 PM to 4:00 PM: time you made to chat with them. Text them to tell them and say sorry, in your own words; what came up is yours to tell or not.",
 		);
 		expect(apologyReasonPrompt('Sam', [call, party])).toBe(
-			"You called off plans with Sam for something else, and they don't know yet: Sunday, November 22, 3:00 PM to 4:00 PM: time you made to chat with them; Sunday, November 22, 3:00 PM to 5:00 PM: \"at Jo's party\". Text them to tell them and say sorry, in your own words; what came up is yours to tell or not.",
+			"You called off plans with Sam for something else, and they don't know yet: Sunday, November 22, 3:00 PM to 4:00 PM: time you made to chat with them; Sunday, November 22, 3:00 PM to 5:00 PM: \"at Jo's party\". Text them to tell them of each and say sorry, in your own words; what came up is yours to tell or not.",
 		);
 	});
 });

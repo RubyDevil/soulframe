@@ -646,7 +646,7 @@ export const calledOffText = ({ start, end, kind, what }: { start: number; end: 
  * turn with them, once: to tell them and say sorry, in its own words, what came up its own to tell or not.
  */
 export const calledOffPrompt = (plans: readonly string[]) =>
-	`You called off ${plans.length > 1 ? 'plans' : 'a plan'} with them for something else, and they don't know yet: ${plans.join('; ')}. Tell them in this reply and say sorry, in your own words; what came up is yours to tell or not.`;
+	`You called off ${plans.length > 1 ? 'plans' : 'a plan'} with them for something else, and they don't know yet: ${plans.join('; ')}. Tell them${plans.length > 1 ? ' of each' : ''} in this reply and say sorry, in your own words; what came up is yours to tell or not.`;
 
 /**
  * The answer format of a DM turn: one JSON object with the reply (or none), the rewritten notes, and an
@@ -813,7 +813,7 @@ export const checkInReasonPrompt = (personName: string, quietMs: number) =>
 
 /** Why it may text them first, to say sorry: the plans with them it called off for something else (`calledOffText` each), which they don't know of yet. */
 export const apologyReasonPrompt = (personName: string, plans: readonly string[]) =>
-	`You called off ${plans.length > 1 ? 'plans' : 'a plan'} with ${personName} for something else, and they don't know yet: ${plans.join('; ')}. Text them to tell them and say sorry, in your own words; what came up is yours to tell or not.`;
+	`You called off ${plans.length > 1 ? 'plans' : 'a plan'} with ${personName} for something else, and they don't know yet: ${plans.join('; ')}. Text them to tell them${plans.length > 1 ? ' of each' : ''} and say sorry, in your own words; what came up is yours to tell or not.`;
 
 /** Why it may text them first, sharing its day: the busy block it is just back from (its reason, as `busyText` says it). */
 export const shareReasonPrompt = (personName: string, reason: string) =>

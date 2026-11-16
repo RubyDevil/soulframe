@@ -925,14 +925,15 @@ You're just back: until a moment ago you were at the gym. If something about it 
 
 ```ts
 export const apologyReasonPrompt = (personName: string, plans: readonly string[]) =>
-	`You called off ${plans.length > 1 ? 'plans' : 'a plan'} with ${personName} for something else, and they don't know yet: ${plans.join('; ')}. Text them to tell them and say sorry, in your own words; what came up is yours to tell or not.`;
+	`You called off ${plans.length > 1 ? 'plans' : 'a plan'} with ${personName} for something else, and they don't know yet: ${plans.join('; ')}. Text them to tell them${plans.length > 1 ? ' of each' : ''} and say sorry, in your own words; what came up is yours to tell or not.`;
 ```
 
 To say sorry: the plans with them it called off for someone else (`calledOffText` each), as an `apology` opener while
 texting first is on (planned at once, given up once the last of them is over). One apology covers all it owes them: a
 second plan called off before it goes replaces it with one for both, and it never replaces a follow-up the model
 planned (their next turn tells them then). It names what they still don't know as it goes, and sending it tells them
-of only those. What came up is its own to tell or not. Rendered:
+of only those; with more than one, it asks to tell them of each (measured live with two owed: both named 15 times in
+15, against 9 in 11 without). What came up is its own to tell or not. Rendered:
 
 ```text
 You called off a plan with Sam for something else, and they don't know yet: Sunday, November 22, 3:00 PM to 4:00 PM: time you made to chat with them. Text them to tell them and say sorry, in your own words; what came up is yours to tell or not.
@@ -1072,7 +1073,7 @@ Your calendar didn't take the plan you made last time (Thursday, November 19, 3:
 export const calledOffText = ({ start, end, kind, what }: { start: number; end: number; kind: ComingPlan['kind']; what: string }, timeZone: string) =>
 	`${dateTimeText(start, timeZone)} to ${clockText(end, timeZone)}: ${kind === 'online' ? MADE_TIME.them : JSON.stringify(what)}`;
 export const calledOffPrompt = (plans: readonly string[]) =>
-	`You called off ${plans.length > 1 ? 'plans' : 'a plan'} with them for something else, and they don't know yet: ${plans.join('; ')}. Tell them in this reply and say sorry, in your own words; what came up is yours to tell or not.`;
+	`You called off ${plans.length > 1 ? 'plans' : 'a plan'} with them for something else, and they don't know yet: ${plans.join('; ')}. Tell them${plans.length > 1 ? ' of each' : ''} in this reply and say sorry, in your own words; what came up is yours to tell or not.`;
 ```
 
 A promise to someone (time made to chat with them, or a plan with or for them) called off in a turn with someone else
