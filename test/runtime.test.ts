@@ -1713,6 +1713,31 @@ describe('someone who writes in bursts (pacing.burst)', () => {
 		}
 	});
 
+	it('notices the first of two newer messages in its lag: the second never puts that off', async () => {
+		const run = start();
+		vi.spyOn(run.brain, 'compose').mockResolvedValueOnce({ messages: ['x'.repeat(70)], action: 'none' });
+		const events: string[] = [];
+		const conversation: Conversation = {
+			channel: NOTED_DM,
+			typing: async (on) => void events.push(`typing ${on ? 'on' : 'off'} @${Date.now() - EVENING}`),
+			send: async (text) => void events.push(`send ${text} @${Date.now() - EVENING}`),
+		};
+		const say = (text: string) => run.queue.handle(run.brain.incoming(NOTED_DM, 'user-1', 'Sam', text), conversation, text);
+		try {
+			await say('hi');
+			await vi.advanceTimersByTimeAsync(10_000 - 1);
+			await say('one more thing');
+			await vi.advanceTimersByTimeAsync(1_000);
+			await say('and another');
+			await vi.advanceTimersByTimeAsync(MINUTE);
+			// Noticed 2 s after the first (with this rng), not 2 s after the second
+			expect(events.slice(0, 2)).toEqual(['typing on @5000', 'typing off @11999']);
+			expect(sentTo(run.store)).toEqual(['hey you']);
+		} finally {
+			run.close();
+		}
+	});
+
 	it('stops typing a draft that starts over once it notices the newer message, not when the draft would have been typed', async () => {
 		const run = start();
 		vi.spyOn(run.brain, 'compose').mockResolvedValueOnce({ messages: ['x'.repeat(70)], action: 'none' });

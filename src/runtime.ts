@@ -330,7 +330,8 @@ export function createReplyQueue({
 	 */
 	const typingWait = (state: TurnState, ms: number) =>
 		new Promise<void>((resolve) => {
-			const end = runtime.now() + ms;
+			/** When the wait ends: its end, or sooner once it noticed a newer message (a later one never puts that off). */
+			let due = runtime.now() + ms;
 			const done = () => {
 				timers.clearTimeout(timer);
 				if (state.notice === notice) state.notice = undefined;
@@ -339,7 +340,8 @@ export function createReplyQueue({
 			let timer = timers.setTimeout(done, ms);
 			const notice = () => {
 				const lag = watchingMs(runtime.rng, pacing);
-				if (runtime.now() + lag >= end) return;
+				if (runtime.now() + lag >= due) return;
+				due = runtime.now() + lag;
 				timers.clearTimeout(timer);
 				timer = timers.setTimeout(done, lag);
 			};
