@@ -45,14 +45,16 @@ export const refuseSchool = ({ schedule }: { schedule?: { days: Record<string, {
 	}
 };
 
-/** Words of time spent talking: a busy plan is time away from the phone, never time with them in the chat it came from. */
-const TALK_WORDS = /\b(?:online|chat(?:ting)?|text(?:ing)?|messag(?:e|es|ing)|with (?:them|you))\b/i;
+/** Words of time spent talking: a busy plan is time away from the phone, never time with them in the chat it came from (dinner with them is a plan; chatting with them is not). */
+const TALK_WORDS = /\b(?:online|chat(?:ting)?|text(?:ing)?|messag(?:e|es|ing))\b/i;
 
 /**
- * Words that point at someone in the conversation a plan came from ("at your party", "at ur place"): its words are
- * shown only in turns with that person, but kept to ones that read the same anywhere.
+ * The words a plan's own words may call the person it was made with by, in their chat ("at your party", "at ur place"):
+ * calendar.ts `toOthers` names them for anyone else who may hear them. Only the second person, which means them there.
  */
-const ADDRESS_WORDS = /\b(?:you|your|yours|yourself|u|ur|ya|them|their|theirs|themselves)\b/i;
+export const ADDRESSED = /\b(?:you|your|yours|yourself|u|ur|ya)\b/gi;
+/** Words that point at someone of the conversation a plan came from, but not surely at whom (their party: theirs, or another's). */
+const THIRD_PERSON = /\b(?:them|their|theirs|themselves)\b/i;
 
 /**
  * A plan's words as its checks read them: look-alike letters as the plain ones (fullwidth, bold), accents off, so "ｓｃｈｏｏｌ"
@@ -70,11 +72,12 @@ const PLAN_SCHOOL_WORDS =
 /**
  * Why the reason of a plan the persona made itself (calendar.ts) is refused, or null: it completes "you're ..." as a
  * busy reason does, never sleep and never school (in any conversation: what the model writes is held to the strictest),
- * never talking with them (`online`: a busy plan is offline time), never pointing at someone of the conversation it
- * came from (`person`), and only words, in one short line (Latin letters once read plain, `plainOf`, digits, spaces, and
- * , . ' ’ & -): a few plain words at most, which every prompt quotes as data (prompts.ts busyText).
+ * never talking with them (`online`: a busy plan is offline time), never "them" or "their" (`person`: whom they meant
+ * is not sure), nor, in words for anyone (`addressed` false: its public words), "you" or "your" (`ADDRESSED`), and only
+ * words, in one short line (Latin letters once read plain, `plainOf`, digits, spaces, and , . ' ’ & -): a few plain
+ * words at most, which every prompt quotes as data (prompts.ts busyText).
  */
-export const planReasonProblem = (reason: string): string | null => {
+export const planReasonProblem = (reason: string, { addressed = false }: { addressed?: boolean } = {}): string | null => {
 	const text = reason.trim();
 	if (text.length < 2 || text.length > 40) return 'length';
 	const plain = plainOf(text);
@@ -82,7 +85,7 @@ export const planReasonProblem = (reason: string): string | null => {
 	if (SLEEP_WORDS.test(plain) || PLAN_SLEEP_WORDS.test(plain)) return 'sleep';
 	if (SCHOOL_WORDS.test(plain) || PLAN_SCHOOL_WORDS.test(plain)) return 'school';
 	if (TALK_WORDS.test(plain)) return 'online';
-	if (ADDRESS_WORDS.test(plain)) return 'person';
+	if (THIRD_PERSON.test(plain) || (!addressed && new RegExp(ADDRESSED.source, 'i').test(plain))) return 'person';
 	return null;
 };
 

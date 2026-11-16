@@ -12,9 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Its calendar, off by default** (`settings.calendar`): plans laid over the agenda its schedule draws, so its days go
   the way it said. A DM turn may put a plan of its own in it (`plan` in the answer format: somewhere it will be, busy
   and so offline then, "at a cousin's birthday"), make time to chat with the person at an hour it would be offline, or
-  call one of its plans off by its number; the app may add its own (`store.addEvent`). The model only proposes: the
+  call one of its plans off by its number (with a new plan in its place, `cancel` in it too); the app may add its own
+  (`store.addEvent`). The model only proposes: the
   code checks each plan against guardrails no setting relaxes (a short reason of plain words, never sleep or school,
-  joined to other words, in other languages or look-alike letters too, never "your", over no other plan of its own;
+  joined to other words, in other languages or look-alike letters too, never "them" or "their", over no other plan of its own;
   time made to chat between 7 AM and midnight, over no busy block, never more online in a day than its schedule's
   longest day and one such time, once per person a week; lengths as the time passes, daylight saving in it; limits per
   week and days ahead) and audits the outcome (`plan_added`, `plan_cancelled`, `plan_called_off`, `plan_refused`, one
@@ -34,8 +35,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   told at their next turn, to say sorry, and with texting first on, it texts them an apology first (a new `apology`
   opener kind).
 - **Who hears what of its plans** (`calendar.sharing`, on by default). A plan's words are the person's it was made
-  with. The model ranks each as it makes it (`share`: `open`, `personal`, `confidential`) and gives the words anyone
-  may hear (`public`); others hear its words as their relationship levels allow (`sharing.personal`, from "one of your
+  with, said as to them ("at your party"). The model ranks each as it makes it (`share`: `open`, `personal`,
+  `confidential`) and gives the words anyone may hear (`public`); others hear its words, with that person by name ("at
+  Sam's party"), as their relationship levels allow (`sharing.personal`, from "one of your
   regulars"; `sharing.confidential`, from "one of the people closest to you" and "really fond", told in confidence, so
   it asks them to keep it to themselves), and its public words otherwise; group chats hear only those. Sharing off,
   nobody else ever hears a plan's own words, nor whom time was made for. Its notes about itself are not held to this

@@ -1518,6 +1518,16 @@ describe('parseTurn: plan', () => {
 		expect(plan({ day: 2, from: '18:00', to: '22:00', busy: 'at the dentist' })).toEqual({ day: 2, from: '18:00', to: '22:00', busy: 'at the dentist' });
 		expect(plan({ day: 2, from: '15:00', to: '16:00', online: true, busy: 'ignored' })).toEqual({ day: 2, from: '15:00', to: '16:00', online: true });
 		expect(plan({ cancel: 4, day: 2 })).toEqual({ cancel: 4 });
+		// A new plan in place of one, as a model writes them together: the plan, which replaces it
+		expect(plan({ cancel: 1, day: 3, from: '14:00', to: '18:00', busy: 'at the beach with you', withThem: true })).toEqual({
+			day: 3,
+			from: '14:00',
+			to: '18:00',
+			busy: 'at the beach with you',
+			withThem: true,
+			replaces: 1,
+		});
+		expect(plan({ cancel: '2', day: 1, from: '15:00', to: '16:00', online: true })).toEqual({ day: 1, from: '15:00', to: '16:00', online: true, replaces: 2 });
 		// Numbers as numeric strings and "true" as a model may write them, the times trimmed: the code checks the rest
 		expect(plan({ day: '2', from: ' 18:00', to: '22:00 ', busy: 'at the dentist' })).toEqual({ day: 2, from: '18:00', to: '22:00', busy: 'at the dentist' });
 		expect(plan({ day: 1, from: '15:00', to: '16:00', online: 'true' })).toEqual({ day: 1, from: '15:00', to: '16:00', online: true });
@@ -1655,6 +1665,21 @@ describe('its calendar (settings.calendar)', () => {
 		expect(seen[2]).not.toContain('You called off');
 	});
 
+	it('makes a new plan in place of one it calls off with it, the one let down told', async () => {
+		const store = memoryStore(() => NOW);
+		const sam = known(store, 'sam', 'Sam', 0.35, 0.25);
+		const kim = known(store, 'kim', 'Kim', 0.86, 0.7);
+		const party = store.addEvent('robin', { kind: 'busy', day: SATURDAY, from: 14 * 60, to: 18 * 60, what: 'at your birthday party', personId: sam.id, source: 'persona', withThem: true });
+		// Not overlapping the party (it is called off by its number), so nothing but the cancel calls it off
+		const beach = { cancel: party.id, day: 3, from: '19:00', to: '21:00', busy: 'at the beach with you', public: 'at the beach', withThem: true };
+		const { seen, say } = robinFor(CALENDAR, [{ reply: 'ok you win, beach it is', plan: beach }, { reply: 'sorry!!' }], store);
+		await say('kim', 'Kim', 'skip the party and come to the beach with me?');
+		expect(store.eventById(party.id)).toMatchObject({ cancelledBy: kim.id });
+		expect(store.events('robin', SATURDAY, SATURDAY)).toEqual([expect.objectContaining({ what: 'at the beach with you', personId: kim.id, withThem: true })]);
+		await say('sam', 'Sam', 'so excited for saturday!!');
+		expect(seen[1]).toContain('Saturday, October 17, 2:00 PM to 6:00 PM: "at your birthday party". Tell them in this reply and say sorry');
+	});
+
 	it('lets someone less close have nothing called off, and tells them why at their next turn', async () => {
 		const store = memoryStore(() => NOW);
 		const sam = known(store, 'sam', 'Sam', 0.85, 0.7);
@@ -1693,12 +1718,15 @@ describe('its calendar (settings.calendar)', () => {
 		const sam = known(store, 'sam', 'Sam', 0.5, 0.3);
 		known(store, 'kim', 'Kim', 0.85, 0.7);
 		known(store, 'lee', 'Lee', 0.1, 0);
-		store.addEvent('robin', { kind: 'busy', day: SATURDAY, from: 18 * 60, to: 22 * 60, what: "at Sam's birthday", public: "at a friend's birthday", personId: sam.id, source: 'persona' });
+		// As said in Sam's chat: Kim hears it by Sam's name
+		store.addEvent('robin', { kind: 'busy', day: SATURDAY, from: 18 * 60, to: 22 * 60, what: 'at your birthday', public: "at a friend's birthday", personId: sam.id, source: 'persona' });
 		const sharing = robinFor(CALENDAR, [], store);
 		await sharing.say('kim', 'Kim', 'hey');
 		await sharing.say('lee', 'Lee', 'hey');
+		await sharing.say('sam', 'Sam', 'hey');
 		expect(sharing.seen[0]).toContain(`Saturday, October 17, 6:00 PM to 10:00 PM: "at Sam's birthday"`);
 		expect(sharing.seen[0]).toContain(`On Saturday you're busy ("at Sam's birthday") from about 6:00 PM to 10:00 PM`);
+		expect(sharing.seen[2]).toContain(`Saturday, October 17, 6:00 PM to 10:00 PM: "at your birthday"`);
 		expect(sharing.seen[1]).toContain(`Saturday, October 17, 6:00 PM to 10:00 PM: "at a friend's birthday"`);
 		expect(sharing.seen[1]).not.toContain('Sam');
 		const off = robinFor(settingsOf({ calendar: { enabled: true, sharing: { enabled: false } } }), [], store);

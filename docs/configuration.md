@@ -586,8 +586,10 @@ What the code checks, whatever the settings say:
   plain ones, accents off), digits, spaces and `, . ' ’ & -` (a few plain words, which every prompt quotes as data),
   never sleep and never school (in any conversation; joined to other words, as "highschool" or "sleepover", and in
   the other languages most likely too), never talking with them ("online", "chatting": a busy plan is time away from
-  the phone), never "you", "your" or "their", and lies over no other plan, time made to chat included (a promise to
-  someone); over its routine it wins (an appointment cuts a work day in two);
+  the phone), never "them" or "their" (whose is not sure; "you" and "your" mean the person it was made with, and anyone
+  else who may hear it hears their name: "at Sam's party"), and lies over no other plan of its own; over its routine
+  it wins (an appointment cuts a work day in two); its public words, held to the same, never say "you" or "your"
+  either (else they are left out);
 - time made to chat lies between 7 AM and midnight, over no busy block (its routine's, one of the day before that runs
   into it, as a night shift until 8 AM, or a plan's), and never makes the day's online time longer than its
   schedule's longest day by more than `makeTime.maxMinutes`; at an hour it is online for every channel anyway it adds

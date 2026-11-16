@@ -6,7 +6,7 @@
  * app may add plans of its own (store.addEvent), which are its own to check.
  */
 
-import { planReasonProblem } from './config/hours.js';
+import { ADDRESSED, planReasonProblem } from './config/hours.js';
 import { addDays, agendaOn, CLOCK, localDateOf, onlineMinutesByWeekday, parseClock, zonedToUtc, type Busy, type CalendarEvent, type Hours, type LocalDate } from './schedule.js';
 import { DAY, MINUTE, type Settings } from './settings.js';
 import type { Store, StoredEvent } from './store.js';
@@ -28,11 +28,12 @@ export type Share = 'open' | 'personal' | 'confidential';
 /**
  * What a DM turn may answer in its `plan` field (brain.ts parseTurn), its times local "HH:MM" on its `day` (0 today).
  * A busy plan may carry how widely its words may be told (`share`), the words anyone may hear (`public`), and whether it
- * is with or for the person (`withThem`): a promise to them, as time made to chat always is.
+ * is with or for the person (`withThem`): a promise to them, as time made to chat always is. A new plan may take the
+ * place of one listed (`replaces`, its number): the brain calls that one off first, as a plan of its own.
  */
 export type PlanProposal =
-	| { day: number; from: string; to: string; busy: string; public?: string; share?: Share; withThem?: boolean }
-	| { day: number; from: string; to: string; online: true }
+	| { day: number; from: string; to: string; busy: string; public?: string; share?: Share; withThem?: boolean; replaces?: number }
+	| { day: number; from: string; to: string; online: true; replaces?: number }
 	| { cancel: number };
 
 /** What a refused plan clashed with: a busy block's reason ("at work"), the event it is when a plan made it, with whom that was made, and what of it may be told. */
@@ -81,6 +82,34 @@ export function sightOf(plan: { madeWith?: number; share?: Share }, viewer: View
 	if (!from || !viewer) return 'public';
 	const close = viewer.familiarity >= from.familiarity && (from.affinity === undefined || viewer.affinity === undefined || viewer.affinity >= from.affinity);
 	return !close ? 'public' : share === 'confidential' ? 'confidence' : 'full';
+}
+
+/**
+ * A plan's own words as someone other than whom it was made with hears them: "you" and "your" in them (`ADDRESSED`: the
+ * person in their own chat) said by their name ("at your party" becomes "at Sam's party").
+ */
+export const toOthers = (words: string, name: string) => words.replace(ADDRESSED, (word) => (/^(?:your|yours|ur)$/i.test(word) ? `${name}'s` : name));
+
+/** What a reader hears of a plan: its words (none: a plan of its own, unnamed), told in confidence or not. */
+export interface Heard {
+	words: string | undefined;
+	confidence?: true;
+}
+
+/**
+ * What `viewer` hears of a busy block (`sightOf`): its own words, as written to whom it was made with and by their name
+ * (`toOthers`, `nameOf`) to anyone else who may hear them, told in confidence when that is how; else its public words.
+ */
+export function heardOf(
+	busy: { reason: string; madeWith?: number; share?: Share; public?: string },
+	viewer: Viewer | undefined,
+	sharing: Settings['calendar']['sharing'],
+	nameOf: (personId: number) => string,
+): Heard {
+	const sight = sightOf(busy, viewer, sharing);
+	if (sight === 'public') return { words: busy.public };
+	const words = busy.madeWith === undefined || busy.madeWith === viewer?.id ? busy.reason : toOthers(busy.reason, nameOf(busy.madeWith));
+	return sight === 'confidence' ? { words, confidence: true } : { words };
 }
 
 /** A plan of the persona's that is a promise to someone: time made to chat with them, or a busy plan with or for them. */
@@ -231,7 +260,8 @@ export function checkPlan(
 
 	const { maxHours, perWeek } = settings.plans;
 	if (minutes > maxHours * 60) return refusedAt('too_long');
-	const problem = 'busy' in proposal ? planReasonProblem(proposal.busy) : 'missing';
+	// Its own words may speak to them ("at your party"): anyone else who may hear them hears their name (`toOthers`)
+	const problem = 'busy' in proposal ? planReasonProblem(proposal.busy, { addressed: true }) : 'missing';
 	if (problem) return refusedAt(`reason_${problem}`);
 	const bumped: StoredEvent[] = [];
 	for (const event of over) {
@@ -299,7 +329,9 @@ export function comingPlans(
 		.slice(0, settings.shown)
 		.map(({ event, start, end }) => {
 			const madeWith = event.source === 'persona' && event.personId !== null ? event.personId : undefined;
-			const sight = sightOf({ ...(madeWith !== undefined && { madeWith }), share: event.share }, viewer, settings.sharing);
+			const plan = { reason: event.what, ...(madeWith !== undefined && { madeWith }), share: event.share, ...(event.public && { public: event.public }) };
+			const sight = sightOf(plan, viewer, settings.sharing);
+			const heard = heardOf(plan, viewer, settings.sharing, (id) => store.personById(id).name);
 			const promised = isPromise(event) && madeWith !== viewer.id ? closerOf(closeness(viewer.id), closeness(madeWith!)) : null;
 			const cancellable = event.source === 'persona' && (event.kind === 'online' ? settings.makeTime : settings.plans).enabled && promised !== 'less';
 			return {
@@ -307,8 +339,8 @@ export function comingPlans(
 				start,
 				end,
 				kind: event.kind,
-				words: event.kind !== 'busy' ? null : sight === 'public' ? event.public : event.what,
-				confidence: sight === 'confidence',
+				words: event.kind !== 'busy' ? null : (heard.words ?? null),
+				confidence: event.kind === 'busy' && heard.confidence === true,
 				for:
 					event.kind === 'busy' || madeWith === undefined
 						? null

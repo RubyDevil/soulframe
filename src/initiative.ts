@@ -4,7 +4,7 @@
  * These guardrails apply whatever the settings say: the settings may only make it rarer.
  */
 
-import { sightOf } from './calendar.js';
+import { heardOf } from './calendar.js';
 import { busyText } from './prompts.js';
 import { weightedPick, type Rng } from './rng.js';
 import { addDays, agendaOn, localDateOf, zonedToUtc, type Busy, type Hours, type Span } from './schedule.js';
@@ -179,8 +179,8 @@ export function planShare({ store, persona, settings, span, now, rng, reachable 
 	const [chosen] = pickSome(rng, candidates, 1);
 	if (!chosen) return null;
 	const { person, viewer } = chosen;
-	// A plan made with someone else, as much of it as they may hear (calendar.ts sightOf), by the closeness it has with them
-	const about = busyText(busy, (block) => sightOf(block, viewer, settings.calendar.sharing));
+	// A plan made with someone else, as much of it as they may hear (calendar.ts heardOf), by the closeness it has with them
+	const about = busyText(busy, (block) => heardOf(block, viewer, settings.calendar.sharing, (id) => store.personById(id).name));
 	const opener = store.planOpener(persona.id, person.id, { kind: 'share', about, dueAt: now + rng() * (until - now), expiresAt: Math.min(span.end, span.start + 2 * JUST_BACK_MS) });
 	store.audit(persona.id, 'share_planned', { personId: person.id, about: busy.reason, dueAt: opener.dueAt });
 	return opener;

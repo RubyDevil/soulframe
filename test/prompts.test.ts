@@ -366,13 +366,13 @@ describe('the day (dayPrompt)', () => {
 		const plan = { ...busy("at Sam's birthday", tue, '08:52', '17:31'), event: 7, madeWith: 2, share: 'personal' as const };
 		const day = (see: See | undefined, of = plan) =>
 			dayPrompt({ ...onBreak, busy: of }, zone, { ...all, away: { since: at(tue, '12:16'), busy: of }, ahead: [{ day: wed, skipped: false, spans: [], busy: [{ ...of, day: wed }] }], ...(see && { see }) });
-		const whole = day(() => 'full');
+		const whole = day((busy) => ({ words: busy.reason }));
 		expect(whole).toContain(`These messages came in while you were busy ("at Sam's birthday") (from 12:16 PM)`);
 		expect(whole).toContain(`Right now you're busy ("at Sam's birthday"), on a short break`);
 		expect(whole).toContain(`Tomorrow you're busy ("at Sam's birthday") from about`);
-		expect(day(() => 'confidence')).toContain(`Right now you're busy ("at Sam's birthday", in confidence), on a short break`);
+		expect(day((busy) => ({ words: busy.reason, confidence: true }))).toContain(`Right now you're busy ("at Sam's birthday", in confidence), on a short break`);
 		// Not to be heard, with no reader (a group chat) as with one: its public words, else a plan of its own
-		for (const see of [undefined, (() => 'public') as See]) {
+		for (const see of [undefined, ((busy) => ({ words: busy.public })) as See]) {
 			const text = day(see);
 			expect(text).not.toContain('Sam');
 			expect(text).toContain("Right now you're busy with a plan of your own, on a short break");
@@ -381,9 +381,9 @@ describe('the day (dayPrompt)', () => {
 			expect(day(see, { ...plan, public: "at a friend's birthday" })).toContain(`Right now you're busy ("at a friend's birthday"), on a short break`);
 		}
 		// The routine's and the app's words are anyone's
-		expect(busyText({ reason: 'at the team day', event: 4 }, () => 'public')).toBe('busy with a plan of your own');
+		expect(busyText({ reason: 'at the team day', event: 4 }, () => ({ words: undefined }))).toBe('busy with a plan of your own');
 		expect(busyText({ reason: 'at the team day', event: 4 })).toBe('busy ("at the team day")');
-		expect(busyText({ reason: 'at work' }, () => 'public')).toBe('at work');
+		expect(busyText({ reason: 'at work' }, () => ({ words: undefined }))).toBe('at work');
 	});
 
 	it('leaves out exactly the part not shown, and the closing line once nothing is', () => {
@@ -725,7 +725,7 @@ describe('texting first (settings.initiative)', () => {
 describe('the calendar (planField, calendarPrompt)', () => {
 	const format = (plan?: Parameters<typeof directMessageAnswerFormat>[4]) => directMessageAnswerFormat({}, DEFAULT_SETTINGS.memory, true, undefined, plan);
 	const BUSY = (day = 3, sharing = true) =>
-		`When you tell them about a plan of your own that keeps you off your phone (a dentist appointment, dinner at a friend's on Friday): {"day": ${day}, "from": "18:00", "to": "22:00", "busy": "at Jo's birthday dinner", "public": "at a friend's for dinner",${sharing ? ' "share": "personal",' : ''} "withThem": false}: "busy", a few words that complete "you're …" (never "you", "your" or "their": your calendar is the same in every chat); "public", the same as anyone may hear it;${sharing ? ` "share", who else may hear "busy": "open" anyone, "personal" those you're close to (it names someone, their party), "confidential" only your closest, in confidence (something sensitive, or that they asked you to keep to yourself);` : ''} "withThem", true when it's with or for them (their party, a game night together), a promise to them. You're offline then, so never for time with them here.`;
+		`When you tell them about a plan of your own that keeps you off your phone (a dentist appointment, dinner at a friend's on Friday): {"day": ${day}, "from": "18:00", "to": "22:00", "busy": "at Jo's birthday dinner", "public": "at a friend's for dinner",${sharing ? ' "share": "personal",' : ''} "withThem": false}: "busy", a few words that complete "you're …", as you'd say them to them ("at your party", never "them" or "their"); "public", the same as anyone may hear it (no names, no "your");${sharing ? ` "share", who else may hear "busy": "open" anyone, "personal" those you're close to (it names someone, their party), "confidential" only your closest, in confidence (something sensitive, or that they asked you to keep to yourself);` : ''} "withThem", true when it's with or for them (their party, a game night together), a promise to them. You're offline then, so never for time with them here.`;
 	const WEIGH =
 		"Before calling off a plan you made with someone else, weigh it as you would in life: how close you are to each, how often you've let them down, how they'd feel. People do cancel for someone who matters more, and they feel it, and they tell them.";
 	const MAKE_TIME = (length: string, day = 1) =>
@@ -735,7 +735,7 @@ describe('the calendar (planField, calendarPrompt)', () => {
 		[
 			'- plan: null most of the time. Your calendar keeps your plans, so your days go the way you said.',
 			...sentences,
-			`To call off one of your plans listed below with its number: {"cancel": its number}. ${WEIGH}`,
+			`To call off one of your plans listed below with its number: {"cancel": its number}; to make a new plan in its place, add "cancel" to that plan. ${WEIGH}`,
 			'Times are your local time, on a 24-hour clock.',
 		].join(' ');
 
@@ -772,8 +772,8 @@ describe('the calendar (planField, calendarPrompt)', () => {
 		expect(refusedPlanPrompt({ reason: 'clash', block, clash: kims }, zone)).toBe(`Your calendar didn't take the plan you made last time (${when}): you have another plan then.${AFTER}`);
 		expect(refusedPlanPrompt({ reason: 'busy', block, clash: kims }, zone)).toBe(`Your calendar didn't take the plan you made last time (${when}): you're busy with a plan of your own then.${AFTER}`);
 		expect(refusedPlanPrompt({ reason: 'clash', block, clash: { ...kims, public: "at a friend's party" } }, zone)).toContain(`: you have another plan then: "at a friend's party".`);
-		expect(refusedPlanPrompt({ reason: 'clash', block, clash: kims }, zone, () => 'full')).toContain(': you have another plan then: "at Kim\'s party".');
-		expect(refusedPlanPrompt({ reason: 'clash', block, clash: kims }, zone, () => 'confidence')).toContain(': you have another plan then: "at Kim\'s party", in confidence.');
+		expect(refusedPlanPrompt({ reason: 'clash', block, clash: kims }, zone, (busy) => ({ words: busy.reason }))).toContain(': you have another plan then: "at Kim\'s party".');
+		expect(refusedPlanPrompt({ reason: 'clash', block, clash: kims }, zone, (busy) => ({ words: busy.reason, confidence: true }))).toContain(': you have another plan then: "at Kim\'s party", in confidence.');
 		expect(refused({ reason: 'less_close', cancel: 6 })).toBe("Your calendar couldn't call off plan [6]: you made it with someone you're closer to.");
 		// One it couldn't read: to make again as the field says
 		expect(refused({ reason: 'unreadable' })).toBe("Your calendar didn't take the plan you made last time: it wasn't written as the plan field says. If you still mean it, make it again as the plan field says.");
@@ -787,7 +787,7 @@ describe('the calendar (planField, calendarPrompt)', () => {
 		const REWORD = ' If you still mean it, make it again in other words.';
 		expect(refused({ reason: 'reason_characters', block })).toBe(`Your calendar didn't take the plan you made last time (${when}): it wasn't put in a few plain words.${REWORD}`);
 		expect(refused({ reason: 'reason_person', block })).toBe(
-			`Your calendar didn't take the plan you made last time (${when}): its words said "you", "your" or "their", and your calendar is yours in every chat: say it as anyone may read it, as "at a friend's party".${REWORD}`,
+			`Your calendar didn't take the plan you made last time (${when}): its words said "them" or "their", and whose wasn't clear: say whose, as "at Jo's party" or "at your party".${REWORD}`,
 		);
 		expect(refused({ reason: 'reason_online', block })).toBe(
 			`Your calendar didn't take the plan you made last time (${when}): time with them here isn't time away from your phone: make it time to be online for them, or nothing if you're online then anyway.${AFTER}`,

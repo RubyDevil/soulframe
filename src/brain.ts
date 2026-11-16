@@ -5,7 +5,7 @@ import type { Llm, LlmMessage } from './llm.js';
 import { splitReply } from './pacing.js';
 import { clip, lookedCard, mediaOf, seenIn, timeLimited, unseen, type IncomingMessage, type MessageMedia, type PreviewLink, type SeenImage, type SeenLink } from './perception.js';
 import { hostOf, isStopRequest, MINOR_EXIT, minorSignal, STOP_ACK, stripForeignLinks } from './safety.js';
-import { calendarHours, checkPlan, comingPlans, isPromise, sightOf, type PlanCheck, type PlanProposal, type Share, type Viewer } from './calendar.js';
+import { calendarHours, checkPlan, comingPlans, heardOf, isPromise, type PlanCheck, type PlanProposal, type Share, type Viewer } from './calendar.js';
 import { followUpWindow } from './initiative.js';
 import { addDays, agendaOn, busyAt, fullyOnline, isOn, localDateOf, situationAt, usualWeek, zonedToUtc, type Hours } from './schedule.js';
 import { DAY, HOUR, MINUTE, ownSettings, SECOND, taskModel, type Settings } from './settings.js';
@@ -160,7 +160,11 @@ const planOf = (value: unknown): PlanProposal | 'unreadable' | undefined => {
 	if (!Object.keys(value).length) return undefined;
 	const { cancel, day, from, to, busy, online } = value as Record<string, unknown>;
 	const number = numberOf(cancel);
-	if (number !== null) return { cancel: number };
+	if (number !== null) {
+		// A new plan in its place, as a model writes them together; else the plan called off alone
+		const instead = planOf({ ...value, cancel: undefined });
+		return instead !== undefined && instead !== 'unreadable' && !('cancel' in instead) ? { ...instead, replaces: number } : { cancel: number };
+	}
 	const days = numberOf(day);
 	if (days === null || typeof from !== 'string' || typeof to !== 'string') return 'unreadable';
 	if (online === true || online === 'true') return { day: days, from: from.trim(), to: to.trim(), online: true };
@@ -437,11 +441,11 @@ export function createBrain({
 				sharing: calendar.sharing.enabled,
 			}
 		: undefined;
-	/** What a prompt for `viewer` may tell of each plan (calendar.ts sightOf): none, a group chat's, only what anyone may hear. */
+	/** What a prompt for `viewer` hears of each plan (calendar.ts heardOf): none, a group chat's, only what anyone may hear. */
 	const seeFor =
 		(viewer?: Viewer): See =>
 		(busy) =>
-			sightOf(busy, viewer, calendar.sharing);
+			heardOf(busy, viewer, calendar.sharing, (id) => store.personById(id).name);
 	/** The plan its calendar didn't take at the last kept turn with them, as their next turn is told (prompts.ts refusedPlanPrompt), if any. */
 	const refusedPlan = (person: Person) => {
 		const kept = calendar.enabled ? store.get(persona.id, refusedKey(person.id)) : null;
@@ -483,7 +487,13 @@ export function createBrain({
 	 * hear about (`refusedPlanPrompt`), but for time made to chat when it is online then anyway: no promise is broken. A
 	 * promise to someone else it calls off, by its number or by a plan over it, is theirs to hear about (`callOff`).
 	 */
-	const applyPlan = (personId: number, proposal: PlanProposal | 'unreadable', writtenAt: number) => {
+	const applyPlan = (personId: number, proposal: PlanProposal | 'unreadable', writtenAt: number): void => {
+		// A new plan in place of one: that one called off first, then the plan, each as its own
+		if (proposal !== 'unreadable' && 'replaces' in proposal && proposal.replaces !== undefined) {
+			const { replaces, ...plan } = proposal;
+			applyPlan(personId, { cancel: replaces }, writtenAt);
+			return applyPlan(personId, plan, writtenAt);
+		}
 		const checked: PlanCheck =
 			proposal === 'unreadable'
 				? { refused: 'unreadable' }

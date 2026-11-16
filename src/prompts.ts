@@ -28,7 +28,7 @@
  * code's checks.
  */
 
-import type { ComingPlan, Share, Sight } from './calendar.js';
+import type { ComingPlan, Heard, Share } from './calendar.js';
 import type { Channel } from './channel.js';
 import type { Question } from './decisions.js';
 import { siteOf, type MessageMedia, type SeenImage, type SeenLink } from './perception.js';
@@ -316,23 +316,21 @@ const capitalized = (text: string) => text.charAt(0).toUpperCase() + text.slice(
 /** A busy block, as `busyText` reads it (schedule.ts Busy's facts). */
 type BusyLike = { reason: string; event?: number; madeWith?: number; share?: Share; public?: string };
 
-/** What a prompt may tell of each plan (calendar.ts sightOf for its reader), given its busy block. */
-export type See = (busy: BusyLike) => Sight;
+/** What a prompt's reader hears of each plan (calendar.ts heardOf for them), given its busy block. */
+export type See = (busy: BusyLike) => Heard;
 
 /** For a prompt that knows no reader: a plan made with someone, only its public words. */
-const unseen: See = (busy) => (busy.madeWith === undefined ? 'full' : 'public');
+const unseen: See = (busy) => ({ words: busy.madeWith === undefined ? busy.reason : busy.public });
 
 /**
  * A busy block's reason, completing "you're …", as a prompt says it to its reader (`see`): the schedule's as written
- * ("at work"); a plan's (its calendar) quoted as data ("busy (\"at a cousin's birthday\")"), marked when told in
- * confidence; one made with someone else that the reader may not hear, by its public words ("busy (\"at a friend's
- * party\")"), or "busy with a plan of your own" without any.
+ * ("at work"); a plan's (its calendar) by the words its reader hears, quoted as data ("busy (\"at a cousin's
+ * birthday\")"), marked when told in confidence; "busy with a plan of your own" when they hear none.
  */
 export const busyText = (busy: BusyLike, see: See = unseen) => {
 	if (busy.event === undefined) return busy.reason;
-	const sight = see(busy);
-	if (sight === 'public') return busy.public !== undefined ? `busy (${JSON.stringify(busy.public)})` : 'busy with a plan of your own';
-	return `busy (${JSON.stringify(busy.reason)}${sight === 'confidence' ? ', in confidence' : ''})`;
+	const { words, confidence } = see(busy);
+	return words === undefined ? 'busy with a plan of your own' : `busy (${JSON.stringify(words)}${confidence ? ', in confidence' : ''})`;
 };
 
 /** Their messages waited while it was offline: where it was (its busy block then, else away), and since when (exact; no time past 6 days). */
@@ -512,13 +510,13 @@ const planField = ({ busy, maxDays, makeTime, sharing }: PlanOptions) =>
 	[
 		'- plan: null most of the time. Your calendar keeps your plans, so your days go the way you said.',
 		busy
-			? `When you tell them about a plan of your own that keeps you off your phone (a dentist appointment, dinner at a friend's on Friday): {"day": ${Math.min(maxDays, 3)}, "from": "18:00", "to": "22:00", "busy": "at Jo's birthday dinner", "public": "at a friend's for dinner",${sharing ? ' "share": "personal",' : ''} "withThem": false}: "busy", a few words that complete "you're …" (never "you", "your" or "their": your calendar is the same in every chat); "public", the same as anyone may hear it;${sharing ? ` "share", who else may hear "busy": "open" anyone, "personal" those you're close to (it names someone, their party), "confidential" only your closest, in confidence (something sensitive, or that they asked you to keep to yourself);` : ''} "withThem", true when it's with or for them (their party, a game night together), a promise to them. You're offline then, so never for time with them here.`
+			? `When you tell them about a plan of your own that keeps you off your phone (a dentist appointment, dinner at a friend's on Friday): {"day": ${Math.min(maxDays, 3)}, "from": "18:00", "to": "22:00", "busy": "at Jo's birthday dinner", "public": "at a friend's for dinner",${sharing ? ' "share": "personal",' : ''} "withThem": false}: "busy", a few words that complete "you're …", as you'd say them to them ("at your party", never "them" or "their"); "public", the same as anyone may hear it (no names, no "your");${sharing ? ` "share", who else may hear "busy": "open" anyone, "personal" those you're close to (it names someone, their party), "confidential" only your closest, in confidence (something sensitive, or that they asked you to keep to yourself);` : ''} "withThem", true when it's with or for them (their party, a game night together), a promise to them. You're offline then, so never for time with them here.`
 			: '',
 		makeTime
 			? `When you promise to be online for them (to chat, or to play something together) at an hour you'd usually be offline but free (never while you're busy, at work say; rarely, only if it matters to you): {"day": ${Math.min(maxDays, 1)}, "from": "15:00", "to": "16:00", "online": true}, ${minutesLength(makeTime.maxMinutes)} at most. Nothing to plan when you're online then anyway.`
 			: '',
 		maxDays ? `"day" is 0 for today, 1 for tomorrow, and so on, ${maxDays} at most.` : '"day" is 0: today only.',
-		`To call off one of your plans listed below with its number: {"cancel": its number}. ${WEIGH_PROMISE}`,
+		`To call off one of your plans listed below with its number: {"cancel": its number}; to make a new plan in its place, add "cancel" to that plan. ${WEIGH_PROMISE}`,
 		'Times are your local time, on a 24-hour clock.',
 	]
 		.filter(Boolean)
@@ -552,7 +550,7 @@ const REFUSED_PLAN: Record<string, string> = {
 	// Never a word of what it named: sleep and school are never its day's
 	reason_sleep: "that isn't a plan your calendar keeps",
 	reason_school: "that isn't a plan your calendar keeps",
-	reason_person: 'its words said "you", "your" or "their", and your calendar is yours in every chat: say it as anyone may read it, as "at a friend\'s party"',
+	reason_person: 'its words said "them" or "their", and whose wasn\'t clear: say whose, as "at Jo\'s party" or "at your party"',
 };
 
 /** Reasons about how a plan was written alone, its time fine: it may make it again, nothing to put right with them. */
@@ -570,11 +568,10 @@ export const refusedPlanPrompt = (
 	timeZone: string,
 	see: See = unseen,
 ) => {
-	const sight = clash ? see(clash) : 'public';
-	const words = !clash ? undefined : sight === 'public' ? clash.public : clash.reason;
+	const heard = clash ? see(clash) : { words: undefined };
 	const why = (REFUSED_PLAN[reason] ?? "it wasn't put in a few plain words")
 		.replace('{busy}', clash ? busyText(clash, see) : 'busy')
-		.replace('{plan}', words !== undefined ? `: ${JSON.stringify(words)}${sight === 'confidence' ? ', in confidence' : ''}` : '');
+		.replace('{plan}', heard.words !== undefined ? `: ${JSON.stringify(heard.words)}${heard.confidence ? ', in confidence' : ''}` : '');
 	const when = block ? ` (${dateTimeText(block.start, timeZone)} to ${clockText(block.end, timeZone)})` : '';
 	if (cancel !== undefined) return `Your calendar couldn't call off plan [${cancel}]: ${why}.`;
 	const after = !REWORD(reason)
