@@ -166,7 +166,7 @@ export const SettingsSchema = z
 				 */
 				vision: TaskModelSchema({ maxTokens: 200, temperature: 0.2 }),
 				/** A first message the persona sends on its own (`initiative`): whether to text them now, and what. */
-				initiative: TaskModelSchema({ maxTokens: 300, temperature: 0.9 }),
+				initiative: TaskModelSchema({ maxTokens: 500, temperature: 0.9 }),
 			})
 			.default({}),
 

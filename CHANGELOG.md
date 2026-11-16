@@ -170,6 +170,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `[3.5, 7]`), a fast texter's speed; `pacing.typingDurationSeconds` `[0.8, 45]` (was `[1.5, 45]`);
   `pacing.readingDurationSeconds` `[0.3, 20]` (was `[1, 20]`). A short text in an active chat now shows typing about
   3 to 4 seconds after theirs and arrives a few seconds later. Set the old values to keep the old pace.
+- `models.initiative.maxTokens` defaults to 500 (was 300): on a reasoning model at `reasoningEffort: low`, an opener
+  that also had a plan to own up to spent all of 300 thinking 6 times in 16 (at 500, once). Set 300 to keep the old
+  limit.
 
 ### Removed
 

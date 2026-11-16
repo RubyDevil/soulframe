@@ -282,7 +282,7 @@ mostly a decision to stay quiet) or move to a provider of its own.
 | `groupChat`: whether to say something in a group chat, and what | `100` | `0.9` |
 | `post`: a post | `160` | `1` |
 | `vision`: describing a photo someone sent in a DM, once | `200` | `0.2` |
-| `initiative`: a first message it sends on its own ([`initiative`](#initiative)), called only while that is on | `300` | `0.9` |
+| `initiative`: a first message it sends on its own ([`initiative`](#initiative)), called only while that is on | `500` | `0.9` |
 
 Each task takes:
 
@@ -298,7 +298,8 @@ Each task takes:
 | `temperature` | number, 0 to 2 | see above | Higher is more varied. Left out of the request to OpenAI's own `gpt-5` models (at `api.openai.com`); a model that refuses it (a 400 naming `temperature`: it takes only its default) is asked again without, and its client sends it none from then on. |
 
 **A reasoning model** spends part of `maxTokens` thinking before it writes, and a different part each time: at the
-defaults, one may now and then spend all of a DM turn's 400 before writing a word. The model client asks once more at
+defaults, one may now and then spend all of a DM turn's 400 before writing a word (an opener's 500: one that also had
+a plan to own up to ran out 6 times in 16 at 300 at `reasoningEffort: low`, once in 16 at 500). The model client asks once more at
 once when an answer comes back empty, and the turn is retried minutes later if that one is empty too (its error names
 the limit). Measured on one such model, a DM turn that weighs a plan in its calendar answered half the time at 400 with
 its default effort, every time at 800, and every time, three times faster, with `reasoningEffort: none`:
