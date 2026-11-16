@@ -150,7 +150,8 @@ delivers:
   (`reply_batched`).
 - **Bursts.** A turn starts only once they stopped writing: `pacing.burst.settleSeconds` of quiet after their newest
   message, each message starting the wait again, up to `maxSettleResets` times. A message that comes in while the reply
-  is being written, before half of its first message is typed, drops the draft (`reply_superseded`, then `reply_restarted`): it
+  is being written (while the model writes, or before half of its first message is typed), drops the draft
+  (`reply_superseded`, then `reply_restarted`): it
   is written again, with that message read, once they are quiet (`restartOnNewMessage`, at most `maxRestarts` times in
   a row). Nothing of a dropped draft is sent or stored: a turn's notes, block or action are kept only with the turn
   (`Turn.keep`). Too late for that (something was sent already, or the restarts are spent), the message gets a turn of
