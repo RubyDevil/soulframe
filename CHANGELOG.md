@@ -93,13 +93,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   it went), and `createConfiguredDecisions` takes the service settings' `decisions`, giving `DISABLED_DECISIONS` while
   it is off. A brain's `settings.decisions` keeps which checks it asks and their thresholds.
 - `vision` never takes the default model in the model client either (it already never did in the brain).
-- **Its typing shows while the model writes.** A DM reply's typing now starts once their messages are read, the model
-  still writing or not, and the time it showed counts toward the first message's typing time, so the person no longer
-  sees their message read and then nothing for as long as the model takes. If the model writes nothing, fails or the
-  draft starts over, that typing ends (one `typing(false)`).
+- **The model's time counts as typing.** Whatever the model takes past the reading of their messages is taken off the
+  first message's typing time (never under `typingDurationSeconds`' least), so a slow model no longer adds its whole
+  time to every reply. Typing still shows only once there is a reply: it never types and then sends nothing.
+- **A message that comes in while a reply is typed restarts it only before half of its first message is typed.** Past
+  half, the draft goes out and the message gets a turn of its own after, as someone halfway through a text finishes it;
+  before, any message until the first send dropped the draft, so typing went off and on again.
 - **A draft that starts over stops typing once the newer message is noticed** (after the `pacing.watching` lag), not
-  when it would have been typed out: someone who adds a second text no longer watches the old draft being typed for
-  up to its whole typing time first.
+  when it would have been typed out.
 - **Faster defaults for a live chat**, measured on texting-style conversations against a live model:
   `pacing.watching` noticing lag `medianSeconds` 1.5 (was 4), `p90Seconds` 4 (was 8), `delaySeconds` `[0.5, 10]` (was
   `[2, 20]`); `pacing.burst.settleSeconds` `[0.5, 2]` (was `[2, 5]`); `pacing.typingCharsPerSecond` `[4.5, 8]` (was

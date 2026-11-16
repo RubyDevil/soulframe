@@ -141,7 +141,7 @@ delivers:
   (`reply_batched`).
 - **Bursts.** A turn starts only once they stopped writing: `pacing.burst.settleSeconds` of quiet after their newest
   message, each message starting the wait again, up to `maxSettleResets` times. A message that comes in while the reply
-  is being written, before its first message is sent, drops the draft (`reply_superseded`, then `reply_restarted`): it
+  is being written, before half of its first message is typed, drops the draft (`reply_superseded`, then `reply_restarted`): it
   is written again, with that message read, once they are quiet (`restartOnNewMessage`, at most `maxRestarts` times in
   a row). Nothing of a dropped draft is sent or stored: a turn's notes, block or action are kept only with the turn
   (`Turn.keep`). Too late for that (something was sent already, or the restarts are spent), the message gets a turn of
@@ -171,8 +171,9 @@ delivers:
   Each of these values is drawn from its range with a shape that fits it: speeds on a bell curve around the middle,
   waits and pauses skewed like the time people take (see [configuration](./configuration.md#settings)).
   While the model writes the reply, it reads what they wrote, as long as that takes at its reading speed
-  (`readingCharsPerSecond`, `readingDurationSeconds`, then `looking` per photo); typing starts once it has read them,
-  the model still writing or not, and the model's time counts as typing, so the indicator comes without a silence first. Three opt-in touches make it
+  (`readingCharsPerSecond`, `readingDurationSeconds`, then `looking` per photo); typing starts once both are done, and
+  whatever the model took past the reading is taken off the first message's typing time, so the model's time is not
+  added to the typing. Three opt-in touches make it
   look closer to a person typing: the conversation's `typingRefreshMs` keeps the
   indicator on while a long message is typed (platforms drop it after a few seconds), its `markRead()` shows their
   messages read as it starts writing the reply, and `thinkingPauses` lets typing

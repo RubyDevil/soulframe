@@ -29,9 +29,9 @@ differently.
   conversation matters right now, whether it still has their chat open, and how long they have waited.
 - **Now and then it is away** for a few minutes, never in the middle of a conversation that matters.
 - **Bursts.** It waits for someone who writes several messages in a row to stop, and answers them together.
-- **It types once it has read.** Its typing shows as soon as their messages are read, while the model may still be
-  writing the reply: the model's time counts as typing, so there is no silence before the indicator. With a model
-  slower than the typing, the message goes out as the model is done.
+- **The model's time counts as typing.** It reads their messages while the model writes; whatever the model takes
+  past the reading is time it spent getting its reply together, taken off the first message's typing (never under the
+  shortest typing time). Typing shows only once there is a reply, so it never types and then sends nothing.
 - **Relationships.** It gets to know people (familiarity) and comes to like or dislike them (affinity), slowly, from
   what their conversations meant. The prompt describes both in sentences you can rewrite.
 
@@ -163,7 +163,7 @@ Decisions API on, a typed check can rate new messages before the model reads the
 | --- | --- | --- |
 | `settleSeconds` | `[0.5, 2]`, lognormal | How long they must be quiet before it starts writing the reply. Each new message starts the wait again. `[0, 0]`: no wait. |
 | `maxSettleResets` | `3` | How many messages may start that wait again; past them it starts anyway, so someone who never stops still gets a reply. |
-| `restartOnNewMessage` | `true` | A message that comes in while the reply is being written, before its first message goes out, drops the draft: its typing stops once it notices the message (after the `watching` lag), and it is written again with that message read. `false`: the reply goes out as planned, and the message gets a reply of its own after. Once the first message of a reply is being sent, it is never restarted. |
+| `restartOnNewMessage` | `true` | A message that comes in while the reply is being written, before half of its first message is typed, drops the draft: its typing stops once it notices the message (after the `watching` lag), and it is written again with that message read. Past half, it sends what it was typing first, as someone halfway through a text does, and the message gets a reply of its own after. `false`: the reply goes out as planned, and the message gets a reply of its own after. Once the first message of a reply is being sent, it is never restarted. |
 | `maxRestarts` | `1` | How many times in a row one reply may be dropped and written again. Each dropped draft cost a whole reply's tokens: the config check warns above 1. |
 
 Nothing of a dropped draft is sent or kept: its notes, block, action and the change it would have made to familiarity

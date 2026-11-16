@@ -1584,22 +1584,23 @@ describe('someone who writes in bursts (pacing.burst)', () => {
 	});
 
 	it.each([
-		// The model is done first: it types once it has read them, the whole 1.5 s (the shortest)
-		[1_000, ['typing on @6000', 'send hey @7500', 'typing off @7500']],
-		// Still writing once they are read: it types from then, and the model's time counts as typing, here the rest of the 1.5 s
-		[2_500, ['typing on @6000', 'send hey @7500', 'typing off @7500']],
-		// Writing for longer than the reply takes to type: it goes out as the model is done
-		[5_000, ['typing on @6000', 'send hey @9000', 'typing off @9000']],
-	])('shows their messages read and reads them while the model writes (%i ms), typing once they are read', async (composeMs, typed) => {
+		// The model is done first: it types once it has read them, for the whole typing time
+		[1_000, ['typing on @6000', 'send hey @9257', 'typing off @9257']],
+		// Still writing once they are read: it types once the model is done, its 1.5 s after the reading counting toward the typing
+		[3_500, ['typing on @7500', 'send hey @9257', 'typing off @9257']],
+		// Writing for longer than the reply takes to type: still the shortest typing time (1.5 s), never none
+		[8_000, ['typing on @12000', 'send hey @13500', 'typing off @13500']],
+	])('shows their messages read and reads them while the model writes (%i ms), typing once both are done', async (composeMs, typed) => {
 		const run = start({ settings: burstSettings({}, { readingDurationSeconds: [2, 2] }) });
 		const events: string[] = [];
 		const record = (event: string) => void events.push(`${event} @${Date.now() - EVENING}`);
 		vi.spyOn(run.brain, 'compose').mockImplementation(async () => {
 			record('compose');
 			await sleep(composeMs);
-			return { messages: ['hey'], action: 'none' };
+			// 10 characters: 3.257 s of typing with this rng (3.5 a second, plus 0.4 s)
+			return { messages: ['hey'.padEnd(10, '.')], action: 'none' };
 		});
-		const conversation: Conversation = { channel: NOTED_DM, markRead: async () => record('read'), typing: async (on) => record(`typing ${on ? 'on' : 'off'}`), send: async (text) => record(`send ${text}`) };
+		const conversation: Conversation = { channel: NOTED_DM, markRead: async () => record('read'), typing: async (on) => record(`typing ${on ? 'on' : 'off'}`), send: async (text) => record(`send ${text.replaceAll('.', '')}`) };
 		try {
 			await run.queue.handle(run.brain.incoming(NOTED_DM, 'user-1', 'Sam', 'hi'), conversation, 'hi');
 			await vi.advanceTimersByTimeAsync(MINUTE);
@@ -1613,49 +1614,28 @@ describe('someone who writes in bursts (pacing.burst)', () => {
 	it.each([
 		['writes no reply', async () => ({ messages: [], action: 'none' as const })],
 		['fails', async () => Promise.reject(new Error('model down'))],
-	])('stops the typing it showed while the model wrote when the model %s', async (_, outcome) => {
+	])('shows no typing when the model %s, however long it wrote', async (_, outcome) => {
 		const run = start({ settings: burstSettings({}, { readingDurationSeconds: [2, 2] }) });
 		const events: string[] = [];
-		const record = (event: string) => void events.push(`${event} @${Date.now() - EVENING}`);
 		vi.spyOn(run.brain, 'compose').mockImplementation(async () => {
 			await sleep(5_000);
 			return outcome();
 		});
-		const conversation: Conversation = { channel: NOTED_DM, typing: async (on) => record(`typing ${on ? 'on' : 'off'}`), send: async (text) => record(`send ${text}`) };
+		const conversation: Conversation = { channel: NOTED_DM, typing: async (on) => void events.push(`typing ${on}`), send: async (text) => void events.push(`send ${text}`) };
 		try {
 			await run.queue.handle(run.brain.incoming(NOTED_DM, 'user-1', 'Sam', 'hi'), conversation, 'hi');
 			await vi.advanceTimersByTimeAsync(30_000);
-			// Due at 4 s, read for 2 s, the model done at 9 s: typing showed in between, and nothing went out
-			expect(events).toEqual(['typing on @6000', 'typing off @9000']);
+			expect(events).toEqual([]);
 		} finally {
 			run.close();
 		}
 	});
 
-	it('shows the typing it shows while the model writes again every typingRefreshMs, then types the rest', async () => {
-		const run = start({ settings: burstSettings({}, { readingDurationSeconds: [2, 2] }) });
-		const events: string[] = [];
-		const record = (event: string) => void events.push(`${event} @${Date.now() - EVENING}`);
-		vi.spyOn(run.brain, 'compose').mockImplementation(async () => {
-			await sleep(3_200);
-			return { messages: ['x'.repeat(14)], action: 'none' };
-		});
-		const conversation: Conversation = { channel: NOTED_DM, typingRefreshMs: 1_000, typing: async (on) => record(`typing ${on ? 'on' : 'off'}`), send: async (text) => record(`send ${text.length} chars`) };
-		try {
-			await run.queue.handle(run.brain.incoming(NOTED_DM, 'user-1', 'Sam', 'hi'), conversation, 'hi');
-			await vi.advanceTimersByTimeAsync(MINUTE);
-			// Typing from 6 s, the model done at 7.2 s: 1.2 s of the 4.4 s that 14 characters take (3.5 a second, plus 0.4 s) are typed already
-			expect(events).toEqual(['typing on @6000', 'typing on @7000', 'typing on @8200', 'typing on @9200', 'typing on @10200', 'send 14 chars @10400', 'typing off @10400']);
-		} finally {
-			run.close();
-		}
-	});
-
-	it('stops the typing it showed while the model wrote, and writes the reply again, for a message that came in meanwhile', async () => {
+	it('shows no typing for a draft that starts over while the model writes it, and writes it again with the newer message read', async () => {
 		const run = start({ settings: burstSettings({ settleSeconds: [2, 2] }, { readingDurationSeconds: [2, 2] }) });
 		const events: string[] = [];
 		const record = (event: string) => void events.push(`${event} @${Date.now() - EVENING}`);
-		const compose = vi.spyOn(run.brain, 'compose').mockImplementation(async () => {
+		vi.spyOn(run.brain, 'compose').mockImplementation(async () => {
 			record('compose');
 			await sleep(5_000);
 			return { messages: ['hey'], action: 'none' };
@@ -1665,10 +1645,36 @@ describe('someone who writes in bursts (pacing.burst)', () => {
 		try {
 			await writes(run, [['hi', 0], ['you there?', 7_000]]);
 			await vi.advanceTimersByTimeAsync(MINUTE);
-			// Typing from 6 s; 'you there?' at 7 s drops the draft as the model is done at 9 s; the quiet after it ended at 9 s,
-			// so it writes again at once, reads only the new message (2 s), and types from 11 s while the model writes
-			expect(events).toEqual(['compose @4000', 'typing on @6000', 'typing off @9000', 'compose @9000', 'typing on @11000', 'send hey @14000', 'typing off @14000']);
+			// 'you there?' at 7 s drops the draft as the model is done at 9 s, its quiet over by then; the second draft reads only
+			// the new message (2 s, done at 11 s) while its model writes until 14 s, then types the shortest time (1.5 s)
+			expect(events).toEqual(['compose @4000', 'compose @9000', 'typing on @14000', 'send hey @15500', 'typing off @15500']);
+		} finally {
+			run.close();
+		}
+	});
+
+	it('sends a first message more than half typed, and answers a newer message in a turn of its own after', async () => {
+		const run = start();
+		const compose = vi.spyOn(run.brain, 'compose').mockResolvedValueOnce({ messages: ['x'.repeat(70)], action: 'none' });
+		const events: string[] = [];
+		const conversation: Conversation = {
+			channel: NOTED_DM,
+			typing: async (on) => void events.push(`typing ${on ? 'on' : 'off'} @${Date.now() - EVENING}`),
+			send: async (text) => void events.push(`send ${text.length} @${Date.now() - EVENING}`),
+		};
+		const say = (text: string) => run.queue.handle(run.brain.incoming(NOTED_DM, 'user-1', 'Sam', text), conversation, text);
+		try {
+			// Typing from 5 s for 20.4 s: past half of it at 15.2 s
+			await say('hi');
+			await vi.advanceTimersByTimeAsync(16_000 - 1);
+			await say('one more thing');
+			await vi.advanceTimersByTimeAsync(MINUTE);
+			expect(logged(run.log, 'reply_restarted')).toEqual([]);
+			expect(logged(run.log, 'reply_after_turn')).toEqual([{ personId: 1, platform: 'forum' }]);
 			expect(compose).toHaveBeenCalledTimes(2);
+			// The draft goes out whole; the newer message's turn follows, read and typed as any
+			expect(events.slice(0, 3)).toEqual(['typing on @5000', 'send 70 @25400', 'typing off @25400']);
+			expect(sentTo(run.store)).toEqual(['x'.repeat(70), 'hey you']);
 		} finally {
 			run.close();
 		}
