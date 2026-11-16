@@ -609,8 +609,8 @@ export const SettingsSchema = z
 				sharing: z
 					.object({
 						enabled: z.boolean().default(true),
-						/** A plan that names someone, their party: from these levels (each level's `from`, as relationship's levels set them); false for nobody. */
-						personal: ShareLevel.default({ familiarity: 0.32 }),
+						/** A plan that names someone, their party: from these levels (each level's `from`, as relationship's levels set them; 0.48, "getting close"); false for nobody. */
+						personal: ShareLevel.default({ familiarity: 0.48 }),
 						/** A plan that is sensitive, or that they asked it to keep to itself: told in confidence, from these levels; false for nobody. */
 						confidential: ShareLevel.default({ familiarity: 0.82, affinity: 0.6 }),
 					})

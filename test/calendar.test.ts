@@ -397,8 +397,13 @@ describe('calendarHours and comingPlans', () => {
 			{ kind: 'busy', words: 'at a team day' },
 			{ kind: 'online', words: null },
 		]);
-		// One of its regulars (personal, the default level): the party and whom time was made for, the clinic still not
-		expect(coming(0.32, 0).slice(0, 3)).toEqual([
+		// One of its regulars: still only what anyone may hear of a plan that names someone
+		expect(coming(0.32, 0).slice(0, 2)).toEqual([
+			{ kind: 'busy', words: "at a friend's birthday" },
+			{ kind: 'online', words: null, for: 'someone' },
+		]);
+		// Getting close (personal, the default level): the party and whom time was made for, the clinic still not
+		expect(coming(0.48, 0).slice(0, 3)).toEqual([
 			{ kind: 'busy', words: "at Sam's birthday party" },
 			{ kind: 'online', words: null, for: { name: 'Sam' } },
 			{ kind: 'busy', words: 'at an appointment' },
@@ -456,9 +461,9 @@ describe('calendarHours and comingPlans', () => {
 		expect(sightOf(plan('open'), undefined, sharing)).toBe('full');
 		// A group chat knows no one: only what anyone may hear
 		expect(sightOf(plan('personal'), undefined, sharing)).toBe('public');
-		expect(sightOf(plan('personal'), { id: 2, familiarity: 0.18 }, sharing)).toBe('public');
-		expect(sightOf(plan('personal'), { id: 2, familiarity: 0.32 }, sharing)).toBe('full');
-		expect(sightOf({ madeWith: 1 }, { id: 2, familiarity: 0.32 }, sharing)).toBe('full');
+		expect(sightOf(plan('personal'), { id: 2, familiarity: 0.32 }, sharing)).toBe('public');
+		expect(sightOf(plan('personal'), { id: 2, familiarity: 0.48 }, sharing)).toBe('full');
+		expect(sightOf({ madeWith: 1 }, { id: 2, familiarity: 0.48 }, sharing)).toBe('full');
 		expect(sightOf(plan('confidential'), { id: 2, familiarity: 0.82, affinity: 0.6 }, sharing)).toBe('confidence');
 		expect(sightOf(plan('confidential'), { id: 2, familiarity: 0.65, affinity: 0.6 }, sharing)).toBe('public');
 		// False for nobody, and sharing off: never

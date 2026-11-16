@@ -569,7 +569,7 @@ audited, one that doesn't fit. DM turns and openers list its coming plans, and i
 | `makeTime.perPersonDays` | number, 1 to 90 | `7` | At least this many days between two made for the same person. |
 | `shown` | integer, 1 to 20 | `6` | How many of its coming plans a DM turn and an opener list, with its number each one that conversation may call off. |
 | `sharing.enabled` | boolean | `true` | Whether others may hear the words of a plan made with someone, as its `share` and their levels allow. Off: nobody else ever hears a plan's own words, nor whom time was made for; they hear its public words. |
-| `sharing.personal.familiarity` | number, 0 to 1 | `0.32` | From which familiarity level (a level's `from`; the shipped "one of your regulars") someone hears a `personal` plan's words (it names someone, their party) and whom time was made for. |
+| `sharing.personal.familiarity` | number, 0 to 1 | `0.48` | From which familiarity level (a level's `from`; the shipped "getting close") someone hears a `personal` plan's words (it names someone, their party) and whom time was made for. Measured live: below it, one of its regulars heard which friend it dropped them for, nearly every time. |
 | `sharing.personal.affinity` | number, -1 to 1 | none | And from which affinity level, while affinity is kept. |
 | `sharing.confidential.familiarity` | number, 0 to 1 | `0.82` | From which familiarity level (the shipped "one of the people closest to you") someone hears a `confidential` plan's words, told in confidence. |
 | `sharing.confidential.affinity` | number, -1 to 1 | `0.6` | And from which affinity level (the shipped "really fond"), while affinity is kept. |

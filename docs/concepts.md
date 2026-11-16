@@ -288,7 +288,7 @@ lines say so, and afterwards it is back from it.
   The model ranks each as it makes it: `open` (anyone may hear it), `personal` (it names someone, their party),
   `confidential` (sensitive, or they asked to keep it quiet), and gives the words anyone may hear ("at a friend's
   birthday"). Others hear its words as their relationship levels allow (`calendar.sharing`: a `personal` plan from
-  "one of your regulars", a `confidential` one only from "one of the people closest to you" and "really fond", told in
+  "getting close", a `confidential` one only from "one of the people closest to you" and "really fond", told in
   confidence so it would ask them to keep it to themselves), and its public words otherwise; group chats hear only
   those. With `calendar.sharing.enabled` off, nobody else ever hears a plan's own words, nor whom time was made for.
   Its notes about itself (`self`) are not held to this: the model writes them, every conversation reads them, and what

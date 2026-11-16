@@ -37,8 +37,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Who hears what of its plans** (`calendar.sharing`, on by default). A plan's words are the person's it was made
   with, said as to them ("at your party"). The model ranks each as it makes it (`share`: `open`, `personal`,
   `confidential`) and gives the words anyone may hear (`public`); others hear its words, with that person by name ("at
-  Sam's party"), as their relationship levels allow (`sharing.personal`, from "one of your
-  regulars"; `sharing.confidential`, from "one of the people closest to you" and "really fond", told in confidence, so
+  Sam's party"), as their relationship levels allow (`sharing.personal`, from "getting
+  close"; `sharing.confidential`, from "one of the people closest to you" and "really fond", told in confidence, so
   it asks them to keep it to themselves), and its public words otherwise; group chats hear only those. Sharing off,
   nobody else ever hears a plan's own words, nor whom time was made for. Its notes about itself are not held to this
   (documented).
