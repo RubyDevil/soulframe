@@ -235,6 +235,17 @@ describe('createConfiguredLlm', () => {
 		expect(await result).toBe('ok');
 	});
 
+	it('asks once more at once when the model answers nothing, counting both, and fails only when that is empty too', async () => {
+		const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(answer('  ', 300)).mockResolvedValueOnce(answer('hey you', 320));
+		const { llm, meter } = setUp(0);
+		expect(await llm.complete([{ role: 'user', content: 'hey' }], { task: 'directMessage' })).toBe('hey you');
+		expect(fetch).toHaveBeenCalledTimes(2);
+		expect(meter.spent()).toBe(620);
+		fetch.mockReset().mockImplementation(async () => answer('', 10));
+		await expect(llm.complete([{ role: 'user', content: 'hey' }], { task: 'directMessage' })).rejects.toThrow('LLM answered no text');
+		expect(fetch).toHaveBeenCalledTimes(2);
+	});
+
 	it('refuses to call the model once the day is spent', async () => {
 		const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => answer('ok', 600));
 		const { llm } = setUp(500);

@@ -166,6 +166,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   model, never `llm.model`), the description stored in place of its URL, and the chat model reads only that. It takes
   `pacing.looking` per photo (default `[1.5, 5]` s), and a description that fails or takes over
   `perception.timeoutSeconds` (default 15) leaves a photo that "wouldn't load" (or only its `alt`) instead of holding the reply up. A link
+- A model that now and then answers nothing at all (one in testing did, about one call in twenty) failed the turn into a
+  retry 1 to 4 minutes later, a long silence in a live chat: the model client now asks once more at once.
   is only its preview card (from the app, or `createBrain`'s new `previewLink`), else its site's name: the prompt says
   it has not opened it and must not claim to have. soulframe fetches no URL itself. New `perception` settings,
   `store.setMedia`, a `media` column on `messages` added on open, `LlmMessage.images`, and an `image_unseen` audit

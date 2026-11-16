@@ -939,8 +939,8 @@ No links in the post.
 export const POST_REQUEST = '[post] Write the post.';
 ```
 
-The one `user` message of a post. The canned model (`createCannedLlm`, llm.ts:214-225) answers its fixed post when
-the last message is exactly this text (llm.ts:220); its other answers are fixed DM replies. Neither is prompt text.
+The one `user` message of a post. The canned model (`createCannedLlm`, llm.ts:216-227) answers its fixed post when
+the last message is exactly this text (llm.ts:222); its other answers are fixed DM replies. Neither is prompt text.
 
 ## Typed screening (Decisions)
 
@@ -1380,7 +1380,7 @@ other text.
 - `STOP_ACK` (safety.ts:9): "got it, I won't message you again. take care!" and `MINOR_EXIT` (safety.ts:10): "sorry,
   I only chat with adults, so I'm going to stop here. take care!" are sent to the person by the code, never to the
   model.
-- The canned model's answers (llm.ts:215, :220) are fixed replies, and a fixed photo description, for dry runs.
+- The canned model's answers (llm.ts:217, :222) are fixed replies, and a fixed photo description, for dry runs.
 - `report.ts` (`personaReport`, `personaWarnings`, `settingsWarnings`) writes config-check lines for the operator. Only `samplePrompt`
   shows a prompt, built by the brain itself.
 

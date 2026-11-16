@@ -190,7 +190,8 @@ delivers:
 - **Restarts.** While running (`queue.start()`), the queue records every 30 seconds when the persona was last online.
   After a restart, `queue.requeue(channel, conversationOf)` puts everyone still owed a turn since then (up to 48 hours
   before it) back into the backlog.
-- **Failures.** A model call that fails is tried again after `retries.delayMinutes` times the attempt number, up to
+- **Failures.** A model that answers nothing at all is asked once more at once, by the model client. A model call
+  that fails is tried again after `retries.delayMinutes` times the attempt number, up to
   `retries.attempts`; a spent token budget waits `retries.budgetCheckMinutes` between checks and counts no attempt;
   a provider outage doubles the wait after each try, up to 16 times; a task with no provider or model set is not
   tried again at all (only new settings mend it), and the person stays owed for the next start. A failed `send` is

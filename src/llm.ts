@@ -175,7 +175,7 @@ export function createConfiguredLlm({
 			const apiKey = apiKeyEnv ? apiKeyOf(apiKeyEnv) : '';
 			const openAi = new URL(baseUrl).hostname === 'api.openai.com';
 			// Checked and counted within its turn, so the calls waiting behind the concurrency limit never spend past their share
-			const text = await limit(async () => {
+			const ask = () => limit(async () => {
 				// A photo is looked at only in a DM, so it spends what is kept for them
 				if (meter?.exceeded(task === 'directMessage' || task === 'vision' ? 1 : 1 - budget.directMessageReserve)) throw new LlmBudgetError();
 				const which = `${baseUrl} ${model}`;
@@ -204,6 +204,8 @@ export function createConfiguredLlm({
 				meter?.add(body.usage?.total_tokens ?? Math.ceil((JSON.stringify(messages, (key, value: unknown) => (key === 'images' ? undefined : value)).length + (answer?.length ?? 0)) / 4) + images * IMAGE_TOKENS);
 				return answer;
 			});
+			// A model now and then answers nothing at all: asked once more at once, rather than the turn failing into a retry minutes later
+			const text = (await ask()) || (await ask());
 			if (!text) throw new Error('LLM answered no text');
 			return text;
 		},
