@@ -127,7 +127,7 @@ function simulate(seed: number, sharing: Sharing) {
 			if (sharing === 'off') throw new Error(`plan ${event.id} "${event.what}" made with ${event.personId} told to ${viewer} with sharing off`);
 			if ((sharing === 'closed' || viewer === null) && event.share !== 'open') throw new Error(`${event.share} plan ${event.id} "${event.what}" told to ${viewer}`);
 			// Told in confidence, said so where it is told
-			if (event.share === 'confidential' && !new RegExp(`${t}[^"]*", in confidence|${t}[^"]*" \\(someone else's, told to you in confidence`).test(prompt)) {
+			if (event.share === 'confidential' && !new RegExp(`${t}[^"]*", in confidence|${t}[^"]*" \\(in confidence`).test(prompt)) {
 				throw new Error(`confidential plan ${event.id} "${event.what}" told to ${viewer} without saying so`);
 			}
 			if (viewer === null) outcomes.groupWordsShown++;

@@ -222,7 +222,9 @@ Off by default (`settings.initiative.enabled`). With it on, a persona may start 
     initiative.ts:126).
   - **Sharing its day** (`initiative.sharing`, off by default): when a span opens within 30 minutes of a busy block's
     end, now and then (`chance`), it texts one of the people closest to it about it ("at the gym"), within the next
-    30 minutes (`planShare`, initiative.ts:167). The model makes up what happened, keeping to its notes on itself.
+    30 minutes (`planShare`, initiative.ts:167). The model makes up what happened, keeping to its notes on itself. A
+    plan made with someone else is shared only with someone who may hear its words openly: never one told in
+    confidence (it is never to volunteer that), nor with someone who would hear nothing of it.
   - **An apology** (with its calendar on): when it breaks a promise to someone for someone else, it texts them to say
     sorry, at once, for every plan it owes them. It takes a pending check-in's or share's place, but never a
     follow-up's (that one tells them too), and is given up once the last plan is over or once a reply or another
@@ -284,8 +286,10 @@ lines say so, and afterwards it is back from it.
   (`withThem`: their party, a game night), are promises to them. Like a person, it may break one for someone who
   matters as much or more: in a turn with someone not less close to it than the one it promised (their familiarity
   and affinity levels; one level apart is about as close), by calling it off or by a plan over it (one its calendar
-  listed to that turn, so it weighed it). Never for someone less close. Its calendar tells it what it weighs that with: "you're closer to Kim than to them; you've already called
-  off plans with them twice this month", and a line on weighing it as in life. Measured on a live model, those facts
+  listed to that turn, so it weighed it). Never for someone less close. Its calendar tells it what it weighs that
+  with: "you're closer to Kim than to Sam; you've already called off plans with Sam twice this month" (Sam unnamed,
+  "the one you made it with", to someone not close enough to hear whose plans they are), and a line on weighing it as
+  in life. Measured on a live model, those facts
   are what it decides by: it never broke a promise for someone less close, nearly always for someone much closer, and
   a few times in ten for someone about as close, or after letting them down twice. The one it was broken on is told at
   their next turn, to say sorry (the turn says what came up, or not), and while texting first is on it texts them an

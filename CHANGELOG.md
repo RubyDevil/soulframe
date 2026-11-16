@@ -47,7 +47,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `personal`, `confidential`) and gives the words anyone may hear (`public`); others hear its words as their
   relationship levels allow (`sharing.personal`, from "getting close"; `sharing.confidential`, from "one of the people closest to you" and "really fond", told in confidence, so
   it asks them to keep it to themselves), and its public words otherwise; group chats hear an `open` plan's words
-  and only the public words of the rest; words that say "you" or "your" are never `open`. A threshold left out keeps
+  and only the public words of the rest; words that say "you" or "your" are never `open`, and whom a plan was made
+  with is named only to someone who may hear a personal plan's words ("the one you made it with" otherwise). Sharing
+  its day never volunteers a plan told in confidence. A threshold left out keeps
   its default (`affinity: -1` drops that gate).
   Sharing off, nobody else ever hears a plan's own words, nor whom time was made for. Its notes about itself are not
   held to this (documented).

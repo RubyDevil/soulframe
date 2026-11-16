@@ -347,8 +347,11 @@ export interface ComingPlan {
 	confidence: boolean;
 	/** Time made to chat: for them (`them`), for someone named (`name`, as this turn may hear it), for `someone` else, or for nobody (the app's, `null`). */
 	for: 'them' | 'someone' | { name: string } | null;
-	/** A promise made with someone else: how close it is to this person against them, and how often it called plans with them off for others lately (30 days). */
-	promise: { closer: Closer; calledOff: number } | null;
+	/**
+	 * A promise made with someone else: how close it is to this person against them, how often it called plans with them
+	 * off for others lately (30 days), and their name, when this turn may hear whom it was made with.
+	 */
+	promise: { closer: Closer; calledOff: number; with?: string } | null;
 }
 
 /** Its plans a turn lists (`comingPlans`): those standing from now to `plans.maxDays` ahead, at most `shown`, soonest first. */
@@ -379,6 +382,10 @@ export function comingPlans(
 		const sight = sightOf(plan, viewer, settings.sharing);
 		const heard = heardOf(plan, viewer, settings.sharing, nameIn(store));
 		const promised = isPromise(event) && madeWith !== viewer.id ? closerOf(closeness(viewer.id), closeness(madeWith!)) : null;
+		// Whom it was made with, by name, to a turn that may hear a personal plan's words at least: an open plan's words are
+		// anyone's, whom it was made with is not
+		const named = madeWith !== undefined && madeWith !== viewer.id && sightOf({ ...plan, share: plan.share === 'open' ? 'personal' : plan.share }, viewer, settings.sharing) !== 'public';
+		const name = named ? nameIn(store)(madeWith) : undefined;
 		const cancellable = event.source === 'persona' && (event.kind === 'online' ? settings.makeTime : settings.plans).enabled && promised !== 'less';
 		return {
 			id: cancellable ? event.id : null,
@@ -392,10 +399,10 @@ export function comingPlans(
 					? null
 					: madeWith === viewer.id
 						? 'them'
-						: sight === 'public' || nameIn(store)(madeWith) === undefined
+						: name === undefined
 							? 'someone'
-							: { name: nameIn(store)(madeWith)! },
-			promise: promised === null ? null : { closer: promised, calledOff: store.calledOffOn(hours.id, madeWith!, now - CALLED_OFF_COUNT_DAYS * DAY) },
+							: { name },
+			promise: promised === null ? null : { closer: promised, calledOff: store.calledOffOn(hours.id, madeWith!, now - CALLED_OFF_COUNT_DAYS * DAY), ...(name !== undefined && { with: name }) },
 		};
 	});
 }

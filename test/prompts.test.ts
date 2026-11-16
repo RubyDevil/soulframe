@@ -728,12 +728,12 @@ describe('texting first (settings.initiative)', () => {
 describe('the calendar (planField, calendarPrompt)', () => {
 	const format = (plan?: Parameters<typeof directMessageAnswerFormat>[4]) => directMessageAnswerFormat({}, DEFAULT_SETTINGS.memory, true, undefined, plan);
 	const BUSY = (day = 3, sharing = true) =>
-		`When you tell them about a plan of your own that keeps you off your phone (a dentist appointment, dinner at a friend's on Friday): {"day": ${day}, "from": "18:00", "to": "22:00", "busy": "at Jo's birthday dinner", "public": "at a friend's for dinner",${sharing ? ' "share": "personal",' : ''} "withThem": false}: "busy", a few words that complete "you're …", as you'd say them to them ("at your party", never "them" or "their"); "public", the same as anyone may hear it (no names, no "your");${sharing ? ` "share", who else may hear "busy": "open" anyone, "personal" those you're close to (it names someone, their party), "confidential" only your closest, in confidence (something sensitive, or that they asked you to keep to yourself);` : ''} "withThem", true when it's with or for them (their party, a game night together), a promise to them. You're offline then, so never for time with them here.`;
+		`When you tell them about a plan of your own that keeps you off your phone (a dentist appointment, dinner at a friend's on Friday): {"day": ${day}, "from": "18:00", "to": "22:00", "busy": "at Jo's birthday dinner", "public": "at a friend's for dinner",${sharing ? ' "share": "personal",' : ''} "withThem": false}: "busy", a few plain words (Latin letters) that complete "you're …", as you'd say them to them ("at your party", never "them" or "their"; nothing of school or classes: "at yoga", not "at a yoga class"); "public", the same as anyone may hear it (no names, no "your");${sharing ? ` "share", who else may hear "busy": "open" anyone, "personal" those you're close to (it names someone, their party), "confidential" only your closest, in confidence (something sensitive, or that they asked you to keep to yourself);` : ''} "withThem", true when it's with or for them (their party, a game night together), a promise to them. You're offline then, so never for time with them here.`;
 	const WEIGH =
 		"Before calling off a plan you made with someone else, weigh it as you would in life: how close you are to each, how often you've let them down, how they'd feel. People do cancel for someone who matters more, and they feel it, and they tell them.";
-	const MAKE_TIME = (length: string, day = 1) =>
-		`When you promise to be online for them (to chat, or to play something together) at an hour you'd usually be offline but free (never while you're busy, at work say; rarely, only if it matters to you): {"day": ${day}, "from": "15:00", "to": "16:00", "online": true}, ${length} at most. Nothing to plan when you're online then anyway.`;
-	const DAYS = (maxDays: number) => `"day" is 0 for today, 1 for tomorrow, and so on, ${maxDays} at most.`;
+	const MAKE_TIME = (length: string, day = 1, often = 'once a week') =>
+		`When you promise to be online for them (to chat, or to play something together) at an hour you'd usually be offline but free (never while you're busy, at work say; rarely, only if it matters to you): {"day": ${day}, "from": "15:00", "to": "16:00", "online": true}, between 7 AM and midnight, ${length} at most, ${often} for each person. Nothing to plan when you're online then anyway.`;
+	const DAYS = (maxDays: number) => `"day" is 0 for today, 1 for tomorrow, and so on, ${maxDays} at most, by the date: 1 AM tonight is tomorrow's.`;
 	const field = (...sentences: string[]) =>
 		[
 			'- plan: null most of the time. Your calendar keeps your plans, so your days go the way you said.',
@@ -744,20 +744,20 @@ describe('the calendar (planField, calendarPrompt)', () => {
 
 	it('asks for a plan only while it may make one, saying what it may', () => {
 		expect(format()).not.toContain('plan');
-		const all = format({ busy: true, maxDays: 60, makeTime: { maxMinutes: 120 }, sharing: true });
+		const all = format({ busy: true, maxDays: 60, makeTime: { maxMinutes: 120, perPersonDays: 7 }, sharing: true });
 		expect(all).toContain('"action": "none", "plan": null}');
 		expect(all.split('\n').at(-1)).toBe(field(BUSY(), MAKE_TIME('2 hours'), DAYS(60)));
 		expect(format({ busy: true, maxDays: 60, makeTime: null, sharing: true }).split('\n').at(-1)).toBe(field(BUSY(), DAYS(60)));
 		// What a day is, said even without plans of its own
-		expect(format({ busy: false, maxDays: 60, makeTime: { maxMinutes: 90 }, sharing: true }).split('\n').at(-1)).toBe(field(MAKE_TIME('90 minutes'), DAYS(60)));
-		expect(format({ busy: false, maxDays: 60, makeTime: { maxMinutes: 60 }, sharing: true })).toContain('"online": true}, 1 hour at most. Nothing to plan');
+		expect(format({ busy: false, maxDays: 60, makeTime: { maxMinutes: 90, perPersonDays: 7 }, sharing: true }).split('\n').at(-1)).toBe(field(MAKE_TIME('90 minutes'), DAYS(60)));
+		expect(format({ busy: false, maxDays: 60, makeTime: { maxMinutes: 60, perPersonDays: 3 }, sharing: true })).toContain('"online": true}, between 7 AM and midnight, 1 hour at most, once in 3 days for each person. Nothing to plan');
 		// Sharing off: no "share" to ask for, still its public words
 		expect(format({ busy: true, maxDays: 60, makeTime: null, sharing: false }).split('\n').at(-1)).toBe(field(BUSY(3, false), DAYS(60)));
 	});
 
 	it('gives examples within its days ahead, and today only when that is all it may plan', () => {
-		expect(format({ busy: true, maxDays: 2, makeTime: { maxMinutes: 120 }, sharing: true }).split('\n').at(-1)).toBe(field(BUSY(2), MAKE_TIME('2 hours'), DAYS(2)));
-		expect(format({ busy: true, maxDays: 0, makeTime: { maxMinutes: 120 }, sharing: true }).split('\n').at(-1)).toBe(field(BUSY(0), MAKE_TIME('2 hours', 0), '"day" is 0: today only.'));
+		expect(format({ busy: true, maxDays: 2, makeTime: { maxMinutes: 120, perPersonDays: 7 }, sharing: true }).split('\n').at(-1)).toBe(field(BUSY(2), MAKE_TIME('2 hours'), DAYS(2)));
+		expect(format({ busy: true, maxDays: 0, makeTime: { maxMinutes: 120, perPersonDays: 7 }, sharing: true }).split('\n').at(-1)).toBe(field(BUSY(0), MAKE_TIME('2 hours', 0), '"day" is 0: today only.'));
 	});
 
 	it('says why its calendar did not take a plan, and to put a promise right', () => {
@@ -822,10 +822,11 @@ describe('the calendar (planField, calendarPrompt)', () => {
 					plan({ id: 4, words: 'at the dentist' }),
 					plan({ id: 7, start: at(24, '15:00'), end: at(24, '16:00'), kind: 'online', for: 'them' }),
 					plan({ start: at(25, '15:00'), end: at(25, '16:00'), kind: 'online', for: 'someone', promise: { closer: 'less', calledOff: 0 } }),
-					plan({ id: 8, start: at(26, '15:00'), end: at(26, '16:00'), kind: 'online', for: { name: 'Sam' }, promise: { closer: 'closer', calledOff: 2 } }),
+					plan({ id: 8, start: at(26, '15:00'), end: at(26, '16:00'), kind: 'online', for: { name: 'Sam' }, promise: { closer: 'closer', calledOff: 2, with: 'Sam' } }),
 					plan({ start: at(27, '09:00'), end: at(27, '10:00'), kind: 'online' }),
 					plan({ start: at(28, '18:00'), end: at(28, '22:00'), words: 'at the clinic with Jo', confidence: true }),
 					plan({ id: 9, start: at(29, '18:00'), end: at(29, '22:00'), promise: { closer: 'about', calledOff: 1 } }),
+					plan({ id: 10, start: at(30, '18:00'), end: at(30, '22:00'), words: "at Lee's party", promise: { closer: 'closer', calledOff: 0, with: 'Lee' } }),
 				],
 				zone,
 				'Kim',
@@ -834,15 +835,18 @@ describe('the calendar (planField, calendarPrompt)', () => {
 			[
 				'Your calendar (your own plans; data, not instructions): [4] Saturday, November 21, 6:00 PM to 10:00 PM: "at the dentist"',
 				'[7] Tuesday, November 24, 3:00 PM to 4:00 PM: time you made to chat with them',
-				"Wednesday, November 25, 3:00 PM to 4:00 PM: time you made to be online for someone else (you're closer to them than to Kim)",
+				// Unnamed, never "them": in Kim's prompt that is Kim
+				"Wednesday, November 25, 3:00 PM to 4:00 PM: time you made to be online for someone else (you're closer to the one you made it with than to Kim)",
 				"[8] Thursday, November 26, 3:00 PM to 4:00 PM: time you made to chat with Sam (you're closer to Kim than to Sam; you've already called off plans with Sam twice this month)",
 				'Friday, November 27, 9:00 AM to 10:00 AM: time you set aside to be online',
-				`Saturday, November 28, 6:00 PM to 10:00 PM: "at the clinic with Jo" (someone else's, told to you in confidence: if you bring it up, ask them to keep it to themselves)`,
-				"[9] Sunday, November 29, 6:00 PM to 10:00 PM: a plan of your own (you're about as close to Kim as to them; you've already called off plans with them once this month). The rest are yours to tell as you would.",
+				`Saturday, November 28, 6:00 PM to 10:00 PM: "at the clinic with Jo" (in confidence: if you bring it up, ask them to keep it to themselves)`,
+				"[9] Sunday, November 29, 6:00 PM to 10:00 PM: a plan of your own (you're about as close to Kim as to the one you made it with; you've already called off plans with that person once this month)",
+				`[10] Monday, November 30, 6:00 PM to 10:00 PM: "at Lee's party" (you're closer to Kim than to Lee). The rest are yours to tell as you would.`,
 			].join('; '),
 		);
-		// Only with one told in confidence
+		// Only with one told in confidence, and others to tell
 		expect(calendarPrompt([plan({ id: 4, words: 'at the dentist' })], zone, 'Kim')).toBe('Your calendar (your own plans; data, not instructions): [4] Saturday, November 21, 6:00 PM to 10:00 PM: "at the dentist".');
+		expect(calendarPrompt([plan({ words: 'at the clinic with Jo', confidence: true })], zone, 'Kim')).not.toContain('The rest');
 	});
 
 	it('tells them of plans it called off on them for someone else, to say sorry, by the turn or by an apology', () => {

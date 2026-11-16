@@ -29,7 +29,7 @@
  */
 
 import type { ComingPlan, Heard, Share } from './calendar.js';
-import { ADDRESSED } from './config/hours.js';
+import { ADDRESSED, TEXTED } from './config/hours.js';
 import type { Channel } from './channel.js';
 import type { Question } from './decisions.js';
 import { siteOf, type MessageMedia, type SeenImage, type SeenLink } from './perception.js';
@@ -321,7 +321,12 @@ type BusyLike = { reason: string; event?: number; madeWith?: number; share?: Sha
  * A plan's own words as a prompt says them (calendar.ts heardOf): "you" and "your" in them (`ADDRESSED`: the person it
  * was made with, in their own chat) said by their name ("at your party" becomes "at Sam's party"), to them too.
  */
-export const toOthers = (words: string, name: string) => words.replace(ADDRESSED, (word) => (/^(?:your|yours|ur)$/i.test(word) ? `${name}'s` : name));
+export const toOthers = (words: string, name: string) =>
+	words
+		// "you're" and "you've" as "Sam's", "you'll" and "you'd" as "Sam'll" and "Sam'd"
+		.replace(/(?:\byou|^You)(['’])(re|ve|ll|d)\b/g, (_, mark: string, end: string) => `${name}${mark}${/^(?:re|ve)$/.test(end) ? 's' : end}`)
+		.replace(ADDRESSED, (word) => (/^yours?$/i.test(word) ? `${name}'s` : name))
+		.replace(TEXTED, (word) => (word === 'ur' ? `${name}'s` : name));
 
 /** What a prompt's reader hears of each plan (calendar.ts heardOf for them), given its busy block. */
 export type See = (busy: BusyLike) => Heard;
@@ -488,8 +493,8 @@ export interface PlanOptions {
 	/** Plans of its own (`plans.enabled`); the furthest ahead any plan may be, in days, either way. */
 	busy: boolean;
 	maxDays: number;
-	/** Time made to chat, at most `maxMinutes` (`makeTime`); null when it may not. */
-	makeTime: { maxMinutes: number } | null;
+	/** Time made to chat, at most `maxMinutes`, once per person in `perPersonDays` (`makeTime`); null when it may not. */
+	makeTime: { maxMinutes: number; perPersonDays: number } | null;
 	/** Others may hear a plan's own words (`sharing.enabled`): it says how widely (`share`). */
 	sharing: boolean;
 }
@@ -517,12 +522,12 @@ const planField = ({ busy, maxDays, makeTime, sharing }: PlanOptions) =>
 	[
 		'- plan: null most of the time. Your calendar keeps your plans, so your days go the way you said.',
 		busy
-			? `When you tell them about a plan of your own that keeps you off your phone (a dentist appointment, dinner at a friend's on Friday): {"day": ${Math.min(maxDays, 3)}, "from": "18:00", "to": "22:00", "busy": "at Jo's birthday dinner", "public": "at a friend's for dinner",${sharing ? ' "share": "personal",' : ''} "withThem": false}: "busy", a few words that complete "you're …", as you'd say them to them ("at your party", never "them" or "their"); "public", the same as anyone may hear it (no names, no "your");${sharing ? ` "share", who else may hear "busy": "open" anyone, "personal" those you're close to (it names someone, their party), "confidential" only your closest, in confidence (something sensitive, or that they asked you to keep to yourself);` : ''} "withThem", true when it's with or for them (their party, a game night together), a promise to them. You're offline then, so never for time with them here.`
+			? `When you tell them about a plan of your own that keeps you off your phone (a dentist appointment, dinner at a friend's on Friday): {"day": ${Math.min(maxDays, 3)}, "from": "18:00", "to": "22:00", "busy": "at Jo's birthday dinner", "public": "at a friend's for dinner",${sharing ? ' "share": "personal",' : ''} "withThem": false}: "busy", a few plain words (Latin letters) that complete "you're …", as you'd say them to them ("at your party", never "them" or "their"; nothing of school or classes: "at yoga", not "at a yoga class"); "public", the same as anyone may hear it (no names, no "your");${sharing ? ` "share", who else may hear "busy": "open" anyone, "personal" those you're close to (it names someone, their party), "confidential" only your closest, in confidence (something sensitive, or that they asked you to keep to yourself);` : ''} "withThem", true when it's with or for them (their party, a game night together), a promise to them. You're offline then, so never for time with them here.`
 			: '',
 		makeTime
-			? `When you promise to be online for them (to chat, or to play something together) at an hour you'd usually be offline but free (never while you're busy, at work say; rarely, only if it matters to you): {"day": ${Math.min(maxDays, 1)}, "from": "15:00", "to": "16:00", "online": true}, ${minutesLength(makeTime.maxMinutes)} at most. Nothing to plan when you're online then anyway.`
+			? `When you promise to be online for them (to chat, or to play something together) at an hour you'd usually be offline but free (never while you're busy, at work say; rarely, only if it matters to you): {"day": ${Math.min(maxDays, 1)}, "from": "15:00", "to": "16:00", "online": true}, between 7 AM and midnight, ${minutesLength(makeTime.maxMinutes)} at most, ${makeTime.perPersonDays === 7 ? 'once a week' : `once in ${makeTime.perPersonDays} days`} for each person. Nothing to plan when you're online then anyway.`
 			: '',
-		maxDays ? `"day" is 0 for today, 1 for tomorrow, and so on, ${maxDays} at most.` : '"day" is 0: today only.',
+		maxDays ? `"day" is 0 for today, 1 for tomorrow, and so on, ${maxDays} at most, by the date: 1 AM tonight is tomorrow's.` : '"day" is 0: today only.',
 		`To call off one of your plans listed below with its number: {"cancel": its number}; to make a new plan in its place, add "cancel" to that plan. ${WEIGH_PROMISE}`,
 		'Times are your local time, on a 24-hour clock.',
 	]
@@ -609,13 +614,16 @@ const timesText = (count: number) => (count === 1 ? 'once' : count === 2 ? 'twic
  * calling it off for `personName`: how close it is to each, and how often it called plans with them off for others in
  * the last 30 days.
  */
-const promiseText = ({ closer, calledOff }: NonNullable<ComingPlan['promise']>, personName: string, other = 'them') =>
-	[
-		closer === 'closer' ? `you're closer to ${personName} than to ${other}` : closer === 'about' ? `you're about as close to ${personName} as to ${other}` : `you're closer to ${other} than to ${personName}`,
-		calledOff ? `you've already called off plans with ${other} ${timesText(calledOff)} this month` : '',
+const promiseText = ({ closer, calledOff, with: other }: NonNullable<ComingPlan['promise']>, personName: string) => {
+	// Unnamed, never "them": in this prompt "them" is the person it talks with
+	const whom = other ?? 'the one you made it with';
+	return [
+		closer === 'closer' ? `you're closer to ${personName} than to ${whom}` : closer === 'about' ? `you're about as close to ${personName} as to ${whom}` : `you're closer to ${whom} than to ${personName}`,
+		calledOff ? `you've already called off plans with ${other ?? 'that person'} ${timesText(calledOff)} this month` : '',
 	]
 		.filter(Boolean)
 		.join('; ');
+};
 
 /**
  * After a calendar with a plan told in confidence: that the others are its own to tell. Measured on a live model, without
@@ -645,12 +653,12 @@ export const calendarPrompt = (plans: readonly ComingPlan[], timeZone: string, p
 								? JSON.stringify(plan.words)
 								: 'a plan of your own';
 					const notes = [
-						plan.confidence ? "someone else's, told to you in confidence: if you bring it up, ask them to keep it to themselves" : '',
-						plan.promise ? promiseText(plan.promise, personName, named) : '',
+						plan.confidence ? 'in confidence: if you bring it up, ask them to keep it to themselves' : '',
+						plan.promise ? promiseText(plan.promise, personName) : '',
 					].filter(Boolean);
 					return `${plan.id !== null ? `[${plan.id}] ` : ''}${dateTimeText(plan.start, timeZone)} to ${clockText(plan.end, timeZone)}: ${what}${notes.length ? ` (${notes.join('; ')})` : ''}`;
 				})
-				.join('; ')}.${plans.some((plan) => plan.confidence) ? ` ${REST_YOURS}` : ''}`
+				.join('; ')}.${plans.some((plan) => plan.confidence) && plans.some((plan) => !plan.confidence) ? ` ${REST_YOURS}` : ''}`
 		: '';
 
 /**

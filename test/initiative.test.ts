@@ -241,6 +241,19 @@ describe('planShare', () => {
 		expect(plan.id).toBeGreaterThan(0);
 	});
 
+	it('shares no plan made with someone else that they would hear only in confidence, or not at all', () => {
+		for (const [share, publicWords] of [['confidential', 'at a clinic'], ['personal', undefined]] as const) {
+			const store = memoryStore(() => EVENING);
+			// Among the closest, a confidential plan told to them in confidence; not close enough for a personal one without public words
+			friend(store, 'alex', { familiarity: 0.95, affinity: 0.8, quietDays: 1 });
+			const sam = friend(store, 'sam', { familiarity: 0.1 });
+			const settings = share === 'personal' ? settingsOf({ initiative: { enabled: true, sharing: { enabled: true } }, calendar: { sharing: { personal: { familiarity: 1 } } } }) : ON;
+			store.addEvent('test', { kind: 'busy', day: { year: 2026, month: 10, day: 15 }, from: 17 * 60 + 30, to: 18 * 60 + 50, what: 'at the therapist with you', ...(publicWords && { public: publicWords }), share, personId: sam.id, source: 'persona' });
+			const hours = calendarHours(persona, store);
+			expect(planShare({ store, persona: hours, settings, span: spanAt(hours, EVENING)!, now: EVENING, rng: () => 0 }), share).toBeNull();
+		}
+	});
+
 	it("tells of a plan made with someone as its sharing allows, and forgets it with them", () => {
 		const store = memoryStore(() => EVENING);
 		const alex = friend(store, 'alex', { familiarity: 0.7, affinity: 0.5, quietDays: 1 });

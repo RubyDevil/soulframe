@@ -119,6 +119,15 @@ describe('checkPlan: a plan of its own (busy)', () => {
 		expect(toOthers("at your birthday party", 'Sam')).toBe("at Sam's birthday party");
 		expect(toOthers('helping you move, then dinner at ur place', 'Sam')).toBe("helping Sam move, then dinner at Sam's place");
 		expect(toOthers('at the youth orchestra with yourself', 'Sam')).toBe('at the youth orchestra with Sam');
+		// Contractions stay words; texting's u, ur and ya only in lowercase and alone; a capital only as the first word
+		expect(toOthers('at the show you’re in', 'Sam')).toBe('at the show Sam’s in');
+		expect(toOthers("dinner you've planned, you'll love it, you'd said", 'Sam')).toBe("dinner Sam's planned, Sam'll love it, Sam'd said");
+		expect(toOthers('see ya at ur place', 'Sam')).toBe("see Sam at Sam's place");
+		expect(toOthers('Your party, then YOURS', 'Sam')).toBe("Sam's party, then Sam's");
+		for (const words of ['at the U.S. consulate', 'picking up a U-Haul', "at Ya Ya's", 'at Yours Truly cafe', 'at a youth club', 'at the bayou']) {
+			expect(toOthers(words, 'Sam'), words).toBe(words);
+			expect(check({ ...dinner, busy: words, share: 'open' }), words).toMatchObject({ add: { share: 'open' } });
+		}
 	});
 
 	it("takes words that only contain the ones it refuses, and names: the persona's own life", () => {

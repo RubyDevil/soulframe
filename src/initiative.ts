@@ -176,13 +176,16 @@ export function planShare({ store, persona, settings, span, now, rng, reachable 
 		const { familiarity, affinity } = faded(person, now - lastAt, settings.relationship);
 		const liked = !settings.relationship.affinity.enabled || affinity >= own.minAffinity;
 		const viewer = { id: person.id, familiarity, ...(settings.relationship.affinity.enabled && { affinity }) };
-		return familiarity >= own.minFamiliarity && liked ? [{ weight: familiarity * (settings.relationship.affinity.enabled ? 1 + affinity : 1), value: { person, viewer } }] : [];
+		// A plan made with someone else, as much of it as they may hear (calendar.ts heardOf): told in confidence, or not
+		// at all, it is no news of its day to share with them (its words in confidence are never to volunteer)
+		const heard = heardOf(busy, viewer, settings.calendar.sharing, nameIn(store));
+		if (heard.confidence || heard.words === undefined) return [];
+		return familiarity >= own.minFamiliarity && liked ? [{ weight: familiarity * (settings.relationship.affinity.enabled ? 1 + affinity : 1), value: { person, heard } }] : [];
 	});
 	const [chosen] = pickSome(rng, candidates, 1);
 	if (!chosen) return null;
-	const { person, viewer } = chosen;
-	// A plan made with someone else, as much of it as they may hear (calendar.ts heardOf), by the closeness it has with them
-	const about = busyText(busy, (block) => heardOf(block, viewer, settings.calendar.sharing, nameIn(store)));
+	const { person, heard } = chosen;
+	const about = busyText(busy, () => heard);
 	const opener = store.planOpener(persona.id, person.id, { kind: 'share', about, dueAt: now + rng() * (until - now), expiresAt: Math.min(span.end, span.start + 2 * JUST_BACK_MS) });
 	// What it was told, and of a plan made with someone, with whom: forgetting them forgets it here too (store.forgetPerson)
 	store.audit(persona.id, 'share_planned', { personId: person.id, about, dueAt: opener.dueAt, openerId: opener.id, ...(busy.madeWith !== undefined && { madeWith: busy.madeWith }) });

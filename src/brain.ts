@@ -458,7 +458,7 @@ export function createBrain({
 		? {
 				busy: calendar.plans.enabled,
 				maxDays: calendar.plans.maxDays,
-				makeTime: calendar.makeTime.enabled ? { maxMinutes: calendar.makeTime.maxMinutes } : null,
+				makeTime: calendar.makeTime.enabled ? { maxMinutes: calendar.makeTime.maxMinutes, perPersonDays: calendar.makeTime.perPersonDays } : null,
 				sharing: calendar.sharing.enabled,
 			}
 		: undefined;
@@ -482,10 +482,17 @@ export function createBrain({
 			return undefined;
 		}
 	};
-	/** Its coming plans, as DM turns and openers with the person list them (prompts.ts calendarPrompt); none while its calendar is off. */
-	const calendarLines = (person: Person) =>
+	/**
+	 * Its coming plans, as DM turns and openers with the person list them (prompts.ts calendarPrompt); none while its
+	 * calendar is off. An opener has no plan field: no numbers to call one off by.
+	 */
+	const calendarLines = (person: Person, { numbered = true } = {}) =>
 		calendar.enabled
-			? calendarPrompt(comingPlans(store, hours, { now: now(), settings: calendar, viewer: viewerOf(person), closeness: closenessOf }), persona.timezone, person.name)
+			? calendarPrompt(
+					comingPlans(store, hours, { now: now(), settings: calendar, viewer: viewerOf(person), closeness: closenessOf }).map((plan) => (numbered ? plan : { ...plan, id: null })),
+					persona.timezone,
+					person.name,
+				)
 			: undefined;
 	/** Where the plan its calendar didn't take is kept for the next turn with them (kv), until a turn with them is kept. */
 	const refusedKey = (personId: number) => `calendarRefused:${personId}`;
@@ -1017,7 +1024,7 @@ export function createBrain({
 				}),
 				relationship: settings.context.relationship ? relationshipNow(person) : undefined,
 				...(photos || links ? { media: { photos, links } } : {}),
-				calendar: calendarLines(person),
+				calendar: calendarLines(person, { numbered: false }),
 				...(opener.kind !== 'apology' && owed.plans.length && { calledOff: calledOffPrompt(owed.plans, { opener: true }) }),
 			});
 			const messages: LlmMessage[] = [
