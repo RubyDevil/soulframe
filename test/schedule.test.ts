@@ -576,6 +576,15 @@ describe('calendar events over the agenda', () => {
 		expect(spanAt({ ...forum, events: () => [online(9, SAT, 12.6, 14)] }, at(SAT, 12, 40), 'forum')?.kind).toBe('online');
 	});
 
+	it("never makes time past midnight inside the next day's busy block: an app's evening into a 1 AM shift", () => {
+		const shift = hoursOf({ days: { 'mon-sun': { busy: [{ reason: 'at work', start: ['01:00', '01:00'], end: ['05:00', '05:00'] }] } } });
+		const late: CalendarEvent = { id: 11, kind: 'online', day: date(SAT), from: 22 * 60, to: 27 * 60, what: '' };
+		const hours: Hours = { ...shift, events: (from, to) => [late].filter((event) => keyOf(event.day) >= keyOf(from) && keyOf(event.day) <= keyOf(to)) };
+		expect(times(agendaOn(hours, date(SAT)).spans)).toEqual([['22:00', '01:00']]);
+		expect(spanAt(hours, at(SAT + 1, 2))).toBeNull();
+		expect(busyAt(hours, at(SAT + 1, 2))?.reason).toBe('at work');
+	});
+
 	it("never makes time to chat inside a busy block of the day before that runs into it: a night shift until 8 AM", () => {
 		const nights = hoursOf({ days: { 'mon-sun': { busy: [{ reason: 'at work', start: ['22:00', '22:00'], end: ['08:00', '08:00'] }] } } });
 		// One the app added without checking, 7:00 to 9:00: online from 8:00 only

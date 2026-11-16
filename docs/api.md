@@ -994,7 +994,8 @@ failed?: true }[]; links: (LinkPreview & { looked?: true })[] }`. A photo keeps 
   `lastOnlineAt` per persona, and the persona `'*'` for token counts and minor flags.
 - **`audit`**, **`auditLog`**: the audit log (newest first, default 50, for one persona or all).
 - **`sweep`**: deletes messages, audit lines and closed openers older than `before`, and the calendar events made before
-  it that were called off before it or are dated two days or more before it. The application sweeps its own tables.
+  it that were called off before it or are dated two days or more before it, but for the persona's own plans of the
+  last 90 days, which its limits still count. The application sweeps its own tables.
 - **`block`**, **`unblock`**: by hand, for an operator. `block` makes an active person `blocked`: the persona ignores
   what they write and cuts a reply under way. `unblock` makes someone `stopped` (they asked to stop) or `blocked`
   `active` again. Both are audited with `source: 'manual'`, answer whether anything changed, and only touch the store:
@@ -1040,7 +1041,8 @@ read only while it is on:
 - **`cancelEvent`**: calls a plan off: it stays stored (a plan the persona made counts toward its limits) but no agenda
   reads it. Answers whether it stood. **`eventById`**: one by id, standing or called off.
 - **`events`**: the persona's standing plans from one date to another, both included, in order: what its agenda lays
-  over each drawn day. **`eventsMadeSince`**: how many it made itself since a time, called off or not, by kind and
+  over each drawn day; not one it made with someone who has since ended it (stopped, blocked or denied), which stands
+  again if they come back. **`eventsMadeSince`**: how many it made itself since a time, called off or not, by kind and
   person when given: what its guardrails count. A forgotten person's plans made in turns with them go with them; the
   app's stay, with `personId` `null`.
 

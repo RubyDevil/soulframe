@@ -10,7 +10,8 @@ import { addDays, agendaOn, localDateOf, onlineMinutesByWeekday, routineOn, span
 import { DAY, MINUTE } from '../src/settings.js';
 import { memoryStore, settingsOf } from './fixtures.js';
 
-const ZONES = ['UTC', 'Europe/London', 'America/Toronto', 'Pacific/Auckland', 'Asia/Kolkata', 'America/St_Johns', 'Australia/Lord_Howe'];
+// Cairo's clock goes back at midnight (23:00 to midnight twice), in the hours time made to chat may take
+const ZONES = ['UTC', 'Europe/London', 'America/Toronto', 'Pacific/Auckland', 'Asia/Kolkata', 'America/St_Johns', 'Australia/Lord_Howe', 'Africa/Cairo'];
 // Days around daylight saving changes (Toronto, London, Auckland, Lord Howe in 2026), and ordinary ones
 const DATES: LocalDate[] = [
 	{ year: 2026, month: 3, day: 8 },
@@ -22,6 +23,7 @@ const DATES: LocalDate[] = [
 	{ year: 2026, month: 11, day: 1 },
 	{ year: 2026, month: 6, day: 17 },
 	{ year: 2026, month: 12, day: 31 },
+	{ year: 2026, month: 10, day: 29 },
 ];
 const SCHEDULES = [
 	// The same evening every day
@@ -191,16 +193,18 @@ describe.each(Array.from({ length: 60 }, (_, seed) => seed))('the checks of the 
 				expect(days).toBeGreaterThanOrEqual(0);
 				expect(days).toBeLessThanOrEqual(settings.plans.maxDays);
 				expect(plan.to - plan.from).toBeGreaterThanOrEqual(15);
+				// As the time passes, a daylight saving change in it counted
+				expect(block.end - block.start).toBeGreaterThanOrEqual(15 * MINUTE);
 				if (plan.kind === 'online') {
 					expect(plan.from).toBeGreaterThanOrEqual(7 * 60);
 					expect(plan.to).toBeLessThanOrEqual(24 * 60);
-					expect(plan.to - plan.from).toBeLessThanOrEqual(settings.makeTime.maxMinutes);
+					expect(block.end - block.start).toBeLessThanOrEqual(settings.makeTime.maxMinutes * MINUTE);
 					// Over no busy block: its day's, nor one of the day before that runs into it
 					for (const busy of [...agendaOn(hours, addDays(plan.day, -1)).busy, ...agendaOn(hours, plan.day).busy]) expect(overlaps(busy, block), JSON.stringify({ busy, plan })).toBe(false);
 					expect(store.eventsMadeSince('robin', now - settings.makeTime.perPersonDays * DAY, { kind: 'online', personId })).toBe(0);
 				} else {
 					expect(planReasonProblem(plan.what!)).toBeNull();
-					expect(plan.to - plan.from).toBeLessThanOrEqual(settings.plans.maxHours * 60);
+					expect(block.end - block.start).toBeLessThanOrEqual(settings.plans.maxHours * 60 * MINUTE);
 					// Over no other plan: busy, or time made to chat (a promise)
 					for (const other of store.events('robin', addDays(plan.day, -1), addDays(plan.day, 1))) expect(overlaps(instantsOf(other, timezone), block)).toBe(false);
 					expect(store.eventsMadeSince('robin', now - 7 * DAY, { kind: 'busy' })).toBeLessThan(settings.plans.perWeek);

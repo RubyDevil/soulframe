@@ -489,4 +489,40 @@ describe('calendar events', () => {
 		store.sweep(nov23);
 		expect([old, recent, late].map((event) => store.eventById(event.id) !== undefined)).toEqual([false, true, true]);
 	});
+
+	it("keeps the persona's own plans of the last 90 days, called off or over, whatever the cut: its limits count them", () => {
+		const day = 86_400_000;
+		let at = Date.UTC(2026, 10, 16);
+		const store = memoryStore(() => at);
+		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const own = store.addEvent('robin', { kind: 'online', day: { year: 2026, month: 11, day: 17 }, from: 900, to: 960, personId: sam.id, source: 'persona' });
+		const apps = store.addEvent('robin', { kind: 'busy', day: { year: 2026, month: 11, day: 17 }, from: 600, to: 700, what: 'at a team day' });
+		store.cancelEvent(own.id);
+		store.cancelEvent(apps.id);
+		// Two days on, a sweep of all but the last day: Sam's time still counts toward makeTime.perPersonDays
+		at += 2 * day;
+		store.sweep(at - day);
+		expect(store.eventById(own.id)).toBeDefined();
+		expect(store.eventById(apps.id)).toBeUndefined();
+		expect(store.eventsMadeSince('robin', at - 7 * day, { kind: 'online', personId: sam.id })).toBe(1);
+		// Past 90 days, it goes
+		at += 90 * day;
+		store.sweep(at - day);
+		expect(store.eventById(own.id)).toBeUndefined();
+	});
+
+	it('stands no plan made with someone who has since ended it, and stands it again if they come back', () => {
+		const store = memoryStore(() => Date.UTC(2026, 10, 16));
+		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const plan = store.addEvent('robin', { kind: 'busy', day: friday, from: 1080, to: 1320, what: 'at a party', personId: sam.id, source: 'persona' });
+		const apps = store.addEvent('robin', { kind: 'busy', day: friday, from: 600, to: 700, what: 'at a team day', personId: sam.id });
+		const standing = () => store.events('robin', friday, friday).map((event) => event.id);
+		expect(standing()).toEqual([apps.id, plan.id]);
+		for (const state of ['stopped', 'blocked', 'denied'] as const) {
+			store.updatePerson(sam.id, { state });
+			expect(standing(), state).toEqual([apps.id]);
+		}
+		store.updatePerson(sam.id, { state: 'active' });
+		expect(standing()).toEqual([apps.id, plan.id]);
+	});
 });

@@ -30,6 +30,9 @@ export interface CalendarEvent {
 	to: number;
 	/** A busy one's reason, completing "you're ..."; empty for an online one. */
 	what: string;
+	/** Who put it there: the persona in a turn with `personId` (whose words its reason are), or the app. Left out: the app. */
+	source?: 'persona' | 'app';
+	personId?: number | null;
 }
 /** What the agenda needs of a persona (a PersonaConfig satisfies it). */
 export interface Hours {
@@ -54,13 +57,17 @@ export interface Span {
 	day: LocalDate;
 	event?: number;
 }
-/** Offline time with a reason that completes "you're ...". `event`: the calendar event it is, if it is one. */
+/**
+ * Offline time with a reason that completes "you're ...". `event`: the calendar event it is, if it is one; `madeWith`:
+ * the person it made that plan with in a DM turn, whose words the reason are (prompts.ts busyText shows them to them alone).
+ */
 export interface Busy {
 	reason: string;
 	start: number;
 	end: number;
 	day: LocalDate;
 	event?: number;
+	madeWith?: number;
 }
 export interface DayAgenda {
 	day: LocalDate;
@@ -439,7 +446,7 @@ const withCalendar = new WeakMap<ScheduleConfig, Map<string, DayAgenda>>();
 /**
  * The persona's agenda for one local date: its routine (`routineOn`), with its calendar's events over it (`withEvents`):
  * those of that date, and the busy ones of the dates either side, which may reach into its blocks past midnight (as may
- * the day before's routine busy blocks, a night shift until 8 AM, into time made to chat). A day with events is kept
+ * the routine busy blocks of the days either side into time made to chat: a night shift until 8 AM). A day with events is kept
  * for those exact events (the newest 16 days per schedule), so it is laid out again only once they change: placing
  * them is the costly part, every time in its time zone.
  */
@@ -452,7 +459,8 @@ export function agendaOn(hours: Hours, date: LocalDate): DayAgenda {
 	const key = JSON.stringify([hours.id, hours.timezone, date, near]);
 	let agenda = days.get(key);
 	if (!agenda) {
-		agenda = withEvents(routine, near, hours.timezone, routineOn(hours, addDays(date, -1)).busy);
+		const around = [...routineOn(hours, addDays(date, -1)).busy, ...routineOn(hours, addDays(date, 1)).busy];
+		agenda = withEvents(routine, near, hours.timezone, around);
 		days.set(key, agenda);
 		if (days.size > CACHED_DAYS) days.delete(days.keys().next().value!);
 	}
@@ -487,16 +495,19 @@ const sameDay = (a: LocalDate, b: LocalDate) => a.year === b.year && a.month ===
  * A drawn day with its calendar's events over it (`events`: those of its date and of the dates either side). Every busy
  * event takes its time out of the day's spans and busy blocks (a dentist's hour cuts a work day in two); those of its
  * date are busy blocks of its own. An online event of its date is online time for every channel outside every busy
- * block (the day before's too, `before`: a night shift until 8 AM), joined to the online time it touches; a short break
- * is what is left of it outside online time for every channel.
+ * block (the routine's of the days either side too, `around`: a night shift until 8 AM, or one from 1 AM after an app's
+ * evening past midnight), joined to the online time it touches; a short break is what is left of it outside online
+ * time for every channel.
  */
-function withEvents(routine: DayAgenda, events: readonly CalendarEvent[], timeZone: string, before: readonly Busy[] = []): DayAgenda {
+function withEvents(routine: DayAgenda, events: readonly CalendarEvent[], timeZone: string, around: readonly Busy[] = []): DayAgenda {
 	const instants = (event: CalendarEvent) => ({ start: zonedToUtc(event.day, event.from, timeZone), end: zonedToUtc(event.day, event.to, timeZone) });
-	const busyEvents: Busy[] = events.filter((event) => event.kind === 'busy').map((event) => ({ reason: event.what, ...instants(event), day: event.day, event: event.id }));
+	const busyEvents: Busy[] = events
+		.filter((event) => event.kind === 'busy')
+		.map((event) => ({ reason: event.what, ...instants(event), day: event.day, event: event.id, ...(event.source === 'persona' && typeof event.personId === 'number' && { madeWith: event.personId }) }));
 	const own = <B extends { day: LocalDate }>(blocks: B[]) => blocks.filter((block) => sameDay(block.day, routine.day));
 	const busy = tidy([...without(routine.busy, busyEvents), ...own(busyEvents)]);
 	const made: Span[] = own(events.filter((event) => event.kind === 'online').map((event) => ({ kind: 'online' as const, ...instants(event), day: event.day, event: event.id })));
-	const online = joined(tidy([...without(routine.spans, busyEvents), ...without(made, [...busyEvents, ...busy, ...before])]));
+	const online = joined(tidy([...without(routine.spans, busyEvents), ...without(made, [...busyEvents, ...busy, ...around])]));
 	// A short break is DM time within online time for every channel: only what lies outside it stays a break
 	const everywhere = online.filter((span) => span.kind === 'online' && !span.on);
 	const spans = tidy(online.flatMap((span) => (span.kind === 'break' ? without([span], everywhere) : [span])));

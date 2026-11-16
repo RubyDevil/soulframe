@@ -1524,9 +1524,11 @@ describe('parseTurn: plan', () => {
 		expect(plan({ cancel: '4' })).toEqual({ cancel: 4 });
 		// A day that isn't whole is left for the code to refuse (and audit), not dropped unseen
 		expect(plan({ day: 1.5, from: '15:00', to: '16:00', online: true })).toEqual({ day: 1.5, from: '15:00', to: '16:00', online: true });
-		// Nothing it could check: none
-		for (const value of [null, 'tomorrow', { day: 'two', from: '18:00', to: '22:00', busy: 'x' }, { day: 2, from: '18:00', busy: 'x' }, { day: 2, from: '18:00', to: '22:00' }, { day: 2, from: '18:00', to: '22:00', online: 'yes' }, { cancel: 'four' }, { day: '', from: '18:00', to: '22:00', busy: 'x' }]) {
-			expect(plan(value)).toBeUndefined();
+		// No plan: none
+		for (const value of [null, false, {}]) expect(plan(value)).toBeUndefined();
+		// One it can't read is said so, for the code to audit and tell, never dropped unseen
+		for (const value of ['tomorrow', [2], { day: 'two', from: '18:00', to: '22:00', busy: 'x' }, { day: 'tomorrow', from: '15:00', to: '16:00', online: true }, { day: 1, from: 15, to: 16, online: true }, { day: 1, start: '15:00', end: '16:00', online: true }, { day: 2, from: '18:00', busy: 'x' }, { day: 2, from: '18:00', to: '22:00' }, { day: 2, from: '18:00', to: '22:00', online: 'yes' }, { cancel: 'four' }, { day: '', from: '18:00', to: '22:00', busy: 'x' }]) {
+			expect(plan(value), JSON.stringify(value)).toBe('unreadable');
 		}
 		expect(parseTurn('ok\nplan: dinner on friday')).toBeNull();
 	});
@@ -1648,6 +1650,21 @@ describe('its calendar (settings.calendar)', () => {
 		clock.now += 2 * MINUTE;
 		turn.keep?.();
 		expect(store.events('robin', { year: 2026, month: 10, day: 15 }, { year: 2026, month: 10, day: 16 }).map((event) => event.day.day)).toEqual([15]);
+	});
+
+	it('audits a plan it could not read and tells the next turn, so a promise in it is not lost unseen', async () => {
+		const store = memoryStore(() => NOW);
+		const answers = [{ reply: 'sure, tomorrow at 3!', plan: { day: 'tomorrow', from: 15, to: 16, online: true } }, { reply: 'hey' }];
+		const seen: string[] = [];
+		const llm: Llm = { complete: async (messages) => (seen.push(messages[0]!.content), JSON.stringify(answers[seen.length - 1])) };
+		const brain = createBrain({ settings: CALENDAR, persona, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => NOW }, llm });
+		for (const text of ['talk tomorrow at 3?', 'great']) {
+			const decision = brain.incoming(DM.chat, 'sam', 'Sam', text);
+			if (decision.kind !== 'reply') throw new Error('expected a reply');
+			(await brain.compose(decision.person.id, DM.chat)).keep?.();
+		}
+		expect(store.auditLog('robin').find((row) => row.kind === 'plan_refused')?.detail).toMatchObject({ reason: 'unreadable' });
+		expect(seen[1]).toContain("Your calendar didn't take the plan you made last time: it wasn't written as the plan field says. If you still mean it, make it again as the plan field says.");
 	});
 
 	it('calls one of its plans off by its number', async () => {

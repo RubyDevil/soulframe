@@ -126,6 +126,9 @@ interface EventRow {
 /** "2026-11-20": a local date as the events table keeps it, so the dates sort as text. */
 const dayKey = ({ year, month, day }: LocalDate) => `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 
+/** How far back the persona's own plans count toward its calendar's limits (settings.calendar `makeTime.perPersonDays` at most): kept by `sweep` that long. */
+const LIMITS_COUNT_DAYS = 90;
+
 const toEvent = (row: EventRow): StoredEvent => {
 	const [year, month, day] = row.day.split('-').map(Number) as [number, number, number];
 	return {
@@ -359,7 +362,11 @@ export function createStore(db: Database, now: () => number = Date.now) {
 	if (!(db.prepare('PRAGMA table_info(messages)').all() as unknown as { name: string }[]).some((column) => column.name === 'media')) db.exec('ALTER TABLE messages ADD COLUMN media TEXT');
 
 	// Prepared once: every agenda read of a persona with a calendar asks it (schedule.ts agendaOn)
-	const standingEvents = db.prepare('SELECT * FROM events WHERE persona = ? AND day >= ? AND day <= ? AND cancelled_at IS NULL ORDER BY day, from_minute, id');
+	// A plan the persona made with someone who then stopped, blocked it or was denied no longer stands: nobody is left to
+	// call it off with, and nothing of them is kept to
+	const standingEvents = db.prepare(
+		"SELECT e.* FROM events e LEFT JOIN people p ON p.id = e.person_id WHERE e.persona = ? AND e.day >= ? AND e.day <= ? AND e.cancelled_at IS NULL AND (e.source != 'persona' OR e.person_id IS NULL OR p.state = 'active') ORDER BY e.day, e.from_minute, e.id",
+	);
 
 	const byId = (id: number) => {
 		const row = db.prepare(`${PERSON_SELECT} WHERE p.id = ?`).get(id) as unknown as PersonRow | undefined;
@@ -468,8 +475,9 @@ export function createStore(db: Database, now: () => number = Date.now) {
 		},
 		/**
 		 * Deletes messages, audit lines, closed openers and calendar events older than `before`: an event made before it
-		 * and called off before it, or dated two days or more before it (over in every time zone). The app sweeps its own
-		 * tables.
+		 * and called off before it, or dated two days or more before it (over in every time zone), but for the persona's
+		 * own made in the last 90 days, which its limits still count (settings.calendar: `perWeek`, `perPersonDays` up to
+		 * 90). The app sweeps its own tables.
 		 */
 		sweep(before: number) {
 			db.prepare('DELETE FROM messages WHERE at < ?').run(before);
@@ -477,7 +485,12 @@ export function createStore(db: Database, now: () => number = Date.now) {
 			db.prepare('DELETE FROM openers WHERE closed_at IS NOT NULL AND closed_at < ?').run(before);
 			const over = new Date(before - 2 * 86_400_000);
 			const overDay = dayKey({ year: over.getUTCFullYear(), month: over.getUTCMonth() + 1, day: over.getUTCDate() });
-			db.prepare('DELETE FROM events WHERE created_at < ? AND ((cancelled_at IS NOT NULL AND cancelled_at < ?) OR day < ?)').run(before, before, overDay);
+			db.prepare("DELETE FROM events WHERE created_at < ? AND (source != 'persona' OR created_at < ?) AND ((cancelled_at IS NOT NULL AND cancelled_at < ?) OR day < ?)").run(
+				before,
+				now() - LIMITS_COUNT_DAYS * 86_400_000,
+				before,
+				overDay,
+			);
 		},
 		/**
 		 * Puts a plan in the persona's calendar (settings.calendar), laid over its agenda while the calendar is on: `busy`,
@@ -511,7 +524,7 @@ export function createStore(db: Database, now: () => number = Date.now) {
 			const row = db.prepare('SELECT * FROM events WHERE id = ?').get(id) as unknown as EventRow | undefined;
 			return row && toEvent(row);
 		},
-		/** The persona's standing plans from one local date to another, both included, in order. */
+		/** The persona's standing plans from one local date to another, both included, in order: not one it made with someone who has since ended it (stopped, blocked or denied). */
 		events(persona: string, from: LocalDate, to: LocalDate): StoredEvent[] {
 			const rows = standingEvents.all(persona, dayKey(from), dayKey(to)) as unknown as EventRow[];
 			return rows.map(toEvent);

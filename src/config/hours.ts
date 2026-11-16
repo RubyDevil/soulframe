@@ -49,26 +49,40 @@ export const refuseSchool = ({ schedule }: { schedule?: { days: Record<string, {
 const TALK_WORDS = /\b(?:online|chat(?:ting)?|text(?:ing)?|messag(?:e|es|ing)|with (?:them|you))\b/i;
 
 /**
- * Words that point at someone in the conversation a plan came from ("at your party", "at their place"): every turn with
- * anyone reads its calendar, where "your" would be whoever it talks with then.
+ * Words that point at someone in the conversation a plan came from ("at your party", "at ur place"): its words are
+ * shown only in turns with that person, but kept to ones that read the same anywhere.
  */
-const ADDRESS_WORDS = /\b(?:you|your|yours|yourself|them|their|theirs|themselves)\b/i;
+const ADDRESS_WORDS = /\b(?:you|your|yours|yourself|u|ur|ya|them|their|theirs|themselves)\b/i;
+
+/**
+ * A plan's words as its checks read them: look-alike letters as the plain ones (fullwidth, bold), accents off, so "ｓｃｈｏｏｌ"
+ * and "école" are read as "school" and "ecole".
+ */
+const plainOf = (text: string) => text.normalize('NFKD').replace(/\p{M}/gu, '');
+/**
+ * What a plan of its own may never be, held to the strictest, as the model wrote it: sleep and school joined to other
+ * words ("highschool", "sleepover", "bedtime"), in the few other languages most likely, and school's other words.
+ */
+const PLAN_SLEEP_WORDS = /sleep|\bbed|\bnap(?:s|ped|ping)?\b|\bdoz(?:e|ed|ing)\b|snooz|slumber|schlaf|\bdorm|\bdurm|sommeil|sueno|slaap/i;
+const PLAN_SCHOOL_WORDS =
+	/school|schul|ecole|escuel|escola|scuol|colegio|lycee|liceo|colleg|univers|\buni\b|homework|\blectures?\b|\bexams?\b|campus|student|teacher|\btutor|detention|\bprom\b|homeroom|\bgrade\b|\brecess\b|semester|classmate|\bpupils?\b|\b(?:clases?|classe|klassen?)\b/i;
 
 /**
  * Why the reason of a plan the persona made itself (calendar.ts) is refused, or null: it completes "you're ..." as a
  * busy reason does, never sleep and never school (in any conversation: what the model writes is held to the strictest),
  * never talking with them (`online`: a busy plan is offline time), never pointing at someone of the conversation it
- * came from (`person`: every conversation reads it), and only words, in one short line (letters, digits, spaces, and
+ * came from (`person`), and only words, in one short line (Latin letters once read plain, `plainOf`, digits, spaces, and
  * , . ' ’ & -): a few plain words at most, which every prompt quotes as data (prompts.ts busyText).
  */
 export const planReasonProblem = (reason: string): string | null => {
 	const text = reason.trim();
 	if (text.length < 2 || text.length > 40) return 'length';
-	if (!/^[\p{L}\p{N} ,.'’&-]+$/u.test(text)) return 'characters';
-	if (SLEEP_WORDS.test(text)) return 'sleep';
-	if (SCHOOL_WORDS.test(text)) return 'school';
-	if (TALK_WORDS.test(text)) return 'online';
-	if (ADDRESS_WORDS.test(text)) return 'person';
+	const plain = plainOf(text);
+	if (!/^[A-Za-z0-9 ,.'’&-]+$/.test(plain)) return 'characters';
+	if (SLEEP_WORDS.test(plain) || PLAN_SLEEP_WORDS.test(plain)) return 'sleep';
+	if (SCHOOL_WORDS.test(plain) || PLAN_SCHOOL_WORDS.test(plain)) return 'school';
+	if (TALK_WORDS.test(plain)) return 'online';
+	if (ADDRESS_WORDS.test(plain)) return 'person';
 	return null;
 };
 

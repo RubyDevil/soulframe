@@ -5,7 +5,7 @@ import type { Llm, LlmMessage } from './llm.js';
 import { splitReply } from './pacing.js';
 import { clip, lookedCard, mediaOf, seenIn, timeLimited, unseen, type IncomingMessage, type MessageMedia, type PreviewLink, type SeenImage, type SeenLink } from './perception.js';
 import { hostOf, isStopRequest, MINOR_EXIT, minorSignal, STOP_ACK, stripForeignLinks } from './safety.js';
-import { calendarHours, checkPlan, comingPlans, type PlanProposal } from './calendar.js';
+import { calendarHours, checkPlan, comingPlans, type PlanCheck, type PlanProposal } from './calendar.js';
 import { followUpWindow } from './initiative.js';
 import { addDays, agendaOn, busyAt, fullyOnline, isOn, localDateOf, situationAt, usualWeek, type Hours } from './schedule.js';
 import { DAY, HOUR, MINUTE, ownSettings, SECOND, taskModel, type Settings } from './settings.js';
@@ -98,8 +98,8 @@ export interface ParsedTurn {
 	acceptInvite?: true;
 	/** A plan to text them first later (settings.initiative.followUps): `days` ahead and why, or false to drop the plan pending; `undefined` keeps it. */
 	followUp?: { days: number; about: string } | false;
-	/** A plan for its calendar (settings.calendar), as calendar.ts checks it; `undefined` for none. */
-	plan?: PlanProposal;
+	/** A plan for its calendar (settings.calendar), as calendar.ts checks it, or 'unreadable' for one it can't read; `undefined` for none. */
+	plan?: PlanProposal | 'unreadable';
 }
 
 const textOrNull = (value: unknown) => (typeof value === 'string' && value.trim() && value.trim().toLowerCase() !== 'null' ? value.trim() : null);
@@ -146,18 +146,21 @@ const numberOf = (value: unknown) => {
 };
 
 /**
- * A `plan` answer read as calendar.ts checks it (numbers as numeric strings too, `online` as "true" too), or undefined
- * for none or one it can't read: the code checks the rest, and audits what it refuses.
+ * A `plan` answer read as calendar.ts checks it (numbers as numeric strings too, `online` as "true" too); undefined for
+ * none (null, an empty object), 'unreadable' for one it can't read ("tomorrow" for its day, numbers for its times): the
+ * code checks the rest, and audits and tells what it refuses, that too.
  */
-const planOf = (value: unknown): PlanProposal | undefined => {
-	if (typeof value !== 'object' || value === null) return undefined;
+const planOf = (value: unknown): PlanProposal | 'unreadable' | undefined => {
+	if (value === undefined || value === null || value === false) return undefined;
+	if (typeof value !== 'object' || Array.isArray(value)) return 'unreadable';
+	if (!Object.keys(value).length) return undefined;
 	const { cancel, day, from, to, busy, online } = value as Record<string, unknown>;
 	const number = numberOf(cancel);
 	if (number !== null) return { cancel: number };
 	const days = numberOf(day);
-	if (days === null || typeof from !== 'string' || typeof to !== 'string') return undefined;
+	if (days === null || typeof from !== 'string' || typeof to !== 'string') return 'unreadable';
 	if (online === true || online === 'true') return { day: days, from: from.trim(), to: to.trim(), online: true };
-	return typeof busy === 'string' ? { day: days, from: from.trim(), to: to.trim(), busy } : undefined;
+	return typeof busy === 'string' ? { day: days, from: from.trim(), to: to.trim(), busy } : 'unreadable';
 };
 
 /** A follow-up the model planned: `{ days, about }` with a whole number of days from 0 and a note, false (or "false") to drop it; else none. */
@@ -414,7 +417,7 @@ export function createBrain({
 	/** The plan its calendar didn't take at the last kept turn with them, as their next turn is told (prompts.ts refusedPlanPrompt), if any. */
 	const refusedPlan = (personId: number) => {
 		const kept = calendar.enabled ? store.get(persona.id, refusedKey(personId)) : null;
-		return kept ? refusedPlanPrompt(JSON.parse(kept) as Parameters<typeof refusedPlanPrompt>[0], persona.timezone) : undefined;
+		return kept ? refusedPlanPrompt(JSON.parse(kept) as Parameters<typeof refusedPlanPrompt>[0], persona.timezone, personId) : undefined;
 	};
 	/** Its coming plans, as DM turns and openers with the person list them (prompts.ts calendarPrompt); none while its calendar is off. */
 	const calendarLines = (personId: number) =>
@@ -423,15 +426,15 @@ export function createBrain({
 	const refusedKey = (personId: number) => `calendarRefused:${personId}`;
 	/**
 	 * A plan a kept turn with the person made, if the code allows it (calendar.ts checkPlan): added, called off, or
-	 * refused, each audited. A refused one is kept for the next turn with them to hear about (`refusedPlanPrompt`), but
-	 * for time made to chat when it is online then anyway: no promise is broken.
+	 * refused (one it couldn't read too: 'unreadable'), each audited. A refused one is kept for the next turn with them to
+	 * hear about (`refusedPlanPrompt`), but for time made to chat when it is online then anyway: no promise is broken.
 	 */
-	const applyPlan = (personId: number, proposal: PlanProposal, writtenAt: number) => {
-		const checked = checkPlan(proposal, { store, hours, settings: calendar, now: now(), personId, today: localDateOf(writtenAt, persona.timezone) });
+	const applyPlan = (personId: number, proposal: PlanProposal | 'unreadable', writtenAt: number) => {
+		const checked: PlanCheck = proposal === 'unreadable' ? { refused: 'unreadable' } : checkPlan(proposal, { store, hours, settings: calendar, now: now(), personId, today: localDateOf(writtenAt, persona.timezone) });
 		if ('refused' in checked) {
 			store.audit(persona.id, 'plan_refused', { personId, reason: checked.refused });
 			if (checked.refused !== 'already_online') {
-				const told: Parameters<typeof refusedPlanPrompt>[0] = { reason: checked.refused, ...(checked.block && { block: checked.block }), ...(checked.clash && { clash: checked.clash }), ...('cancel' in proposal && { cancel: proposal.cancel }) };
+				const told: Parameters<typeof refusedPlanPrompt>[0] = { reason: checked.refused, ...(checked.block && { block: checked.block }), ...(checked.clash && { clash: checked.clash }), ...(proposal !== 'unreadable' && 'cancel' in proposal && { cancel: proposal.cancel }) };
 				store.set(persona.id, refusedKey(personId), JSON.stringify(told));
 			}
 			return;
@@ -623,10 +626,11 @@ export function createBrain({
 
 	/**
 	 * Its day on `channel` (prompts.ts dayPrompt), each part as settings.context shows it; none outside its online time.
-	 * `dm` only for a DM turn: it adds the line saying their messages waited (`firstNew`, when their first message not
-	 * handled yet came) and the wrap-up near the end of its span (WRAP_UP_MS).
+	 * `viewer`: the person a DM turn or an opener is with (none in a group chat), told the words of a plan made with them
+	 * alone. `dm` only for a DM turn: it adds the line saying their messages waited (`firstNew`, when their first message
+	 * not handled yet came) and the wrap-up near the end of its span (WRAP_UP_MS).
 	 */
-	const dayLines = (channel: ChannelId, dm?: { firstNew: number | undefined }) => {
+	const dayLines = (channel: ChannelId, viewer?: number, dm?: { firstNew: number | undefined }) => {
 		const at = now();
 		const situation = situationAt(hours, at, channel);
 		if (!situation) return '';
@@ -642,7 +646,7 @@ export function createBrain({
 			const agenda = agendaOn(hours, addDays(today, index + 1));
 			return { ...agenda, spans: agenda.spans.filter((span) => isOn(span, channel)) };
 		});
-		return dayPrompt(situation, persona.timezone, { now: context.situation, upcoming: context.upcoming, away, endingSoon, ahead });
+		return dayPrompt(situation, persona.timezone, { now: context.situation, upcoming: context.upcoming, away, endingSoon, ahead, ...(viewer !== undefined && { viewer }) });
 	};
 
 	return {
@@ -747,7 +751,7 @@ export function createBrain({
 					gaps: settings.context.timeSince
 						? { theirLast: theirLast ? now() - theirLast.at : null, yourLast: yourLast ? now() - yourLast.at : null }
 						: undefined,
-					day: dayLines(channel.id, { firstNew: theirNew[0]?.at }),
+					day: dayLines(channel.id, person.id, { firstNew: theirNew[0]?.at }),
 				}),
 				minorCaution: caution,
 				// Counted by the code, never by the model; it changes nothing in the rules or the checks
@@ -845,7 +849,7 @@ export function createBrain({
 				time: directMessageTimePrompt({
 					localTime: localTime(),
 					gaps: settings.context.timeSince ? { theirLast: theirLast ? now() - theirLast.at : null, yourLast: yourLast ? now() - yourLast.at : null } : undefined,
-					day: dayLines(channel.id),
+					day: dayLines(channel.id, person.id),
 				}),
 				relationship: settings.context.relationship ? relationshipNow(person) : undefined,
 				...(photos || links ? { media: { photos, links } } : {}),

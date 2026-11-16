@@ -573,22 +573,28 @@ What the code checks, whatever the settings say:
 
 - every plan is at least 15 minutes, on a day from today to `plans.maxDays` (counted from the date its turn was written,
   so a turn kept just past midnight keeps its day), and starts after the turn that made it;
-- a plan of its own has a reason of 2 to 40 characters, only letters, digits, spaces and `, . ' ’ & -` (a few plain
-  words, which every prompt quotes as data), never sleep and never school (in any conversation), never talking with
-  them ("online", "chatting": a busy plan is time away from the phone), never "you", "your" or "their" (every
-  conversation reads its calendar), and lies over no other plan, time made to chat included (a promise to someone);
-  over its routine it wins (an appointment cuts a work day in two);
+- every length counts as the time passes: 10 PM to midnight on a night the clock goes back is three hours;
+- a plan of its own has a reason of 2 to 40 characters, only Latin letters once read plain (look-alike letters as the
+  plain ones, accents off), digits, spaces and `, . ' ’ & -` (a few plain words, which every prompt quotes as data),
+  never sleep and never school (in any conversation; joined to other words, as "highschool" or "sleepover", and in
+  the other languages most likely too), never talking with them ("online", "chatting": a busy plan is time away from
+  the phone), never "you", "your" or "their", and lies over no other plan, time made to chat included (a promise to
+  someone); over its routine it wins (an appointment cuts a work day in two);
 - time made to chat lies between 7 AM and midnight, over no busy block (its routine's, one of the day before that runs
-  into it, as a night shift until 8 AM, or a plan's), adds online time (it isn't online for every channel then
-  already), and never makes the day's online time longer than its schedule's longest day by more than
-  `makeTime.maxMinutes`;
+  into it, as a night shift until 8 AM, or a plan's), and never makes the day's online time longer than its
+  schedule's longest day by more than `makeTime.maxMinutes`; at an hour it is online for every channel anyway it adds
+  nothing but is kept, so no plan of its own takes that time later (unless another for them is too soon: then it is
+  left out, and not told, since nothing was broken);
 - it calls off only its own plans of a kind it may make now, still ahead, and only in a turn with whom it made them
-  (told to them, a promise at times); a plan called off still counts toward `perWeek` and `perPersonDays`.
+  (told to them, a promise at times); a plan called off still counts toward `perWeek` and `perPersonDays`, and
+  `store.sweep` keeps the persona's own plans of the last 90 days for that;
+- a plan made with someone who then ends it (stops, blocks it, is denied) no longer stands: nobody is left to call it
+  off with.
 
-Each outcome is audited: `plan_added`, `plan_cancelled`, or `plan_refused` with its reason. A refused plan is told,
-once, to the next turn with that person (when it was for, and why), so a promise the model made can be put right;
-time made to chat at an hour it is online anyway is not, since nothing was broken. Interruptions
-(`pacing.interruptions`) stay those of its routine.
+Each outcome is audited: `plan_added`, `plan_cancelled`, or `plan_refused` with its reason (`unreadable` for a `plan`
+the code couldn't read). A refused plan is told, once, to the next turn with that person (when it was for, and why),
+so a promise the model made can be put right. A plan's words are the person's it was made with: other turns and group
+chats see "a plan of your own". Interruptions (`pacing.interruptions`) stay those of its routine.
 
 ## Service settings
 

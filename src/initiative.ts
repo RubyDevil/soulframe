@@ -175,7 +175,7 @@ export function planShare({ store, persona, settings, span, now, rng, reachable 
 	});
 	const [person] = pickSome(rng, candidates, 1);
 	if (!person) return null;
-	const opener = store.planOpener(persona.id, person.id, { kind: 'share', about: busyText(busy), dueAt: now + rng() * (until - now), expiresAt: Math.min(span.end, span.start + 2 * JUST_BACK_MS) });
+	const opener = store.planOpener(persona.id, person.id, { kind: 'share', about: busyText(busy, person.id), dueAt: now + rng() * (until - now), expiresAt: Math.min(span.end, span.start + 2 * JUST_BACK_MS) });
 	store.audit(persona.id, 'share_planned', { personId: person.id, about: busy.reason, dueAt: opener.dueAt });
 	return opener;
 }
