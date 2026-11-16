@@ -49,10 +49,17 @@ export const refuseSchool = ({ schedule }: { schedule?: { days: Record<string, {
 const TALK_WORDS = /\b(?:online|chat(?:ting)?|text(?:ing)?|messag(?:e|es|ing)|with (?:them|you))\b/i;
 
 /**
+ * Words that point at someone in the conversation a plan came from ("at your party", "at their place"): every turn with
+ * anyone reads its calendar, where "your" would be whoever it talks with then.
+ */
+const ADDRESS_WORDS = /\b(?:you|your|yours|yourself|them|their|theirs|themselves)\b/i;
+
+/**
  * Why the reason of a plan the persona made itself (calendar.ts) is refused, or null: it completes "you're ..." as a
  * busy reason does, never sleep and never school (in any conversation: what the model writes is held to the strictest),
- * never talking with them (`online`: a busy plan is offline time), and only words, in one short line (letters, digits,
- * spaces, and , . ' ’ & -): a few plain words at most, which every prompt quotes as data (prompts.ts busyText).
+ * never talking with them (`online`: a busy plan is offline time), never pointing at someone of the conversation it
+ * came from (`person`: every conversation reads it), and only words, in one short line (letters, digits, spaces, and
+ * , . ' ’ & -): a few plain words at most, which every prompt quotes as data (prompts.ts busyText).
  */
 export const planReasonProblem = (reason: string): string | null => {
 	const text = reason.trim();
@@ -61,6 +68,7 @@ export const planReasonProblem = (reason: string): string | null => {
 	if (SLEEP_WORDS.test(text)) return 'sleep';
 	if (SCHOOL_WORDS.test(text)) return 'school';
 	if (TALK_WORDS.test(text)) return 'online';
+	if (ADDRESS_WORDS.test(text)) return 'person';
 	return null;
 };
 

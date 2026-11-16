@@ -696,7 +696,7 @@ describe('texting first (settings.initiative)', () => {
 describe('the calendar (planField, calendarPrompt)', () => {
 	const format = (plan?: Parameters<typeof directMessageAnswerFormat>[4]) => directMessageAnswerFormat({}, DEFAULT_SETTINGS.memory, true, undefined, plan);
 	const BUSY = (day = 3) =>
-		`When you tell them about a plan of your own that keeps you off your phone (a dentist appointment, dinner at a friend's on Friday): {"day": ${day}, "from": "18:00", "to": "22:00", "busy": "at a friend's for dinner"}, "busy" being a few words that complete "you're …"; you're offline then, so never for time with them here.`;
+		`When you tell them about a plan of your own that keeps you off your phone (a dentist appointment, dinner at a friend's on Friday): {"day": ${day}, "from": "18:00", "to": "22:00", "busy": "at a friend's for dinner"}, "busy" being a few words that complete "you're …" and that anyone may read (your calendar is yours in every chat: "at a friend's party", never "your" or "their"); you're offline then, so never for time with them here.`;
 	const MAKE_TIME = (length: string, day = 1) =>
 		`When you promise to be online for them (to chat, or to play something together) at an hour you'd usually be offline but free (never while you're busy, at work say; rarely, only if it matters to you): {"day": ${day}, "from": "15:00", "to": "16:00", "online": true}, ${length} at most. Nothing to plan when you're online then anyway.`;
 	const DAYS = (maxDays: number) => `"day" is 0 for today, 1 for tomorrow, and so on, ${maxDays} at most.`;
@@ -740,7 +740,12 @@ describe('the calendar (planField, calendarPrompt)', () => {
 		// Sleep and school are never words of its day, even refused
 		expect(refused({ reason: 'reason_sleep', block })).toBe(`Your calendar didn't take the plan you made last time (${when}): that isn't a plan your calendar keeps.${AFTER}`);
 		expect(refused({ reason: 'reason_school', block })).toBe(refused({ reason: 'reason_sleep', block }));
-		expect(refused({ reason: 'reason_characters', block })).toBe(`Your calendar didn't take the plan you made last time (${when}): it wasn't put in a few plain words.${AFTER}`);
+		// Its words alone: to make it again in other words, nothing to put right with them
+		const REWORD = ' If you still mean it, make it again in other words.';
+		expect(refused({ reason: 'reason_characters', block })).toBe(`Your calendar didn't take the plan you made last time (${when}): it wasn't put in a few plain words.${REWORD}`);
+		expect(refused({ reason: 'reason_person', block })).toBe(
+			`Your calendar didn't take the plan you made last time (${when}): its words said "you", "your" or "their", and your calendar is yours in every chat: say it as anyone may read it, as "at a friend's party".${REWORD}`,
+		);
 		expect(refused({ reason: 'reason_online', block })).toBe(
 			`Your calendar didn't take the plan you made last time (${when}): time with them here isn't time away from your phone: make it time to be online for them, or nothing if you're online then anyway.${AFTER}`,
 		);

@@ -264,19 +264,19 @@ lines say so, and afterwards it is back from it.
   with the person, or one of its plans called off by its number. The app, with `store.addEvent` (a holiday, a team
   day): those are its own to check, and only it calls them off.
 - **The guardrails**, which no setting relaxes (`checkPlan`, calendar.ts:82): the model only proposes. A plan of its
-  own has a short reason of plain words, never sleep or school, over no other plan (time made to chat is a promise to
-  someone: a plan of its own can't break it), at most `plans.perWeek` a week; time made to chat lies between 7 AM and
-  midnight, over no busy block, never makes the day's online time longer than its schedule's longest day and one such
-  time, and comes once per person in `makeTime.perPersonDays`; only the person it was made for can hear it called
-  off. So nobody can talk it into being online all night, or into a day stacked with time made for one person after
+  own has a short reason of plain words anyone may read (never sleep or school, never "your"), over no other plan
+  (time made to chat is a promise to someone: a plan of its own can't break it), at most `plans.perWeek` a week; time
+  made to chat lies between 7 AM and midnight, over no busy block, never makes the day's online time longer than its
+  schedule's longest day and one such time, and comes once per person in `makeTime.perPersonDays`. A plan is called
+  off only in a turn with whom it was made: nobody else can talk it out of a promise. So nobody can talk it into being online all night, or into a day stacked with time made for one person after
   another. A plan is only kept with the turn that made it (`Turn.keep`), and each outcome is audited (`plan_added`,
   `plan_cancelled`, `plan_refused` with the reason). Forgetting a person (`store.forgetPerson`) forgets the plans made
   in turns with them.
 - **A plan it didn't keep.** The model may have promised what the code then refused ("sure, 3 tomorrow" while at
   work): the next turn with that person is told, once, which plan its calendar didn't take and why ("you're at work
   then"), so it can put it right ("oh wait, i'm at work at 3, after 7:30?").
-- **What the model sees.** DM turns and openers list its coming plans (`calendar.shown`), a number on each it may
-  call off in that conversation; time made with someone else is "for someone else", never named. The plans are in
+- **What the model sees.** DM turns and openers list its coming plans (`calendar.shown`), a number on each it made
+  with that person (it may call those off); time made with someone else is "for someone else", never named. The plans are in
   its time lines (now, next, the coming days) like any other block, a plan's words always quoted as data
   (`busy ("at a cousin's birthday")`).
 - **Reading it.** `brain.hours` is the persona's hours with its calendar: the reply queue reads them, and so should

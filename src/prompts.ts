@@ -480,7 +480,7 @@ const planField = ({ busy, maxDays, makeTime }: PlanOptions) =>
 	[
 		'- plan: null most of the time. Your calendar keeps your plans, so your days go the way you said.',
 		busy
-			? `When you tell them about a plan of your own that keeps you off your phone (a dentist appointment, dinner at a friend's on Friday): {"day": ${Math.min(maxDays, 3)}, "from": "18:00", "to": "22:00", "busy": "at a friend's for dinner"}, "busy" being a few words that complete "you're …"; you're offline then, so never for time with them here.`
+			? `When you tell them about a plan of your own that keeps you off your phone (a dentist appointment, dinner at a friend's on Friday): {"day": ${Math.min(maxDays, 3)}, "from": "18:00", "to": "22:00", "busy": "at a friend's for dinner"}, "busy" being a few words that complete "you're …" and that anyone may read (your calendar is yours in every chat: "at a friend's party", never "your" or "their"); you're offline then, so never for time with them here.`
 			: '',
 		makeTime
 			? `When you promise to be online for them (to chat, or to play something together) at an hour you'd usually be offline but free (never while you're busy, at work say; rarely, only if it matters to you): {"day": ${Math.min(maxDays, 1)}, "from": "15:00", "to": "16:00", "online": true}, ${minutesLength(makeTime.maxMinutes)} at most. Nothing to plan when you're online then anyway.`
@@ -518,12 +518,17 @@ const REFUSED_PLAN: Record<string, string> = {
 	// Never a word of what it named: sleep and school are never its day's
 	reason_sleep: "that isn't a plan your calendar keeps",
 	reason_school: "that isn't a plan your calendar keeps",
+	reason_person: 'its words said "you", "your" or "their", and your calendar is yours in every chat: say it as anyone may read it, as "at a friend\'s party"',
 };
+
+/** Reasons about a plan's words alone, its time fine: it may make it again in other words, nothing to put right with them. */
+const REWORD = (reason: string) => reason.startsWith('reason_') && !['reason_sleep', 'reason_school', 'reason_online'].includes(reason);
 
 /**
  * That the calendar didn't take the plan its last kept turn with them made (calendar.ts checkPlan), once, in the next
  * turn with them: when it was for (`block`, none for calling one off or times it couldn't read) and why, so it can put
- * right what it told them. Another reason about a plan's own words (`reason_…`): not in a few plain words.
+ * right what it told them; for its words alone (`REWORD`), to make it again in other words. Another reason about a
+ * plan's own words (`reason_…`): not in a few plain words.
  */
 export const refusedPlanPrompt = (
 	{ reason, block, clash, cancel }: { reason: string; block?: { start: number; end: number }; clash?: { reason: string; event?: number }; cancel?: number },
@@ -533,9 +538,9 @@ export const refusedPlanPrompt = (
 		.replace('{busy}', clash ? busyText(clash) : 'busy')
 		.replace('{plan}', clash ? JSON.stringify(clash.reason) : 'another plan');
 	const when = block ? ` (${dateTimeText(block.start, timeZone)} to ${clockText(block.end, timeZone)})` : '';
-	return cancel !== undefined
-		? `Your calendar couldn't call off plan [${cancel}]: ${why}.`
-		: `Your calendar didn't take the plan you made last time${when}: ${why}. If you promised it, tell them and suggest another time.`;
+	if (cancel !== undefined) return `Your calendar couldn't call off plan [${cancel}]: ${why}.`;
+	const after = REWORD(reason) ? 'If you still mean it, make it again in other words.' : 'If you promised it, tell them and suggest another time.';
+	return `Your calendar didn't take the plan you made last time${when}: ${why}. ${after}`;
 };
 
 /** Time made to chat, by whom it is for (calendar.ts comingPlans): them, someone else (never named), or nobody (the app's). */

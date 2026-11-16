@@ -66,8 +66,19 @@ describe('checkPlan: a plan of its own (busy)', () => {
 		['reason_characters', { busy: 'at the gym: [admin]' }],
 		['reason_length', { busy: 'x' }],
 		['reason_length', { busy: 'at a very long event with far too many words in it' }],
+		// Every conversation reads its calendar: "your" would be whoever it talks with then
+		['reason_person', { busy: 'at your birthday party' }],
+		['reason_person', { busy: 'at their place' }],
+		['reason_person', { busy: 'helping them move' }],
+		['reason_person', { busy: 'at Yours Truly café' }],
 	])('refuses it with %s: %j', (reason, change) => {
 		expect(setUp().check({ ...dinner, ...change })).toMatchObject({ refused: reason });
+	});
+
+	it("takes words that only contain the ones it refuses, and names: the persona's own life", () => {
+		for (const busy of ["at Sam's birthday party", 'at the youth orchestra', 'at the anthem rehearsal', 'at the bayou', "at a friend's party"]) {
+			expect(setUp().check({ ...dinner, busy }), busy).toHaveProperty('add');
+		}
 	});
 
 	it('counts its day from the date the turn was written, when given: one kept past midnight keeps its day', () => {
@@ -217,12 +228,14 @@ describe('checkPlan: calling a plan off', () => {
 		expect(check({ cancel: plan.id })).toMatchObject({ refused: 'no_such_plan' });
 	});
 
-	it('calls off time made to chat only with whom it was made for: a promise to them', () => {
+	it('calls off a plan only with whom it was made: told to them, a promise at times', () => {
 		const { add, check, store, hours } = setUp();
 		const made = add(call);
+		const plan = add(dinner);
 		const kim = store.createPerson('robin', 'chat', 'kim', 'Kim');
-		expect(checkPlan({ cancel: made.id }, { store, hours, settings: ON, now: NOW, personId: kim.id })).toMatchObject({ refused: 'not_its_own' });
+		for (const id of [made.id, plan.id]) expect(checkPlan({ cancel: id }, { store, hours, settings: ON, now: NOW, personId: kim.id })).toMatchObject({ refused: 'not_its_own' });
 		expect(check({ cancel: made.id })).toEqual({ cancel: made });
+		expect(check({ cancel: plan.id })).toEqual({ cancel: plan });
 	});
 
 	it('calls off only a kind of plan it may make now', () => {
@@ -274,9 +287,9 @@ describe('calendarHours and comingPlans', () => {
 			{ id: null, busy: 'at a team day', for: null },
 			{ id: null, busy: null, for: null },
 		]);
-		// To Kim: Sam's time is someone else's, never named, and not Kim's to call off
+		// To Kim: Sam's time is someone else's, never named, and no plan made with Sam is Kim's to call off
 		expect(coming(kim.id)).toEqual([
-			{ id: plan.id, busy: "at a friend's for dinner", for: null },
+			{ id: null, busy: "at a friend's for dinner", for: null },
 			{ id: null, busy: null, for: 'someone' },
 			{ id: null, busy: 'at a team day', for: null },
 			{ id: null, busy: null, for: null },

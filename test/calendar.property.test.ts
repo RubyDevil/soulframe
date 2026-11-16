@@ -210,7 +210,8 @@ describe.each(Array.from({ length: 60 }, (_, seed) => seed))('the checks of the 
 				if (plan.kind === 'online') expect(onlineOn(plan.day)).toBeLessThanOrEqual(longest);
 			} else if ('cancel' in checked) {
 				expect(checked.cancel.source).toBe('persona');
-				if (checked.cancel.kind === 'online') expect(checked.cancel.personId).toBe(personId);
+				// Only with whom it was made
+				expect(checked.cancel.personId).toBe(personId);
 				expect(store.cancelEvent(checked.cancel.id)).toBe(true);
 				outcomes.cancelled++;
 			} else {

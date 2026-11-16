@@ -75,8 +75,8 @@ const covered = (block: { start: number; end: number }, spans: readonly { start:
  *   of that day, not online for every channel then already, never making the day's online time longer than its
  *   schedule's longest day and one such time (`makeTime.maxMinutes`), at most one for the person in
  *   `makeTime.perPersonDays`.
- * - Cancel: one of its own plans (`source` persona) of a kind it may make, standing and not over; time made to chat
- *   only with whom it was made for.
+ * - Cancel: one of its own plans (`source` persona) of a kind it may make, standing and not over, only with whom it was
+ *   made (a plan told to someone is theirs to hear called off).
  * `hours` must carry its calendar (`calendarHours`), so the day it checks is the one the agenda will draw.
  */
 export function checkPlan(
@@ -103,8 +103,8 @@ export function checkPlan(
 	if ('cancel' in proposal) {
 		const event = store.eventById(proposal.cancel);
 		if (!event || event.persona !== hours.id || event.cancelledAt !== null) return refused('no_such_plan');
-		// Time made to chat is a promise to someone: only they can be told it's off
-		if (event.source !== 'persona' || (event.kind === 'online' && event.personId !== personId)) return refused('not_its_own');
+		// A plan made in a turn with someone is told to them, a promise at times: only they hear it called off
+		if (event.source !== 'persona' || event.personId !== personId) return refused('not_its_own');
 		if (!(event.kind === 'online' ? settings.makeTime : settings.plans).enabled) return refused('off');
 		if (instantsOf(event, timezone).end <= now) return refused('over');
 		return { cancel: event };
@@ -160,12 +160,12 @@ export function checkPlan(
  * Its coming plans as a turn with the person (`personId`) lists them (prompts.ts calendarPrompt): those standing from
  * now to `maxDays` ahead, at most `shown`, each with its instants; a busy one with its reason, time made to chat with
  * whom it is for (`them`, `someone` else, never named, or none for the app's). `id` only for one it may call off with
- * them (`checkPlan`): its own, of a kind `settings` lets it make, and time made to chat only with them.
+ * them (`checkPlan`): its own, made with them, of a kind `settings` lets it make.
  */
 export function comingPlans(store: Store, hours: Hours, { now, settings, personId }: { now: number; settings: Settings['calendar']; personId: number }) {
 	const today = localDateOf(now, hours.timezone);
 	const cancellable = (event: StoredEvent) =>
-		event.source === 'persona' && (event.kind === 'online' ? settings.makeTime.enabled && event.personId === personId : settings.plans.enabled);
+		event.source === 'persona' && event.personId === personId && (event.kind === 'online' ? settings.makeTime : settings.plans).enabled;
 	return store
 		.events(hours.id, addDays(today, -1), addDays(today, settings.plans.maxDays))
 		.map((event) => ({ event, ...instantsOf(event, hours.timezone) }))

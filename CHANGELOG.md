@@ -13,15 +13,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   the way it said. A DM turn may put a plan of its own in it (`plan` in the answer format: somewhere it will be, busy
   and so offline then, "at a cousin's birthday"), make time to chat with the person at an hour it would be offline, or
   call one of its plans off by its number; the app may add its own (`store.addEvent`). The model only proposes: the
-  code checks each plan against guardrails no setting relaxes (a short reason of plain words, never sleep or school,
-  over no other plan; time made to chat between 7 AM and midnight, over no busy block, never more online in a day than
-  its schedule's longest day and one such time, once per person a week, called off only with that person; limits per
-  week and days ahead) and audits the outcome (`plan_added`, `plan_cancelled`, `plan_refused`). A plan it refused is
-  told, once, to the next turn with that person, so a promise the model made ("sure, 3 tomorrow" while at work) can be
-  put right. A busy plan cuts the day's online time and busy blocks (a dentist's hour splits a work day); time made to
-  chat is online time for every channel. DM turns and openers list the coming plans (`calendar.shown`; time made with
-  someone else never named, a number only on a plan that conversation may call off), and its time lines include them,
-  a plan's words always quoted as data. Interruptions stay the routine's.
+  code checks each plan against guardrails no setting relaxes (a short reason of plain words anyone may read, never
+  sleep or school or "your", over no other plan; time made to chat between 7 AM and midnight, over no busy block, never
+  more online in a day than its schedule's longest day and one such time, once per person a week; a plan called off
+  only with whom it was made; limits per week and days ahead) and audits the outcome (`plan_added`,
+  `plan_cancelled`, `plan_refused`). A plan it refused is told, once, to the next turn with that person, so a promise
+  the model made ("sure, 3 tomorrow" while at work) can be put right. A busy plan cuts the day's online time and busy
+  blocks (a dentist's hour splits a work day); time made to chat is online time for every channel. DM turns and
+  openers list the coming plans (`calendar.shown`; time made with someone else never named, a number only on a plan
+  made with that person), and its time lines include them, a plan's words always quoted as data. Interruptions stay
+  the routine's.
 - `brain.hours`: the persona's hours with its calendar (the persona itself while the calendar is off), which its reply
   queue reads; give them to `spanAt`, `fullyOnline` and `watchSpans` so a plan moves your view of its online time too.
 - The store's calendar: `addEvent`, `cancelEvent`, `eventById`, `events`, `eventsMadeSince`, and the `StoredEvent`

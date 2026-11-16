@@ -560,7 +560,7 @@ audited, one that doesn't fit. DM turns and openers list its coming plans, and i
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `enabled` | boolean | `false` | Whether it has a calendar. Off, no event is read (the app's neither) and no prompt says anything of it. |
-| `plans.enabled` | boolean | `true` | A DM turn may make a plan of its own, or call one of its own off. |
+| `plans.enabled` | boolean | `true` | A DM turn may make a plan of its own, or call off one it made with that person. |
 | `plans.maxDays` | integer, 0 to 365 | `60` | The furthest ahead any plan may be, in days (0: later today); how far ahead its coming plans are listed. |
 | `plans.perWeek` | integer, 1 to 20 | `4` | The most plans of its own it makes in any 7 days, those called off counting too. |
 | `plans.maxHours` | number, 1 to 24 | `12` | The longest plan of its own. |
@@ -575,14 +575,15 @@ What the code checks, whatever the settings say:
   so a turn kept just past midnight keeps its day), and starts after the turn that made it;
 - a plan of its own has a reason of 2 to 40 characters, only letters, digits, spaces and `, . ' ’ & -` (a few plain
   words, which every prompt quotes as data), never sleep and never school (in any conversation), never talking with
-  them ("online", "chatting": a busy plan is time away from the phone), and lies over no other plan, time made to chat
-  included (a promise to someone); over its routine it wins (an appointment cuts a work day in two);
+  them ("online", "chatting": a busy plan is time away from the phone), never "you", "your" or "their" (every
+  conversation reads its calendar), and lies over no other plan, time made to chat included (a promise to someone);
+  over its routine it wins (an appointment cuts a work day in two);
 - time made to chat lies between 7 AM and midnight, over no busy block (its routine's, one of the day before that runs
   into it, as a night shift until 8 AM, or a plan's), adds online time (it isn't online for every channel then
   already), and never makes the day's online time longer than its schedule's longest day by more than
   `makeTime.maxMinutes`;
-- it calls off only its own plans of a kind it may make now, still ahead, and time made to chat only with whom it was
-  made for; a plan called off still counts toward `perWeek` and `perPersonDays`.
+- it calls off only its own plans of a kind it may make now, still ahead, and only in a turn with whom it made them
+  (told to them, a promise at times); a plan called off still counts toward `perWeek` and `perPersonDays`.
 
 Each outcome is audited: `plan_added`, `plan_cancelled`, or `plan_refused` with its reason. A refused plan is told,
 once, to the next turn with that person (when it was for, and why), so a promise the model made can be put right;

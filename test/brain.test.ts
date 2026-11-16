@@ -1652,7 +1652,8 @@ describe('its calendar (settings.calendar)', () => {
 
 	it('calls one of its plans off by its number', async () => {
 		const store = memoryStore(() => NOW);
-		const plan = store.addEvent('robin', { kind: 'busy', day: SATURDAY, from: 18 * 60, to: 22 * 60, what: 'at the cinema', source: 'persona' });
+		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const plan = store.addEvent('robin', { kind: 'busy', day: SATURDAY, from: 18 * 60, to: 22 * 60, what: 'at the cinema', personId: sam.id, source: 'persona' });
 		const llm: Llm = { complete: async () => JSON.stringify({ reply: 'i can come after all', plan: { cancel: plan.id } }) };
 		const brain = createBrain({ settings: CALENDAR, persona, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => NOW }, llm });
 		const decision = brain.incoming(DM.chat, 'sam', 'Sam', 'come on saturday?');
