@@ -122,6 +122,12 @@ const TaskModelSchema = (defaults: { maxTokens: number; temperature: number }) =
 		})
 		.default({});
 
+/**
+ * The relationship levels from which someone hears the words of a plan made with someone else (calendar.sharing): its
+ * familiarity and, while affinity is kept, its affinity, at least these (a level's `from`); false for nobody.
+ */
+const ShareLevel = z.union([z.literal(false), z.object({ familiarity: z.number().min(0).max(1), affinity: z.number().min(-1).max(1).optional() }).strict()]);
+
 export const SettingsSchema = z
 	.object({
 		/**
@@ -594,6 +600,22 @@ export const SettingsSchema = z
 					.default({}),
 				/** How many of its coming plans a DM turn and an opener list, with the number of each it may call off there. */
 				shown: z.number().int().min(1).max(20).default(6),
+				/**
+				 * What one person hears of the plans the persona made with someone else (calendar.ts sightOf): each plan's words,
+				 * as the model ranked them when it made it (`open`, `personal`, `confidential`), told to those at the
+				 * relationship levels below, and the words anyone may hear to the rest. Off: nobody else ever hears a plan's own
+				 * words, nor whom time was made for.
+				 */
+				sharing: z
+					.object({
+						enabled: z.boolean().default(true),
+						/** A plan that names someone, their party: from these levels (each level's `from`, as relationship's levels set them); false for nobody. */
+						personal: ShareLevel.default({ familiarity: 0.32 }),
+						/** A plan that is sensitive, or that they asked it to keep to itself: told in confidence, from these levels; false for nobody. */
+						confidential: ShareLevel.default({ familiarity: 0.82, affinity: 0.6 }),
+					})
+					.strict()
+					.default({}),
 			})
 			.strict()
 			.default({}),

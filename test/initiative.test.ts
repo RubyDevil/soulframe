@@ -91,10 +91,10 @@ describe('followUpWindow', () => {
 	});
 });
 
-describe('openerBlock on a check-in', () => {
-	it('drops a check-in once they talked since it was planned, and lets it go otherwise', () => {
+describe('openerBlock on a check-in or an apology', () => {
+	it.each(['checkIn', 'apology'] as const)('drops a %s once they talked since it was planned (a turn with them told them), and lets it go otherwise', (kind) => {
 		const { store, person } = setUp();
-		const opener = store.planOpener('robin', person.id, { kind: 'checkIn', about: '', dueAt: NOW, expiresAt: NOW + HOUR });
+		const opener = store.planOpener('robin', person.id, { kind, about: '', dueAt: NOW, expiresAt: NOW + HOUR });
 		expect(openerBlock(store, person, NOW + 3 * HOUR, initiative, opener)).toBeNull();
 		store.addMessage(person.id, 'chat', 'in', 'hey you', NOW + MINUTE);
 		store.updatePerson(person.id, { lastInAt: NOW + MINUTE, handledAt: NOW + MINUTE });

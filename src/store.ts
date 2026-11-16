@@ -41,9 +41,10 @@ export interface Person {
 
 /**
  * What made the persona plan to text someone first (settings.initiative): `followUp`, a DM turn's own plan; `checkIn`,
- * someone close gone quiet; `share`, its day, as it comes back from a busy block.
+ * someone close gone quiet; `share`, its day, as it comes back from a busy block; `apology`, a plan with them it called
+ * off for someone else (settings.calendar), to tell them.
  */
-export type OpenerKind = 'followUp' | 'checkIn' | 'share';
+export type OpenerKind = 'followUp' | 'checkIn' | 'share' | 'apology';
 
 /**
  * How an opener ended: `sent`; `rehearsed` (a dry run logged it); `declined` (the model chose not to text); `replaced`
@@ -58,7 +59,7 @@ export interface Opener {
 	persona: string;
 	personId: number;
 	kind: OpenerKind;
-	/** Why: a follow-up's note in the model's own words, the busy block a share is about; empty for a check-in. Data in the prompt. */
+	/** Why: a follow-up's note in the model's own words, the busy block a share is about, the plan an apology is for; empty for a check-in. Data in the prompt. */
 	about: string;
 	/** The earliest moment it may go, and the moment it is given up (ms). */
 	dueAt: number;
@@ -104,9 +105,16 @@ export interface StoredEvent extends CalendarEvent {
 	/** The person it was made in a conversation with (whom time made to chat is for), if any; null once they are forgotten. */
 	personId: number | null;
 	source: EventSource;
+	/** How widely its words may be told, and the words anyone may hear (the persona's own plans): CalendarEvent's. */
+	share: NonNullable<CalendarEvent['share']>;
+	public: string | null;
+	/** A plan with or for `personId`, a promise to them (time made to chat always is). */
+	withThem: boolean;
 	createdAt: number;
 	/** When it was called off; null while it stands. */
 	cancelledAt: number | null;
+	/** In a turn with whom it was called off (one with someone else: a promise broken for them); null for the app's call. */
+	cancelledBy: number | null;
 }
 
 interface EventRow {
@@ -119,8 +127,12 @@ interface EventRow {
 	what: string;
 	person_id: number | null;
 	source: EventSource;
+	share: NonNullable<CalendarEvent['share']>;
+	public_words: string | null;
+	with_them: number;
 	created_at: number;
 	cancelled_at: number | null;
+	cancelled_by: number | null;
 }
 
 /** "2026-11-20": a local date as the events table keeps it, so the dates sort as text. */
@@ -141,10 +153,22 @@ const toEvent = (row: EventRow): StoredEvent => {
 		what: row.what,
 		personId: row.person_id,
 		source: row.source,
+		share: row.share,
+		public: row.public_words,
+		withThem: row.with_them === 1,
 		createdAt: row.created_at,
 		cancelledAt: row.cancelled_at,
+		cancelledBy: row.cancelled_by,
 	};
 };
+
+/** Columns the events table gained after it was first made: added, if missing, when the store opens. */
+const ADDED_EVENT_COLUMNS = [
+	{ name: 'share', definition: "TEXT NOT NULL DEFAULT 'personal'" },
+	{ name: 'public_words', definition: 'TEXT' },
+	{ name: 'with_them', definition: 'INTEGER NOT NULL DEFAULT 0' },
+	{ name: 'cancelled_by', definition: 'INTEGER' },
+];
 
 export interface StoredMessage {
 	id: number;
@@ -238,8 +262,12 @@ CREATE TABLE IF NOT EXISTS events (
 	what TEXT NOT NULL,
 	person_id INTEGER REFERENCES people(id) ON DELETE SET NULL,
 	source TEXT NOT NULL,
+	share TEXT NOT NULL DEFAULT 'personal',
+	public_words TEXT,
+	with_them INTEGER NOT NULL DEFAULT 0,
 	created_at INTEGER NOT NULL,
-	cancelled_at INTEGER
+	cancelled_at INTEGER,
+	cancelled_by INTEGER
 );
 CREATE INDEX IF NOT EXISTS events_day ON events (persona, day);
 `;
@@ -360,6 +388,9 @@ export function createStore(db: Database, now: () => number = Date.now) {
 	}
 	// A database made before messages could carry photos and links
 	if (!(db.prepare('PRAGMA table_info(messages)').all() as unknown as { name: string }[]).some((column) => column.name === 'media')) db.exec('ALTER TABLE messages ADD COLUMN media TEXT');
+	// One made before plans could be shared, or promised
+	const eventColumns = new Set((db.prepare('PRAGMA table_info(events)').all() as unknown as { name: string }[]).map((column) => column.name));
+	for (const { name, definition } of ADDED_EVENT_COLUMNS) if (!eventColumns.has(name)) db.exec(`ALTER TABLE events ADD COLUMN ${name} ${definition}`);
 
 	// Prepared once: every agenda read of a persona with a calendar asks it (schedule.ts agendaOn)
 	// A plan the persona made with someone who then stopped, blocked it or was denied no longer stands: nobody is left to
@@ -496,28 +527,53 @@ export function createStore(db: Database, now: () => number = Date.now) {
 		 * Puts a plan in the persona's calendar (settings.calendar), laid over its agenda while the calendar is on: `busy`,
 		 * offline from `from` to `to` (minutes of its local `day`; `to` past 1440 runs past midnight, 24 hours at most) with
 		 * `what` as its reason ("at the dentist", completing "you're ..."), or `online`, time it is online for every
-		 * channel. The app's (`source` left out) are its own to check: only the persona's go through calendar.ts. Throws on
-		 * times that don't make a block, or a busy plan without `what`. Answers it.
+		 * channel. The app's (`source` left out) are its own to check: only the persona's go through calendar.ts. A busy
+		 * plan of the persona's with someone carries how widely its words may be told (`share`, `personal` unless given),
+		 * the words anyone may hear (`public`) and whether it is with or for them (`withThem`). Throws on times that don't
+		 * make a block, or a busy plan without `what`. Answers it.
 		 */
 		addEvent(
 			persona: string,
-			event: { kind: CalendarEvent['kind']; day: LocalDate; from: number; to: number; what?: string; personId?: number | null; source?: EventSource },
+			event: {
+				kind: CalendarEvent['kind'];
+				day: LocalDate;
+				from: number;
+				to: number;
+				what?: string;
+				personId?: number | null;
+				source?: EventSource;
+				share?: StoredEvent['share'];
+				public?: string | null;
+				withThem?: boolean;
+			},
 		): StoredEvent {
-			const { kind, day, from, to, what = '', personId = null, source = 'app' } = event;
+			const { kind, day, from, to, what = '', personId = null, source = 'app', share = 'personal', withThem = false } = event;
 			if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || from >= 1440 || to <= from || to - from > 1440) throw new Error(`Not a calendar block: ${from} to ${to} minutes`);
 			const date = new Date(Date.UTC(day.year, day.month - 1, day.day));
 			if (date.getUTCFullYear() !== day.year || date.getUTCMonth() + 1 !== day.month || date.getUTCDate() !== day.day) throw new Error(`Not a date: ${JSON.stringify(day)}`);
 			if (kind === 'busy' && !what.trim()) throw new Error('A busy plan needs what it is');
 			const id = Number(
 				db
-					.prepare('INSERT INTO events (persona, day, from_minute, to_minute, kind, what, person_id, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-					.run(persona, dayKey(day), from, to, kind, kind === 'busy' ? what.trim() : '', personId, source, now()).lastInsertRowid,
+					.prepare('INSERT INTO events (persona, day, from_minute, to_minute, kind, what, person_id, source, share, public_words, with_them, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+					.run(persona, dayKey(day), from, to, kind, kind === 'busy' ? what.trim() : '', personId, source, share, (kind === 'busy' && event.public?.trim()) || null, withThem ? 1 : 0, now())
+					.lastInsertRowid,
 			);
 			return toEvent(db.prepare('SELECT * FROM events WHERE id = ?').get(id) as unknown as EventRow);
 		},
-		/** Calls a plan off: it stays stored (it counts toward the persona's limits), but no agenda reads it. Answers whether it stood. */
-		cancelEvent(id: number): boolean {
-			return db.prepare('UPDATE events SET cancelled_at = ? WHERE id = ? AND cancelled_at IS NULL').run(now(), id).changes > 0;
+		/**
+		 * Calls a plan off, in a turn with `by` when it was (left out: the app): it stays stored (it counts toward the
+		 * persona's limits), but no agenda reads it. Answers whether it stood.
+		 */
+		cancelEvent(id: number, by: number | null = null): boolean {
+			return db.prepare('UPDATE events SET cancelled_at = ?, cancelled_by = ? WHERE id = ? AND cancelled_at IS NULL').run(now(), by, id).changes > 0;
+		},
+		/** How many plans the persona made with the person were called off in turns with someone else since `since`: promises it broke for others. */
+		calledOffOn(persona: string, personId: number, since: number): number {
+			return (
+				db
+					.prepare('SELECT COUNT(*) AS n FROM events WHERE persona = ? AND person_id = ? AND cancelled_by IS NOT NULL AND cancelled_by != person_id AND cancelled_at >= ?')
+					.get(persona, personId, since) as unknown as { n: number }
+			).n;
 		},
 		/** A plan by its id, standing or called off. */
 		eventById(id: number): StoredEvent | undefined {
@@ -658,8 +714,8 @@ export function createStore(db: Database, now: () => number = Date.now) {
 		},
 		/**
 		 * Forgets one person: their messages, notes, familiarity and affinity, accounts, the relationship levels shown to
-		 * them, the plans its calendar keeps from turns with them (and one it didn't take, to tell them about) and the
-		 * audit lines about them. The deny list and minor flags (keyed by account, shared by every persona) are
+		 * them, the plans its calendar keeps from turns with them (and one it didn't take, or called off on them, to tell them
+		 * about) and the audit lines about them. The deny list and minor flags (keyed by account, shared by every persona) are
 		 * kept, so a forgotten account that was deny-listed stays so. Someone who asked to stop, was blocked or denied
 		 * (`state` not `active`) is kept too, since forgetting them would let the persona answer them again, unless
 		 * `includeEnded`. Answers whether anyone was forgotten (false: no such person, or they were kept).
@@ -670,7 +726,7 @@ export function createStore(db: Database, now: () => number = Date.now) {
 			inTransaction(db, () => {
 				db.prepare('DELETE FROM messages WHERE person_id = ?').run(personId);
 				db.prepare('DELETE FROM identities WHERE person_id = ?').run(personId);
-				db.prepare('DELETE FROM kv WHERE persona = ? AND key IN (?, ?)').run(row.persona, `relationship:${personId}`, `calendarRefused:${personId}`);
+				db.prepare('DELETE FROM kv WHERE persona = ? AND key IN (?, ?, ?)').run(row.persona, `relationship:${personId}`, `calendarRefused:${personId}`, `calendarCalledOff:${personId}`);
 				// Plans made in a turn with them came from their conversation; the app's stay, without them
 				db.prepare("DELETE FROM events WHERE person_id = ? AND source = 'persona'").run(personId);
 				db.prepare("DELETE FROM audit WHERE persona = ? AND json_extract(detail, '$.personId') = ?").run(row.persona, personId);

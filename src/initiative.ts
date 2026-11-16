@@ -4,6 +4,7 @@
  * These guardrails apply whatever the settings say: the settings may only make it rarer.
  */
 
+import { sightOf } from './calendar.js';
 import { busyText } from './prompts.js';
 import { weightedPick, type Rng } from './rng.js';
 import { addDays, agendaOn, localDateOf, zonedToUtc, type Busy, type Hours, type Span } from './schedule.js';
@@ -44,7 +45,8 @@ export function openerBlock(
 	if (person.incoming === 0) return final('never_wrote');
 	if (person.lastInAt > person.handledAt) return later('reply_owed');
 	const last = store.history(person.id, 1)[0];
-	if (opener?.kind === 'checkIn' && last && last.at > opener.createdAt) return final('talked_since');
+	// A check-in, or an apology a turn with them has told since: no longer theirs to get
+	if ((opener?.kind === 'checkIn' || opener?.kind === 'apology') && last && last.at > opener.createdAt) return final('talked_since');
 	if (last && now - last.at < REST_MS) return later('mid_conversation');
 	const sent = store.sentOpeners(person.id, MAX_BACKOFF + 1);
 	const newest = sent[0];
@@ -171,11 +173,15 @@ export function planShare({ store, persona, settings, span, now, rng, reachable 
 		if (!reachable(person) || store.pendingOpener(person.id) || openerBlock(store, person, now, initiative)) return [];
 		const { familiarity, affinity } = faded(person, now - lastAt, settings.relationship);
 		const liked = !settings.relationship.affinity.enabled || affinity >= own.minAffinity;
-		return familiarity >= own.minFamiliarity && liked ? [{ weight: familiarity * (settings.relationship.affinity.enabled ? 1 + affinity : 1), value: person }] : [];
+		const viewer = { id: person.id, familiarity, ...(settings.relationship.affinity.enabled && { affinity }) };
+		return familiarity >= own.minFamiliarity && liked ? [{ weight: familiarity * (settings.relationship.affinity.enabled ? 1 + affinity : 1), value: { person, viewer } }] : [];
 	});
-	const [person] = pickSome(rng, candidates, 1);
-	if (!person) return null;
-	const opener = store.planOpener(persona.id, person.id, { kind: 'share', about: busyText(busy, person.id), dueAt: now + rng() * (until - now), expiresAt: Math.min(span.end, span.start + 2 * JUST_BACK_MS) });
+	const [chosen] = pickSome(rng, candidates, 1);
+	if (!chosen) return null;
+	const { person, viewer } = chosen;
+	// A plan made with someone else, as much of it as they may hear (calendar.ts sightOf), by the closeness it has with them
+	const about = busyText(busy, (block) => sightOf(block, viewer, settings.calendar.sharing));
+	const opener = store.planOpener(persona.id, person.id, { kind: 'share', about, dueAt: now + rng() * (until - now), expiresAt: Math.min(span.end, span.start + 2 * JUST_BACK_MS) });
 	store.audit(persona.id, 'share_planned', { personId: person.id, about: busy.reason, dueAt: opener.dueAt });
 	return opener;
 }

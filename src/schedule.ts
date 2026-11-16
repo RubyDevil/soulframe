@@ -33,6 +33,14 @@ export interface CalendarEvent {
 	/** Who put it there: the persona in a turn with `personId` (whose words its reason are), or the app. Left out: the app. */
 	source?: 'persona' | 'app';
 	personId?: number | null;
+	/**
+	 * For one the persona made with someone: how widely its words may be told (calendar.ts sightOf; `personal` when left
+	 * out), the words anyone may hear instead (`public`), and whether it is a plan with or for that person, a promise
+	 * (time made to chat always is).
+	 */
+	share?: 'open' | 'personal' | 'confidential';
+	public?: string | null;
+	withThem?: boolean;
 }
 /** What the agenda needs of a persona (a PersonaConfig satisfies it). */
 export interface Hours {
@@ -59,7 +67,8 @@ export interface Span {
 }
 /**
  * Offline time with a reason that completes "you're ...". `event`: the calendar event it is, if it is one; `madeWith`:
- * the person it made that plan with in a DM turn, whose words the reason are (prompts.ts busyText shows them to them alone).
+ * the person it made that plan with in a DM turn, whose words the reason are, with how widely they may be told
+ * (`share`) and the words anyone may hear (`public`): prompts.ts busyText tells each prompt what its reader may hear.
  */
 export interface Busy {
 	reason: string;
@@ -68,6 +77,8 @@ export interface Busy {
 	day: LocalDate;
 	event?: number;
 	madeWith?: number;
+	share?: 'open' | 'personal' | 'confidential';
+	public?: string;
 }
 export interface DayAgenda {
 	day: LocalDate;
@@ -503,7 +514,14 @@ function withEvents(routine: DayAgenda, events: readonly CalendarEvent[], timeZo
 	const instants = (event: CalendarEvent) => ({ start: zonedToUtc(event.day, event.from, timeZone), end: zonedToUtc(event.day, event.to, timeZone) });
 	const busyEvents: Busy[] = events
 		.filter((event) => event.kind === 'busy')
-		.map((event) => ({ reason: event.what, ...instants(event), day: event.day, event: event.id, ...(event.source === 'persona' && typeof event.personId === 'number' && { madeWith: event.personId }) }));
+		.map((event) => ({
+			reason: event.what,
+			...instants(event),
+			day: event.day,
+			event: event.id,
+			...(event.source === 'persona' &&
+				typeof event.personId === 'number' && { madeWith: event.personId, share: event.share ?? 'personal', ...(event.public && { public: event.public }) }),
+		}));
 	const own = <B extends { day: LocalDate }>(blocks: B[]) => blocks.filter((block) => sameDay(block.day, routine.day));
 	const busy = tidy([...without(routine.busy, busyEvents), ...own(busyEvents)]);
 	const made: Span[] = own(events.filter((event) => event.kind === 'online').map((event) => ({ kind: 'online' as const, ...instants(event), day: event.day, event: event.id })));

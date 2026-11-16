@@ -402,7 +402,23 @@ describe('calendar events', () => {
 		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
 		const dinner = store.addEvent('robin', { kind: 'busy', day: saturday, from: 18 * 60, to: 22 * 60, what: ' at a friend’s for dinner ', personId: sam.id, source: 'persona' });
 		const call = store.addEvent('robin', { kind: 'online', day: friday, from: 15 * 60, to: 16 * 60, what: 'ignored for online time' });
-		expect(dinner).toEqual({ id: dinner.id, persona: 'robin', kind: 'busy', day: saturday, from: 1080, to: 1320, what: 'at a friend’s for dinner', personId: sam.id, source: 'persona', createdAt: 1_000, cancelledAt: null });
+		expect(dinner).toEqual({
+			id: dinner.id,
+			persona: 'robin',
+			kind: 'busy',
+			day: saturday,
+			from: 1080,
+			to: 1320,
+			what: 'at a friend’s for dinner',
+			personId: sam.id,
+			source: 'persona',
+			share: 'personal',
+			public: null,
+			withThem: false,
+			createdAt: 1_000,
+			cancelledAt: null,
+			cancelledBy: null,
+		});
 		// The app's by default, its online time with no reason
 		expect(call).toMatchObject({ kind: 'online', what: '', personId: null, source: 'app' });
 		expect(store.events('robin', friday, saturday).map((event) => event.id)).toEqual([call.id, dinner.id]);
@@ -413,6 +429,38 @@ describe('calendar events', () => {
 		expect(store.cancelEvent(dinner.id)).toBe(false);
 		expect(store.eventById(dinner.id)?.cancelledAt).toBe(2_000);
 		expect(store.events('robin', friday, saturday).map((event) => event.id)).toEqual([call.id]);
+	});
+
+	it("keeps a plan's sharing, public words and promise, and counts the promises to someone called off for others", () => {
+		let at = 1_000;
+		const store = memoryStore(() => at);
+		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const kim = store.createPerson('robin', 'chat', 'kim', 'Kim');
+		const party = store.addEvent('robin', { kind: 'busy', day: saturday, from: 1080, to: 1320, what: "at Jo's party", personId: sam.id, source: 'persona', share: 'confidential', public: " at a friend's ", withThem: true });
+		expect(party).toMatchObject({ share: 'confidential', public: "at a friend's", withThem: true });
+		// Online time keeps no public words
+		expect(store.addEvent('robin', { kind: 'online', day: friday, from: 900, to: 960, public: 'x' }).public).toBeNull();
+		const call = store.addEvent('robin', { kind: 'online', day: friday, from: 1000, to: 1060, personId: sam.id, source: 'persona' });
+		const own = store.addEvent('robin', { kind: 'online', day: friday, from: 1100, to: 1160, personId: sam.id, source: 'persona' });
+		at = 5_000;
+		store.cancelEvent(party.id, kim.id);
+		store.cancelEvent(call.id, kim.id);
+		// Called off with Sam, or by the app: no promise broken for someone else
+		store.cancelEvent(own.id, sam.id);
+		expect(store.eventById(party.id)?.cancelledBy).toBe(kim.id);
+		expect(store.calledOffOn('robin', sam.id, 0)).toBe(2);
+		expect(store.calledOffOn('robin', sam.id, 6_000)).toBe(0);
+		expect(store.calledOffOn('robin', kim.id, 0)).toBe(0);
+	});
+
+	it('adds the columns plans gained to a calendar made before them', () => {
+		const db = openDatabase(':memory:');
+		db.exec('CREATE TABLE events (id INTEGER PRIMARY KEY, persona TEXT NOT NULL, day TEXT NOT NULL, from_minute INTEGER NOT NULL, to_minute INTEGER NOT NULL, kind TEXT NOT NULL, what TEXT NOT NULL, person_id INTEGER, source TEXT NOT NULL, created_at INTEGER NOT NULL, cancelled_at INTEGER)');
+		db.exec("INSERT INTO events (persona, day, from_minute, to_minute, kind, what, person_id, source, created_at) VALUES ('robin', '2026-11-20', 600, 660, 'busy', 'at the dentist', NULL, 'app', 1)");
+		const store = createStore(db, () => 2);
+		expect(store.eventById(1)).toMatchObject({ what: 'at the dentist', share: 'personal', public: null, withThem: false, cancelledBy: null });
+		expect(store.cancelEvent(1)).toBe(true);
+		db.close();
 	});
 
 	it('refuses times that make no block, and a busy plan without what it is', () => {

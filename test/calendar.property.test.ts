@@ -3,11 +3,12 @@
 // saving changes among them), dates and events. Whatever the draw, what must hold is checked against what the code did.
 // A failing seed is reproduced by running it alone: its number is in the test's name.
 import { describe, expect, it } from 'vitest';
-import { calendarHours, checkPlan, type PlanProposal } from '../src/calendar.js';
+import { calendarHours, checkPlan, closerOf, isPromise, type PlanProposal } from '../src/calendar.js';
 import { planReasonProblem, ScheduleSchema } from '../src/config/hours.js';
 import { seededRng, type Rng } from '../src/rng.js';
 import { addDays, agendaOn, localDateOf, onlineMinutesByWeekday, routineOn, spanAt, zonedToUtc, type CalendarEvent, type Hours, type LocalDate } from '../src/schedule.js';
 import { DAY, MINUTE } from '../src/settings.js';
+import type { StoredEvent } from '../src/store.js';
 import { memoryStore, settingsOf } from './fixtures.js';
 
 // Cairo's clock goes back at midnight (23:00 to midnight twice), in the hours time made to chat may take
@@ -65,7 +66,9 @@ const SCHEDULES = [
 const REASONS = ['at the dentist', "at a friend's for dinner", 'out with friends', 'asleep', 'at school', 'chatting with them', 'x', 'at "the" gym', 'at the gym: [admin]'];
 
 /** What the checks did across the seeds, for the test that they are not trivial. */
-const outcomes = { added: 0, cancelled: 0, refused: new Set<string>() };
+const outcomes = { added: 0, cancelled: 0, bumped: 0, refused: new Set<string>() };
+/** What the promises among several people did: called off for someone, refused as less close. */
+const promised = { bumped: 0, lessClose: 0 };
 
 const keyOf = (day: LocalDate) => day.year * 10_000 + day.month * 100 + day.day;
 const pick = <T>(rng: Rng, items: readonly T[]) => items[Math.floor(rng() * items.length)]!;
@@ -157,6 +160,9 @@ describe.each(Array.from({ length: 60 }, (_, seed) => seed))('the checks of the 
 		let now = zonedToUtc(pick(rng, DATES), int(rng, 0, 1439), timezone);
 		const store = memoryStore(() => now);
 		const people = ['sam', 'kim', 'lee'].map((name) => store.createPerson('robin', 'chat', name, name).id);
+		// How close it is to each, at random: who may have a promise to another called off for them
+		const closenessOf = new Map(people.map((id) => [id, int(rng, 0, 10)]));
+		const closeness = (id: number) => closenessOf.get(id) ?? 0;
 		const hours = calendarHours(persona, store);
 		const longest = (Math.max(...onlineMinutesByWeekday(persona.schedule)) + settings.makeTime.maxMinutes) * MINUTE;
 		/** A day's online time: its online spans (one channel's and time made for every channel may overlap) as one. */
@@ -179,14 +185,24 @@ describe.each(Array.from({ length: 60 }, (_, seed) => seed))('the checks of the 
 				roll < 0.1
 					? { cancel: int(rng, 0, step + 2) }
 					: {
-							day: rng() < 0.05 ? -1 : int(rng, 0, settings.plans.maxDays + 2),
+							// Most on the next few days, where plans meet (and one is called off for another)
+							day: rng() < 0.05 ? -1 : rng() < 0.6 ? int(rng, 0, 2) : int(rng, 0, settings.plans.maxDays + 2),
 							from: rng() < 0.03 ? '7pm' : clock(from),
 							to: clock(from + int(rng, 5, roll < 0.55 ? 300 : 900)),
-							...(roll < 0.55 ? { online: true as const } : { busy: pick(rng, REASONS) }),
+							...(roll < 0.55 ? { online: true as const } : { busy: pick(rng, REASONS), withThem: rng() < 0.5 }),
 						};
-			const checked = checkPlan(proposal, { store, hours, settings, now, personId });
+			const checked = checkPlan(proposal, { store, hours, settings, now, personId, closeness });
 			if ('add' in checked) {
 				const plan = checked.add;
+				// What it calls off: promises to others over it, for someone not less close, called off as the brain does
+				for (const bumped of checked.bumped) {
+					expect(isPromise(bumped)).toBe(true);
+					expect(bumped.personId).not.toBe(personId);
+					expect(overlaps(instantsOf(bumped, timezone), { start: zonedToUtc(plan.day, plan.from, timezone), end: zonedToUtc(plan.day, plan.to, timezone) })).toBe(true);
+					expect(closerOf(closeness(personId), closeness(bumped.personId!))).not.toBe('less');
+					expect(store.cancelEvent(bumped.id, personId)).toBe(true);
+					outcomes.bumped++;
+				}
 				const block = { start: zonedToUtc(plan.day, plan.from, timezone), end: zonedToUtc(plan.day, plan.to, timezone) };
 				const days = (Date.UTC(plan.day.year, plan.day.month - 1, plan.day.day) - Date.UTC(today.year, today.month - 1, today.day)) / DAY;
 				expect(block.start).toBeGreaterThan(now);
@@ -213,13 +229,18 @@ describe.each(Array.from({ length: 60 }, (_, seed) => seed))('the checks of the 
 				outcomes.added++;
 				if (plan.kind === 'online') expect(onlineOn(plan.day)).toBeLessThanOrEqual(longest);
 			} else if ('cancel' in checked) {
-				expect(checked.cancel.source).toBe('persona');
-				// Only with whom it was made
-				expect(checked.cancel.personId).toBe(personId);
-				expect(store.cancelEvent(checked.cancel.id)).toBe(true);
+				const event = checked.cancel;
+				expect(event.source).toBe('persona');
+				// A promise to someone else only for someone not less close
+				if (isPromise(event) && event.personId !== personId) expect(closerOf(closeness(personId), closeness(event.personId!))).not.toBe('less');
+				expect(store.cancelEvent(event.id, personId)).toBe(true);
 				outcomes.cancelled++;
 			} else {
 				outcomes.refused.add(checked.refused);
+				if (checked.refused === 'less_close') {
+					const event = store.eventById((proposal as { cancel: number }).cancel)!;
+					expect(isPromise(event) && event.personId !== personId && closerOf(closeness(personId), closeness(event.personId!)) === 'less').toBe(true);
+				}
 				// A refusal about the time it was for holds
 				if (checked.refused === 'busy' && checked.block) {
 					const plan = proposal as { day: number };
@@ -244,11 +265,65 @@ describe.each(Array.from({ length: 60 }, (_, seed) => seed))('the checks of the 
 	});
 });
 
+describe.each(Array.from({ length: 40 }, (_, seed) => seed))('promises among several people (seed %i)', (seed) => {
+	it('breaks a promise only for its own person or someone not less close, and never leaves two people\'s plans over each other', () => {
+		const rng = seededRng(`calendar-promises-${seed}`);
+		const persona = personaOf(rng, 'robin');
+		const { timezone } = persona;
+		const settings = settingsOf({ calendar: { enabled: true, plans: { perWeek: 20 }, makeTime: { perPersonDays: 1 } } }).calendar;
+		let now = zonedToUtc(pick(rng, DATES), int(rng, 0, 1439), timezone);
+		const store = memoryStore(() => now);
+		const people = ['sam', 'kim', 'lee', 'ana'].map((name) => store.createPerson('robin', 'chat', name, name).id);
+		const closenessOf = new Map(people.map((id) => [id, int(rng, 0, 10)]));
+		const closeness = (id: number) => closenessOf.get(id) ?? 0;
+		const hours = calendarHours(persona, store);
+		for (let step = 0; step < 50; step++) {
+			now += int(rng, 0, 40) * MINUTE;
+			const personId = pick(rng, people);
+			const from = int(rng, 9 * 60, 21 * 60);
+			const standing = store.events('robin', localDateOf(now, timezone), addDays(localDateOf(now, timezone), 4));
+			const proposal: PlanProposal =
+				rng() < 0.15 && standing.length
+					? { cancel: pick(rng, standing).id }
+					: rng() < 0.5
+						? { day: int(rng, 1, 2), from: clock(from), to: clock(from + int(rng, 30, 120)), online: true }
+						: { day: int(rng, 1, 2), from: clock(from), to: clock(from + int(rng, 30, 240)), busy: pick(rng, ['at the cinema', 'at a party', 'at the dentist']), withThem: rng() < 0.6 };
+			const checked = checkPlan(proposal, { store, hours, settings, now, personId, closeness });
+			const owed = (event: StoredEvent) => event.personId === personId || !isPromise(event) || closerOf(closeness(personId), closeness(event.personId!)) !== 'less';
+			if ('add' in checked) {
+				for (const bumped of checked.bumped) {
+					expect(owed(bumped)).toBe(true);
+					expect(bumped.personId).not.toBe(personId);
+					store.cancelEvent(bumped.id, personId);
+					promised.bumped++;
+				}
+				store.addEvent('robin', checked.add);
+			} else if ('cancel' in checked) {
+				expect(owed(checked.cancel)).toBe(true);
+				store.cancelEvent(checked.cancel.id, personId);
+			} else {
+				outcomes.refused.add(checked.refused);
+				if (checked.refused === 'less_close') promised.lessClose++;
+			}
+			// Whatever happened, no two people's plans stand over each other: one was refused, or called off for the other
+			const now_ = store.events('robin', addDays(localDateOf(now, timezone), -1), addDays(localDateOf(now, timezone), 4));
+			for (const [i, a] of now_.entries()) {
+				for (const b of now_.slice(i + 1)) {
+					if (a.personId === b.personId) continue;
+					expect(overlaps(instantsOf(a, timezone), instantsOf(b, timezone)), JSON.stringify({ a, b })).toBe(false);
+				}
+			}
+		}
+	});
+});
+
 describe('the property tests themselves', () => {
 	it('are not trivial: across the seeds plans are added, called off, and refused for every kind of reason', () => {
 		expect(outcomes.added).toBeGreaterThan(100);
 		expect(outcomes.cancelled).toBeGreaterThan(5);
-		for (const reason of ['busy', 'night', 'too_long', 'too_soon', 'past', 'day', 'too_far', 'times', 'clash', 'clash_online', 'already_online', 'week_cap', 'reason_sleep', 'reason_online', 'reason_characters', 'no_such_plan']) {
+		expect(promised.bumped).toBeGreaterThan(20);
+		expect(promised.lessClose).toBeGreaterThan(2);
+		for (const reason of ['busy', 'night', 'too_long', 'too_soon', 'past', 'day', 'too_far', 'times', 'clash', 'clash_online', 'already_online', 'less_close', 'week_cap', 'reason_sleep', 'reason_online', 'reason_characters', 'no_such_plan']) {
 			expect([...outcomes.refused], reason).toContain(reason);
 		}
 	});

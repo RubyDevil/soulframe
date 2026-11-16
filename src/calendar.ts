@@ -17,23 +17,80 @@ const SHORTEST_MINUTES = 15;
 const MAKE_TIME_FROM = 7 * 60;
 const MAKE_TIME_TO = 24 * 60;
 
-/** What a DM turn may answer in its `plan` field (brain.ts parseTurn), its times local "HH:MM" on its `day` (0 today). */
+/**
+ * How widely the words of a plan made with someone may be told to others (settings.calendar.sharing), as the model
+ * ranked them when it made it: `open`, to anyone ("at the dentist"); `personal`, to those it is close enough to (it
+ * names someone, their party); `confidential`, to the closest only, in confidence (something sensitive, or that they
+ * asked it to keep to itself).
+ */
+export type Share = 'open' | 'personal' | 'confidential';
+
+/**
+ * What a DM turn may answer in its `plan` field (brain.ts parseTurn), its times local "HH:MM" on its `day` (0 today).
+ * A busy plan may carry how widely its words may be told (`share`), the words anyone may hear (`public`), and whether it
+ * is with or for the person (`withThem`): a promise to them, as time made to chat always is.
+ */
 export type PlanProposal =
-	| { day: number; from: string; to: string; busy: string }
+	| { day: number; from: string; to: string; busy: string; public?: string; share?: Share; withThem?: boolean }
 	| { day: number; from: string; to: string; online: true }
 	| { cancel: number };
 
-/** What a refused plan clashed with: a busy block's reason ("at work"), the event it is when a plan made it, and with whom that was made. */
-export type Clash = Pick<Busy, 'reason' | 'event' | 'madeWith'>;
+/** What a refused plan clashed with: a busy block's reason ("at work"), the event it is when a plan made it, with whom that was made, and what of it may be told. */
+export type Clash = Pick<Busy, 'reason' | 'event' | 'madeWith' | 'share' | 'public'>;
 
 /**
- * What `checkPlan` decided: a plan to add (store.addEvent's), one of its own to call off, or why it was refused, with
- * the time the plan was for (once its times read) and the busy block it would have clashed with, if any.
+ * What `checkPlan` decided: a plan to add (store.addEvent's) with the promises to others it calls off (`bumped`: each
+ * made with someone it is not less close to, to call off and tell them about), one of its plans to call off, or why it
+ * was refused, with the time the plan was for (once its times read) and the busy block it would have clashed with, if
+ * any.
  */
 export type PlanCheck =
-	| { add: Parameters<Store['addEvent']>[1] }
+	| { add: Parameters<Store['addEvent']>[1]; bumped: StoredEvent[] }
 	| { cancel: StoredEvent }
 	| { refused: string; block?: { start: number; end: number }; clash?: Clash };
+
+/**
+ * Whom a prompt is for (a DM turn's or an opener's person; none in a group chat), at the relationship levels its prompt
+ * describes: each level's `from` (affinity left out while it isn't kept). Who hears what of plans made with others
+ * (`sightOf`) goes by them.
+ */
+export interface Viewer {
+	id: number;
+	familiarity: number;
+	affinity?: number;
+}
+
+/**
+ * What a prompt for `viewer` may tell of a plan: its own words (`full`), its words told in confidence (`confidence`), or
+ * only the words anyone may hear (`public`).
+ */
+export type Sight = 'full' | 'confidence' | 'public';
+
+/**
+ * What a prompt for `viewer` may tell of a plan (`madeWith`: the person it was made with in a DM turn, its words
+ * theirs): all of it to them, of the routine and the app's; of one made with someone else, with sharing on, its words
+ * as its `share` allows at the viewer's levels (settings.calendar.sharing; none in a group chat), else its public
+ * words. Sharing off, nobody else ever hears its own words.
+ */
+export function sightOf(plan: { madeWith?: number; share?: Share }, viewer: Viewer | undefined, sharing: Settings['calendar']['sharing']): Sight {
+	if (plan.madeWith === undefined || plan.madeWith === viewer?.id) return 'full';
+	if (!sharing.enabled) return 'public';
+	const share = plan.share ?? 'personal';
+	if (share === 'open') return 'full';
+	const from = sharing[share];
+	if (!from || !viewer) return 'public';
+	const close = viewer.familiarity >= from.familiarity && (from.affinity === undefined || viewer.affinity === undefined || viewer.affinity >= from.affinity);
+	return !close ? 'public' : share === 'confidential' ? 'confidence' : 'full';
+}
+
+/** A plan of the persona's that is a promise to someone: time made to chat with them, or a busy plan with or for them. */
+export const isPromise = (event: Pick<StoredEvent, 'source' | 'personId' | 'kind' | 'withThem'>) => event.source === 'persona' && event.personId !== null && (event.kind === 'online' || event.withThem);
+
+/** How close the persona is to the person asking (`asker`) against someone else: `closer`, `about` as close, or `less`. */
+export type Closer = 'closer' | 'about' | 'less';
+
+/** `Closer` from two closeness scores (relationship levels, summed: brain.ts closenessOf), one level of difference being about as close. */
+export const closerOf = (asker: number, other: number): Closer => (asker - other > 1 ? 'closer' : other - asker > 1 ? 'less' : 'about');
 
 /** The persona's hours with its calendar: its standing plans from the store, laid over each drawn day (schedule.ts agendaOn). */
 export const calendarHours = (hours: Hours, store: Store): Hours => ({
@@ -65,20 +122,22 @@ const covered = (block: { start: number; end: number }, spans: readonly { start:
 	spans.reduce((sum, span) => sum + Math.max(0, Math.min(block.end, span.end) - Math.max(block.start, span.start)), 0);
 
 /**
- * Whether the plan a DM turn with the person made may stand, and as what: `add` (an event for store.addEvent), `cancel`
- * (one of its own plans still ahead), or `refused` with why. Every plan: on a day from today to `plans.maxDays` ahead,
- * 15 minutes at least, starting after `now`.
- * - Busy (a plan of its own, `plans`): at most `plans.maxHours`, its reason as config/hours.ts planReasonProblem
- *   allows, over no other plan (busy, or time made to chat: a promise to someone), at most `plans.perWeek` made in any
- *   7 days.
+ * Whether the plan a DM turn with the person made may stand, and as what: `add` (an event for store.addEvent, with the
+ * promises to others it calls off), `cancel` (one of its plans still ahead), or `refused` with why. Every plan: on a day
+ * from today to `plans.maxDays` ahead, 15 minutes at least, starting after `now`; lengths as the time passes, daylight
+ * saving in it.
+ * - Busy (a plan of its own, `plans`): at most `plans.maxHours`, its reason (and its public words, else left out) as
+ *   config/hours.ts planReasonProblem allows, over no other plan, at most `plans.perWeek` made in any 7 days.
  * - Online (time made to chat, `makeTime`): from 7 AM to midnight, at most `makeTime.maxMinutes`, over no busy block
  *   of that day, never making the day's online time longer than its schedule's longest day and one such time
  *   (`makeTime.maxMinutes`), at most one for the person in `makeTime.perPersonDays`. At an hour it is online for every
  *   channel anyway it adds nothing, but is kept all the same, so no plan of its own breaks the promise (left out, not
- *   told, when another for them is too soon: `already_online`). Lengths are as the time passes, daylight saving in it.
- * - Cancel: one of its own plans (`source` persona) of a kind it may make, standing and not over, only with whom it was
- *   made (a plan told to someone is theirs to hear called off).
- * `hours` must carry its calendar (`calendarHours`), so the day it checks is the one the agenda will draw.
+ *   told, when another for them is too soon: `already_online`).
+ * - Cancel: one of its own plans (`source` persona) of a kind it may make, standing and not over.
+ * A promise made with someone else (`isPromise`) is no obstacle, but called off for this person, if they are not less
+ * close to it than the one it was made with (`closeness`, `closerOf`), and if the persona may make that kind of plan:
+ * as a person cancels for someone who matters as much or more. Less close, it is refused (`less_close` when called off
+ * by its number). `hours` must carry its calendar (`calendarHours`), so the day it checks is the one the agenda will draw.
  */
 export function checkPlan(
 	proposal: PlanProposal,
@@ -89,6 +148,7 @@ export function checkPlan(
 		now,
 		personId,
 		today = localDateOf(now, hours.timezone),
+		closeness = () => 0,
 	}: {
 		store: Store;
 		hours: Hours;
@@ -97,21 +157,27 @@ export function checkPlan(
 		personId: number;
 		/** The date its `day` counts from: the persona's when the turn was written (a turn kept past midnight means the day it was written on); now's unless given. */
 		today?: LocalDate;
+		/** How close the persona is to a person (brain.ts closenessOf); everyone about as close when left out. */
+		closeness?: (personId: number) => number;
 	},
 ): PlanCheck {
 	const refused = (reason: string, more: { block?: { start: number; end: number }; clash?: Clash } = {}) => ({ refused: reason, ...more });
 	const { timezone } = hours;
+	const enabled = (kind: StoredEvent['kind']) => (kind === 'online' ? settings.makeTime : settings.plans).enabled;
+	/** A promise to someone else this person may have it called off for. */
+	const bumpable = (event: StoredEvent) =>
+		isPromise(event) && event.personId !== personId && enabled(event.kind) && closerOf(closeness(personId), closeness(event.personId!)) !== 'less';
 	if ('cancel' in proposal) {
 		const event = store.eventById(proposal.cancel);
 		if (!event || event.persona !== hours.id || event.cancelledAt !== null) return refused('no_such_plan');
-		// A plan made in a turn with someone is told to them, a promise at times: only they hear it called off
-		if (event.source !== 'persona' || event.personId !== personId) return refused('not_its_own');
-		if (!(event.kind === 'online' ? settings.makeTime : settings.plans).enabled) return refused('off');
+		if (event.source !== 'persona') return refused('not_its_own');
+		if (!enabled(event.kind)) return refused('off');
 		if (instantsOf(event, timezone).end <= now) return refused('over');
+		if (isPromise(event) && event.personId !== personId && !bumpable(event)) return refused('less_close');
 		return { cancel: event };
 	}
 	const online = 'online' in proposal;
-	if (!(online ? settings.makeTime : settings.plans).enabled) return refused('off');
+	if (!enabled(online ? 'online' : 'busy')) return refused('off');
 	if (!Number.isInteger(proposal.day) || proposal.day < 0) return refused('day');
 	if (proposal.day > settings.plans.maxDays) return refused('too_far');
 	if (!CLOCK.test(proposal.from) || !CLOCK.test(proposal.to)) return refused('times');
@@ -124,12 +190,10 @@ export function checkPlan(
 	const minutes = (block.end - block.start) / MINUTE;
 	if (minutes < SHORTEST_MINUTES) return refused('too_short');
 	/** Refused, saying the time it was for. */
-	const refusedAt = (reason: string, clash?: Clash) =>
-		refused(reason, {
-			block,
-			...(clash && { clash: { reason: clash.reason, ...(clash.event !== undefined && { event: clash.event }), ...(clash.madeWith !== undefined && { madeWith: clash.madeWith }) } }),
-		});
+	const refusedAt = (reason: string, clash?: Clash) => refused(reason, { block, ...(clash && { clash: clashOf(clash) }) });
 	if (block.start <= now) return refusedAt('past');
+	/** The plans standing over it: from the day before (past midnight) to the day after. */
+	const over = store.events(hours.id, addDays(day, -1), addDays(day, 1)).filter((event) => overlaps(block)(instantsOf(event, timezone)));
 
 	if (online) {
 		const { maxMinutes, perPersonDays } = settings.makeTime;
@@ -138,9 +202,18 @@ export function checkPlan(
 		const agenda = agendaOn(hours, day);
 		// The day before's blocks may run into it: a night shift until 8 AM
 		const before = agendaOn(hours, addDays(day, -1));
-		const busy = [...before.busy, ...agenda.busy].find(overlaps(block));
-		if (busy) return refusedAt('busy', busy);
-		const add = { add: { kind: 'online' as const, day, from, to, personId, source: 'persona' as const } };
+		const bumped = new Map<number, StoredEvent>();
+		for (const busy of [...before.busy, ...agenda.busy].filter(overlaps(block))) {
+			const event = busy.event === undefined ? undefined : store.eventById(busy.event);
+			if (event && bumpable(event)) bumped.set(event.id, event);
+			else return refusedAt('busy', busy);
+		}
+		// Time made to chat with someone else then: one-on-one time, called off for this one, or refused
+		for (const event of over.filter((event) => event.kind === 'online' && isPromise(event) && event.personId !== personId)) {
+			if (!bumpable(event)) return refusedAt('clash_online');
+			bumped.set(event.id, event);
+		}
+		const add = { add: { kind: 'online' as const, day, from, to, personId, source: 'persona' as const }, bumped: [...bumped.values()] };
 		const soon = store.eventsMadeSince(hours.id, now - perPersonDays * DAY, { kind: 'online', personId }) > 0;
 		// Online on one channel only is time it may still make for every channel (the person's may not be one)
 		const already = covered(block, joinedOnline([...before.spans, ...agenda.spans], { everywhere: true }));
@@ -148,8 +221,8 @@ export function checkPlan(
 		// another, it is left as it was (nothing is broken, nothing told)
 		if (already >= block.end - block.start) return soon ? refusedAt('already_online') : add;
 		// Its day's online time is that of its own spans, as its schedule's longest day counts it, and what the plan adds
-		const online = joinedOnline(agenda.spans);
-		const total = online.reduce((sum, span) => sum + span.end - span.start, 0) + block.end - block.start - covered(block, online);
+		const spans = joinedOnline(agenda.spans);
+		const total = spans.reduce((sum, span) => sum + span.end - span.start, 0) + block.end - block.start - covered(block, spans);
 		// One made time's worth over its longest day at most
 		if (total > (Math.max(...onlineMinutesByWeekday(hours.schedule)) + maxMinutes) * MINUTE) return refusedAt('too_much');
 		if (soon) return refusedAt('too_soon');
@@ -160,41 +233,91 @@ export function checkPlan(
 	if (minutes > maxHours * 60) return refusedAt('too_long');
 	const problem = 'busy' in proposal ? planReasonProblem(proposal.busy) : 'missing';
 	if (problem) return refusedAt(`reason_${problem}`);
-	const other = store.events(hours.id, addDays(day, -1), addDays(day, 1)).find((event) => overlaps(block)(instantsOf(event, timezone)));
-	// Over time made to chat it would break a promise, and that time is only for the person it was made for to call off
-	if (other) {
-		if (other.kind === 'online') return refusedAt('clash_online');
-		return refusedAt('clash', { reason: other.what, event: other.id, ...(other.source === 'persona' && other.personId !== null && { madeWith: other.personId }) });
+	const bumped: StoredEvent[] = [];
+	for (const event of over) {
+		if (bumpable(event)) bumped.push(event);
+		// Over time made to chat, or another plan: refused (a promise to someone it is less close to among them)
+		else if (event.kind === 'online') return refusedAt('clash_online');
+		else return refusedAt('clash', { reason: event.what, ...busyOf(event) });
 	}
 	if (store.eventsMadeSince(hours.id, now - 7 * DAY, { kind: 'busy' }) >= perWeek) return refusedAt('week_cap');
-	return { add: { kind: 'busy', day, from, to, what: proposal.busy.trim(), personId, source: 'persona' } };
+	// Its public words, held to the same as its own; left out (a plan of its own, to others) when they fall short
+	const shown = 'busy' in proposal && proposal.public !== undefined && !planReasonProblem(proposal.public) ? proposal.public.trim() : null;
+	const { share = 'personal', withThem = false } = proposal as { share?: Share; withThem?: boolean };
+	return { add: { kind: 'busy', day, from, to, what: proposal.busy.trim(), personId, source: 'persona', share, public: shown, withThem }, bumped };
+}
+
+/** A stored event's facts as a busy block carries them: its id, and of the persona's with someone, with whom and what of it may be told. */
+const busyOf = (event: StoredEvent): Omit<Clash, 'reason'> => ({
+	event: event.id,
+	...(event.source === 'persona' && event.personId !== null && { madeWith: event.personId, share: event.share, ...(event.public && { public: event.public }) }),
+});
+
+/** A clash as a refusal keeps it: only the facts of a busy block, none of its times. */
+const clashOf = (clash: Clash): Clash => ({
+	reason: clash.reason,
+	...(clash.event !== undefined && { event: clash.event }),
+	...(clash.madeWith !== undefined && { madeWith: clash.madeWith }),
+	...(clash.share !== undefined && { share: clash.share }),
+	...(clash.public !== undefined && { public: clash.public }),
+});
+
+/** One of its coming plans as a turn lists it (`comingPlans`, prompts.ts calendarPrompt). */
+export interface ComingPlan {
+	/** Its number, when this turn may call it off; else null. */
+	id: number | null;
+	start: number;
+	end: number;
+	kind: StoredEvent['kind'];
+	/** A busy one's words as this turn may hear them (`sightOf`): its own, or the words anyone may hear; null for neither. */
+	words: string | null;
+	/** Its words are told to this turn in confidence. */
+	confidence: boolean;
+	/** Time made to chat: for them (`them`), for someone named (`name`, as this turn may hear it), for `someone` else, or for nobody (the app's, `null`). */
+	for: 'them' | 'someone' | { name: string } | null;
+	/** A promise made with someone else: how close it is to this person against them, and how often it called plans with them off for others lately (30 days). */
+	promise: { closer: Closer; calledOff: number } | null;
 }
 
 /**
- * Its coming plans as a turn with the person (`personId`) lists them (prompts.ts calendarPrompt): those standing from
- * now to `maxDays` ahead, at most `shown`, each with its instants; a busy one with its words (`words`: the app's, or its
- * own made with them; null for one made with someone else, whose words are theirs), time made to chat with whom it is
- * for (`them`, `someone` else, never named, or none for the app's). `id` only for one it may call off with them
- * (`checkPlan`): its own, made with them, of a kind `settings` lets it make.
+ * Its coming plans as a turn with `viewer` lists them (prompts.ts calendarPrompt): those standing from now to
+ * `plans.maxDays` ahead, at most `shown`, each with its instants and what that turn may hear of it (`sightOf`); a
+ * promise made with someone else with how close it is to the viewer against them and how often it let them down lately.
+ * `id` only for one it may call off there (`checkPlan`): its own, of a kind `settings` lets it make, and a promise made
+ * with someone else only for a viewer not less close.
  */
-export function comingPlans(store: Store, hours: Hours, { now, settings, personId }: { now: number; settings: Settings['calendar']; personId: number }) {
+export function comingPlans(
+	store: Store,
+	hours: Hours,
+	{ now, settings, viewer, closeness = () => 0 }: { now: number; settings: Settings['calendar']; viewer: Viewer; closeness?: (personId: number) => number },
+): ComingPlan[] {
 	const today = localDateOf(now, hours.timezone);
-	const cancellable = (event: StoredEvent) =>
-		event.source === 'persona' && event.personId === personId && (event.kind === 'online' ? settings.makeTime : settings.plans).enabled;
 	return store
 		.events(hours.id, addDays(today, -1), addDays(today, settings.plans.maxDays))
 		.map((event) => ({ event, ...instantsOf(event, hours.timezone) }))
 		.filter(({ end }) => end > now)
 		.slice(0, settings.shown)
 		.map(({ event, start, end }) => {
-			const theirs = event.source !== 'persona' || event.personId === personId;
+			const madeWith = event.source === 'persona' && event.personId !== null ? event.personId : undefined;
+			const sight = sightOf({ ...(madeWith !== undefined && { madeWith }), share: event.share }, viewer, settings.sharing);
+			const promised = isPromise(event) && madeWith !== viewer.id ? closerOf(closeness(viewer.id), closeness(madeWith!)) : null;
+			const cancellable = event.source === 'persona' && (event.kind === 'online' ? settings.makeTime : settings.plans).enabled && promised !== 'less';
 			return {
-				id: cancellable(event) ? event.id : null,
+				id: cancellable ? event.id : null,
 				start,
 				end,
 				kind: event.kind,
-				words: event.kind === 'busy' && theirs ? event.what : null,
-				for: event.kind === 'busy' || event.personId === null ? null : event.personId === personId ? ('them' as const) : ('someone' as const),
+				words: event.kind !== 'busy' ? null : sight === 'public' ? event.public : event.what,
+				confidence: sight === 'confidence',
+				for:
+					event.kind === 'busy' || madeWith === undefined
+						? null
+						: madeWith === viewer.id
+							? 'them'
+							: sight === 'public'
+								? 'someone'
+								: { name: store.personById(madeWith).name },
+				promise: promised === null ? null : { closer: promised, calledOff: store.calledOffOn(hours.id, madeWith!, now - 30 * DAY) },
 			};
 		});
 }

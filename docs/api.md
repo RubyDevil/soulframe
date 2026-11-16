@@ -963,8 +963,15 @@ interface Store {
 	accountOpenedSince(personId: number, since: number): boolean;
 	firstInAfter(personId: number, after: number): number | null;
 	quietPeople(persona: string, quietSince: number): { person: Person; lastAt: number }[];
-	addEvent(persona: string, event: { kind: 'busy' | 'online'; day: LocalDate; from: number; to: number; what?: string; personId?: number | null; source?: 'persona' | 'app' }): StoredEvent;
-	cancelEvent(id: number): boolean;
+	addEvent(
+		persona: string,
+		event: {
+			kind: 'busy' | 'online'; day: LocalDate; from: number; to: number; what?: string; personId?: number | null; source?: 'persona' | 'app';
+			share?: 'open' | 'personal' | 'confidential'; public?: string | null; withThem?: boolean;
+		},
+	): StoredEvent;
+	cancelEvent(id: number, by?: number | null): boolean;
+	calledOffOn(persona: string, personId: number, since: number): number;
 	eventById(id: number): StoredEvent | undefined;
 	events(persona: string, from: LocalDate, to: LocalDate): StoredEvent[];
 	eventsMadeSince(persona: string, since: number, only?: { kind?: 'busy' | 'online'; personId?: number }): number;
@@ -1016,8 +1023,9 @@ failed?: true }[]; links: (LinkPreview & { looked?: true })[] }`. A photo keeps 
 
 `Opener` is a first message the persona plans to send (`settings.initiative`, [concepts](./concepts.md#texting-first)):
 `{ id, persona, personId, kind: OpenerKind, about, dueAt, expiresAt, createdAt, closedAt: number | null, outcome:
-OpenerOutcome | null }`, pending while `closedAt` is `null`. `OpenerKind` is `'followUp' | 'checkIn' | 'share'`;
-`about` is a follow-up's note or the busy block a share is about (empty for a check-in). `OpenerOutcome` is `'sent' | 'rehearsed' | 'declined' |
+OpenerOutcome | null }`, pending while `closedAt` is `null`. `OpenerKind` is `'followUp' | 'checkIn' | 'share' |
+'apology'`; `about` is a follow-up's note, the busy block a share is about, or the plan an apology is for (a plan with
+them it called off for someone else); empty for a check-in. `OpenerOutcome` is `'sent' | 'rehearsed' | 'declined' |
 'replaced' | 'dropped' | 'expired' | 'failed'`.
 
 - **`planOpener`**: plans one, closing the person's pending one as `replaced` (one pending per person).
@@ -1036,10 +1044,14 @@ read only while it is on:
 - **`addEvent`**: puts a plan in the persona's calendar: `busy`, offline from `from` to `to` (minutes of its local
   `day`; `to` past 1440 runs past midnight, 24 hours at most) with `what` as its reason, completing "you're ..." ("at
   the team day"); or `online`, time it is online for every channel. `source` is `'app'` unless given: the app's plans
-  are its own to check (the persona's own go through the code's guardrails before they get here). Throws on a date that
-  doesn't exist, times that make no block, or a busy plan without `what`. Answers it.
-- **`cancelEvent`**: calls a plan off: it stays stored (a plan the persona made counts toward its limits) but no agenda
-  reads it. Answers whether it stood. **`eventById`**: one by id, standing or called off.
+  are its own to check (the persona's own go through the code's guardrails before they get here). A busy plan of the
+  persona's with someone carries how widely its words may be told (`share`, `'personal'` unless given), the words anyone
+  may hear (`public`) and whether it is with or for them (`withThem`, a promise). Throws on a date that doesn't exist,
+  times that make no block, or a busy plan without `what`. Answers it.
+- **`cancelEvent`**: calls a plan off, in a turn with `by` when it was (left out: the app): it stays stored (a plan the
+  persona made counts toward its limits) but no agenda reads it. Answers whether it stood. **`eventById`**: one by id,
+  standing or called off. **`calledOffOn`**: how many plans the persona made with the person were called off in turns
+  with someone else since a time: promises it broke for others, as its calendar tells it.
 - **`events`**: the persona's standing plans from one date to another, both included, in order: what its agenda lays
   over each drawn day; not one it made with someone who has since ended it (stopped, blocked or denied), which stands
   again if they come back. **`eventsMadeSince`**: how many it made itself since a time, called off or not, by kind and
@@ -1059,8 +1071,12 @@ interface StoredEvent {
 	what: string; // a busy plan's reason, completing "you're ..."; '' for online time
 	personId: number | null; // whom it was made with (time made to chat is for them); null for an app plan of someone forgotten
 	source: 'persona' | 'app'; // the persona's own, made in a DM turn, or the app's (addEvent)
+	share: 'open' | 'personal' | 'confidential'; // how widely its words may be told to others (settings.calendar.sharing)
+	public: string | null; // the words anyone may hear of a busy one; null for none
+	withThem: boolean; // a plan with or for personId: a promise to them (time made to chat always is)
 	createdAt: number;
 	cancelledAt: number | null; // null while it stands
+	cancelledBy: number | null; // in a turn with whom it was called off; null for the app's call
 }
 ```
 

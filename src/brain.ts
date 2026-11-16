@@ -5,9 +5,9 @@ import type { Llm, LlmMessage } from './llm.js';
 import { splitReply } from './pacing.js';
 import { clip, lookedCard, mediaOf, seenIn, timeLimited, unseen, type IncomingMessage, type MessageMedia, type PreviewLink, type SeenImage, type SeenLink } from './perception.js';
 import { hostOf, isStopRequest, MINOR_EXIT, minorSignal, STOP_ACK, stripForeignLinks } from './safety.js';
-import { calendarHours, checkPlan, comingPlans, type PlanCheck, type PlanProposal } from './calendar.js';
+import { calendarHours, checkPlan, comingPlans, isPromise, sightOf, type PlanCheck, type PlanProposal, type Share, type Viewer } from './calendar.js';
 import { followUpWindow } from './initiative.js';
-import { addDays, agendaOn, busyAt, fullyOnline, isOn, localDateOf, situationAt, usualWeek, type Hours } from './schedule.js';
+import { addDays, agendaOn, busyAt, fullyOnline, isOn, localDateOf, situationAt, usualWeek, zonedToUtc, type Hours } from './schedule.js';
 import { DAY, HOUR, MINUTE, ownSettings, SECOND, taskModel, type Settings } from './settings.js';
 import {
 	ADDRESSED_QUESTION,
@@ -26,7 +26,10 @@ import {
 	OPENER_REQUEST,
 	openerTask,
 	shareReasonPrompt,
+	apologyReasonPrompt,
 	calendarPrompt,
+	calledOffPrompt,
+	calledOffText,
 	refusedPlanPrompt,
 	planDayText,
 	groupChatGateQuestions,
@@ -50,9 +53,10 @@ import {
 	usualWeekPrompt,
 	type Level,
 	type Trend,
+	type See,
 } from './prompts.js';
 import type { Runtime } from './runtime.js';
-import type { Opener, Person, StoredMessage } from './store.js';
+import type { Opener, Person, StoredEvent, StoredMessage } from './store.js';
 
 export type Decision =
 	| { kind: 'ignore'; reason: string }
@@ -160,8 +164,22 @@ const planOf = (value: unknown): PlanProposal | 'unreadable' | undefined => {
 	const days = numberOf(day);
 	if (days === null || typeof from !== 'string' || typeof to !== 'string') return 'unreadable';
 	if (online === true || online === 'true') return { day: days, from: from.trim(), to: to.trim(), online: true };
-	return typeof busy === 'string' ? { day: days, from: from.trim(), to: to.trim(), busy } : 'unreadable';
+	if (typeof busy !== 'string') return 'unreadable';
+	// Its other fields as the model may write them; one it got wrong is left out (personal, no public words, not a promise)
+	const { public: shown, share, withThem } = value as Record<string, unknown>;
+	return {
+		day: days,
+		from: from.trim(),
+		to: to.trim(),
+		busy,
+		...(typeof shown === 'string' && shown.trim() && { public: shown }),
+		...(typeof share === 'string' && SHARES.includes(share as Share) && { share: share as Share }),
+		...((withThem === true || withThem === 'true') && { withThem: true }),
+	};
 };
+
+/** The ways a plan's words may be shared (calendar.ts Share). */
+const SHARES: readonly Share[] = ['open', 'personal', 'confidential'];
 
 /** A follow-up the model planned: `{ days, about }` with a whole number of days from 0 and a note, false (or "false") to drop it; else none. */
 const followUpOf = (value: unknown): ParsedTurn['followUp'] => {
@@ -412,25 +430,64 @@ export function createBrain({
 	const hours = calendar.enabled ? calendarHours(persona, store) : persona;
 	/** What a DM turn may put in its calendar (prompts.ts planField): none while it may put nothing. */
 	const planning = calendar.enabled && (calendar.plans.enabled || calendar.makeTime.enabled)
-		? { busy: calendar.plans.enabled, maxDays: calendar.plans.maxDays, makeTime: calendar.makeTime.enabled ? { maxMinutes: calendar.makeTime.maxMinutes } : null }
+		? {
+				busy: calendar.plans.enabled,
+				maxDays: calendar.plans.maxDays,
+				makeTime: calendar.makeTime.enabled ? { maxMinutes: calendar.makeTime.maxMinutes } : null,
+				sharing: calendar.sharing.enabled,
+			}
 		: undefined;
+	/** What a prompt for `viewer` may tell of each plan (calendar.ts sightOf): none, a group chat's, only what anyone may hear. */
+	const seeFor =
+		(viewer?: Viewer): See =>
+		(busy) =>
+			sightOf(busy, viewer, calendar.sharing);
 	/** The plan its calendar didn't take at the last kept turn with them, as their next turn is told (prompts.ts refusedPlanPrompt), if any. */
-	const refusedPlan = (personId: number) => {
-		const kept = calendar.enabled ? store.get(persona.id, refusedKey(personId)) : null;
-		return kept ? refusedPlanPrompt(JSON.parse(kept) as Parameters<typeof refusedPlanPrompt>[0], persona.timezone, personId) : undefined;
+	const refusedPlan = (person: Person) => {
+		const kept = calendar.enabled ? store.get(persona.id, refusedKey(person.id)) : null;
+		return kept ? refusedPlanPrompt(JSON.parse(kept) as Parameters<typeof refusedPlanPrompt>[0], persona.timezone, seeFor(viewerOf(person))) : undefined;
 	};
 	/** Its coming plans, as DM turns and openers with the person list them (prompts.ts calendarPrompt); none while its calendar is off. */
-	const calendarLines = (personId: number) =>
-		calendar.enabled ? calendarPrompt(comingPlans(store, hours, { now: now(), settings: calendar, personId }), persona.timezone) : undefined;
+	const calendarLines = (person: Person) =>
+		calendar.enabled
+			? calendarPrompt(comingPlans(store, hours, { now: now(), settings: calendar, viewer: viewerOf(person), closeness: closenessOf }), persona.timezone, person.name)
+			: undefined;
 	/** Where the plan its calendar didn't take is kept for the next turn with them (kv), until a turn with them is kept. */
 	const refusedKey = (personId: number) => `calendarRefused:${personId}`;
+	/** Where the plans it called off on someone for someone else are kept, until a turn with them or an apology tells them (kv). */
+	const calledOffKey = (personId: number) => `calendarCalledOff:${personId}`;
+	/** The plans it called off on them for someone else, which they don't know of yet. */
+	const calledOffOn = (personId: number): { start: number; end: number; kind: StoredEvent['kind']; what: string }[] =>
+		JSON.parse(store.get(persona.id, calledOffKey(personId)) ?? '[]');
+	/** That it called plans with them off for someone else, as their next DM turn is told (prompts.ts calledOffPrompt), if any. */
+	const calledOffLines = (personId: number) => {
+		const plans = calendar.enabled ? calledOffOn(personId) : [];
+		return plans.length ? calledOffPrompt(plans.map((plan) => calledOffText(plan, persona.timezone))) : undefined;
+	};
+	/**
+	 * A promise to someone called off in a turn with someone else (`by`): called off, audited, and kept for their next
+	 * turn to hear about (`calledOffPrompt`), with an apology to send them while texting first is on (an `apology` opener,
+	 * given up once the plan is over; initiative.ts and the reply queue decide when it may go).
+	 */
+	const callOff = (event: StoredEvent, by: number) => {
+		const personId = event.personId!;
+		store.cancelEvent(event.id, by);
+		store.audit(persona.id, 'plan_called_off', { personId, eventId: event.id, for: by });
+		const plan = { start: zonedToUtc(event.day, event.from, persona.timezone), end: zonedToUtc(event.day, event.to, persona.timezone), kind: event.kind, what: event.what };
+		store.set(persona.id, calledOffKey(personId), JSON.stringify([...calledOffOn(personId), plan]));
+		if (initiative.enabled) store.planOpener(persona.id, personId, { kind: 'apology', about: calledOffText(plan, persona.timezone), dueAt: now(), expiresAt: plan.end });
+	};
 	/**
 	 * A plan a kept turn with the person made, if the code allows it (calendar.ts checkPlan): added, called off, or
 	 * refused (one it couldn't read too: 'unreadable'), each audited. A refused one is kept for the next turn with them to
-	 * hear about (`refusedPlanPrompt`), but for time made to chat when it is online then anyway: no promise is broken.
+	 * hear about (`refusedPlanPrompt`), but for time made to chat when it is online then anyway: no promise is broken. A
+	 * promise to someone else it calls off, by its number or by a plan over it, is theirs to hear about (`callOff`).
 	 */
 	const applyPlan = (personId: number, proposal: PlanProposal | 'unreadable', writtenAt: number) => {
-		const checked: PlanCheck = proposal === 'unreadable' ? { refused: 'unreadable' } : checkPlan(proposal, { store, hours, settings: calendar, now: now(), personId, today: localDateOf(writtenAt, persona.timezone) });
+		const checked: PlanCheck =
+			proposal === 'unreadable'
+				? { refused: 'unreadable' }
+				: checkPlan(proposal, { store, hours, settings: calendar, now: now(), personId, today: localDateOf(writtenAt, persona.timezone), closeness: closenessOf });
 		if ('refused' in checked) {
 			store.audit(persona.id, 'plan_refused', { personId, reason: checked.refused });
 			if (checked.refused !== 'already_online') {
@@ -440,12 +497,15 @@ export function createBrain({
 			return;
 		}
 		if ('cancel' in checked) {
-			store.cancelEvent(checked.cancel.id);
-			store.audit(persona.id, 'plan_cancelled', { personId, eventId: checked.cancel.id });
+			const event = checked.cancel;
+			if (isPromise(event) && event.personId !== personId) callOff(event, personId);
+			else store.cancelEvent(event.id, personId);
+			store.audit(persona.id, 'plan_cancelled', { personId, eventId: event.id });
 			return;
 		}
 		const event = store.addEvent(persona.id, checked.add);
 		store.audit(persona.id, 'plan_added', { personId, eventId: event.id, kind: event.kind, day: event.day, from: event.from, to: event.to });
+		for (const other of checked.bumped) callOff(other, personId);
 	};
 	const lookLimit = settings.perception.timeoutSeconds * SECOND;
 	const seesImages = !taskModel(settings, 'vision').off;
@@ -593,6 +653,26 @@ export function createBrain({
 		return { person: store.updatePerson(person.id, { familiarity, affinity }), shown };
 	};
 
+	/** Their relationship levels as their prompts describe them, setting nothing: those of their conversation, else as a new one would find them now. */
+	const levelsOf = (person: Person) => {
+		const shown = shownOf(person);
+		if (shown?.conversation === person.conversations) return { familiarity: shown.familiarity, affinity: shown.affinity };
+		return {
+			familiarity: levelIndex(familiarityLevels, person.familiarity, shown?.familiarity ?? -1, relationship.hysteresis),
+			affinity: levelIndex(affinityLevels, person.affinity, shown?.affinity ?? -1, relationship.hysteresis),
+		};
+	};
+	/** How close it is to someone (calendar.ts closerOf): their familiarity level and, while it is kept, affinity level, summed. */
+	const closenessOf = (personId: number) => {
+		const levels = levelsOf(store.personById(personId));
+		return levels.familiarity + (relationship.affinity.enabled ? levels.affinity : 0);
+	};
+	/** Whom a prompt with them is for (calendar.ts Viewer): the `from` of their levels. */
+	const viewerOf = (person: Person): Viewer => {
+		const levels = levelsOf(person);
+		return { id: person.id, familiarity: familiarityLevels[levels.familiarity]!.from, ...(relationship.affinity.enabled && { affinity: affinityLevels[levels.affinity]!.from }) };
+	};
+
 	/** How things stand with them as the DM prompt says it, set for their conversation (set now when it was not, as for someone known before levels were kept). */
 	const relationshipNow = (person: Person) => {
 		const shown = shownOf(person)?.conversation === person.conversations ? shownOf(person)! : startConversation(person, 0).shown;
@@ -626,11 +706,11 @@ export function createBrain({
 
 	/**
 	 * Its day on `channel` (prompts.ts dayPrompt), each part as settings.context shows it; none outside its online time.
-	 * `viewer`: the person a DM turn or an opener is with (none in a group chat), told the words of a plan made with them
-	 * alone. `dm` only for a DM turn: it adds the line saying their messages waited (`firstNew`, when their first message
-	 * not handled yet came) and the wrap-up near the end of its span (WRAP_UP_MS).
+	 * `viewer`: the person a DM turn or an opener is with (none in a group chat), who hears of the plans made with others
+	 * what calendar.ts sightOf allows. `dm` only for a DM turn: it adds the line saying their messages waited
+	 * (`firstNew`, when their first message not handled yet came) and the wrap-up near the end of its span (WRAP_UP_MS).
 	 */
-	const dayLines = (channel: ChannelId, viewer?: number, dm?: { firstNew: number | undefined }) => {
+	const dayLines = (channel: ChannelId, viewer?: Person, dm?: { firstNew: number | undefined }) => {
 		const at = now();
 		const situation = situationAt(hours, at, channel);
 		if (!situation) return '';
@@ -646,7 +726,7 @@ export function createBrain({
 			const agenda = agendaOn(hours, addDays(today, index + 1));
 			return { ...agenda, spans: agenda.spans.filter((span) => isOn(span, channel)) };
 		});
-		return dayPrompt(situation, persona.timezone, { now: context.situation, upcoming: context.upcoming, away, endingSoon, ahead, ...(viewer !== undefined && { viewer }) });
+		return dayPrompt(situation, persona.timezone, { now: context.situation, upcoming: context.upcoming, away, endingSoon, ahead, see: seeFor(viewer && viewerOf(viewer)) });
 	};
 
 	return {
@@ -751,7 +831,7 @@ export function createBrain({
 					gaps: settings.context.timeSince
 						? { theirLast: theirLast ? now() - theirLast.at : null, yourLast: yourLast ? now() - yourLast.at : null }
 						: undefined,
-					day: dayLines(channel.id, person.id, { firstNew: theirNew[0]?.at }),
+					day: dayLines(channel.id, person, { firstNew: theirNew[0]?.at }),
 				}),
 				minorCaution: caution,
 				// Counted by the code, never by the model; it changes nothing in the rules or the checks
@@ -760,8 +840,9 @@ export function createBrain({
 				...(photos || links ? { media: { photos, links } } : {}),
 				...(followingUp && { followUp: { maxDays: initiative.followUps.maxDays, pending: pendingPlan(person.id) } }),
 				...(planning && { plan: planning }),
-				calendar: calendarLines(person.id),
-				refusedPlan: refusedPlan(person.id),
+				calendar: calendarLines(person),
+				refusedPlan: refusedPlan(person),
+				calledOff: calledOffLines(person.id),
 			});
 			const messages: LlmMessage[] = [
 				{ role: 'system', content: system(channel, task, true) },
@@ -794,8 +875,11 @@ export function createBrain({
 					...(turn.importance !== undefined && { importance: turn.importance, importanceAt: now() }),
 				});
 				if (followingUp && turn.followUp !== undefined) planFollowUp(id, turn.followUp);
-				// Its last refused plan was told to this turn: a plan of this one may be refused in turn
-				if (calendar.enabled) store.set(persona.id, refusedKey(id), null);
+				// Its last refused plan, and the plans it called off on them, were told to this turn: a plan of this one may be refused in turn
+				if (calendar.enabled) {
+					store.set(persona.id, refusedKey(id), null);
+					store.set(persona.id, calledOffKey(id), null);
+				}
 				if (planning && turn.plan !== undefined) applyPlan(id, turn.plan, writtenAt);
 				if (action === 'block') {
 					store.updatePerson(id, { state: 'blocked' });
@@ -838,7 +922,9 @@ export function createBrain({
 					? followUpReasonPrompt(person.name, opener.about)
 					: opener.kind === 'checkIn'
 						? checkInReasonPrompt(person.name, quietFor)
-						: shareReasonPrompt(person.name, opener.about);
+						: opener.kind === 'apology'
+							? apologyReasonPrompt(person.name, opener.about)
+							: shareReasonPrompt(person.name, opener.about);
 			const task = openerTask({
 				selfNotes: selfNotes(),
 				personName: person.name,
@@ -849,11 +935,11 @@ export function createBrain({
 				time: directMessageTimePrompt({
 					localTime: localTime(),
 					gaps: settings.context.timeSince ? { theirLast: theirLast ? now() - theirLast.at : null, yourLast: yourLast ? now() - yourLast.at : null } : undefined,
-					day: dayLines(channel.id, person.id),
+					day: dayLines(channel.id, person),
 				}),
 				relationship: settings.context.relationship ? relationshipNow(person) : undefined,
 				...(photos || links ? { media: { photos, links } } : {}),
-				calendar: calendarLines(person.id),
+				calendar: calendarLines(person),
 			});
 			const messages: LlmMessage[] = [
 				{ role: 'system', content: system(channel, task, true) },
@@ -871,6 +957,8 @@ export function createBrain({
 				kept = true;
 				if (parsed.notes !== undefined) store.updatePerson(person.id, { summary: clip(parsed.notes, settings.memory.personNotes) });
 				if (parsed.self !== undefined) store.set(persona.id, 'selfNotes', clip(parsed.self, settings.memory.selfNotes));
+				// The apology sent: the plans it called off on them are told (one it chose not to send leaves them for their next turn)
+				if (opener.kind === 'apology' && reply) store.set(persona.id, calledOffKey(person.id), null);
 			};
 			return { messages: reply ? splitReply(reply, runtime.rng, settings.pacing) : [], action: 'none', keep };
 		},

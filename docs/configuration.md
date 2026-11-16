@@ -560,14 +560,22 @@ audited, one that doesn't fit. DM turns and openers list its coming plans, and i
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `enabled` | boolean | `false` | Whether it has a calendar. Off, no event is read (the app's neither) and no prompt says anything of it. |
-| `plans.enabled` | boolean | `true` | A DM turn may make a plan of its own, or call off one it made with that person. |
+| `plans.enabled` | boolean | `true` | A DM turn may make a plan of its own, or call one off. |
 | `plans.maxDays` | integer, 0 to 365 | `60` | The furthest ahead any plan may be, in days (0: later today); how far ahead its coming plans are listed. |
 | `plans.perWeek` | integer, 1 to 20 | `4` | The most plans of its own it makes in any 7 days, those called off counting too. |
 | `plans.maxHours` | number, 1 to 24 | `12` | The longest plan of its own. |
-| `makeTime.enabled` | boolean | `true` | A DM turn may make time to chat with the person at an hour it would be offline, or call off time it made for them. |
+| `makeTime.enabled` | boolean | `true` | A DM turn may make time to chat with the person at an hour it would be offline, or call off time it made. |
 | `makeTime.maxMinutes` | integer, 15 to 240 | `120` | The longest time it makes. |
 | `makeTime.perPersonDays` | number, 1 to 90 | `7` | At least this many days between two made for the same person. |
 | `shown` | integer, 1 to 20 | `6` | How many of its coming plans a DM turn and an opener list, with its number each one that conversation may call off. |
+| `sharing.enabled` | boolean | `true` | Whether others may hear the words of a plan made with someone, as its `share` and their levels allow. Off: nobody else ever hears a plan's own words, nor whom time was made for; they hear its public words. |
+| `sharing.personal.familiarity` | number, 0 to 1 | `0.32` | From which familiarity level (a level's `from`; the shipped "one of your regulars") someone hears a `personal` plan's words (it names someone, their party) and whom time was made for. |
+| `sharing.personal.affinity` | number, -1 to 1 | none | And from which affinity level, while affinity is kept. |
+| `sharing.confidential.familiarity` | number, 0 to 1 | `0.82` | From which familiarity level (the shipped "one of the people closest to you") someone hears a `confidential` plan's words, told in confidence. |
+| `sharing.confidential.affinity` | number, -1 to 1 | `0.6` | And from which affinity level (the shipped "really fond"), while affinity is kept. |
+
+`sharing.personal` or `sharing.confidential` set to `false` shares those plans with nobody. The thresholds read best at
+a level's `from`, as `relationship.familiarity.levels` and `relationship.affinity.levels` set them.
 
 What the code checks, whatever the settings say:
 
@@ -585,16 +593,25 @@ What the code checks, whatever the settings say:
   schedule's longest day by more than `makeTime.maxMinutes`; at an hour it is online for every channel anyway it adds
   nothing but is kept, so no plan of its own takes that time later (unless another for them is too soon: then it is
   left out, and not told, since nothing was broken);
-- it calls off only its own plans of a kind it may make now, still ahead, and only in a turn with whom it made them
-  (told to them, a promise at times); a plan called off still counts toward `perWeek` and `perPersonDays`, and
-  `store.sweep` keeps the persona's own plans of the last 90 days for that;
+- it calls off only its own plans of a kind it may make now, still ahead; a plan called off still counts toward
+  `perWeek` and `perPersonDays`, and `store.sweep` keeps the persona's own plans of the last 90 days for that;
+- a promise to someone (time made to chat with them, or a plan the model marked as with or for them) is called off in
+  a turn with someone else, by its number or by a plan over it, only when that person is not less close to it than the
+  one it was made with (their familiarity and, while it is kept, affinity levels, summed: one level apart is about as
+  close). The one it was broken for is told, at their next turn, and by an apology while texting first is on;
 - a plan made with someone who then ends it (stops, blocks it, is denied) no longer stands: nobody is left to call it
   off with.
 
-Each outcome is audited: `plan_added`, `plan_cancelled`, or `plan_refused` with its reason (`unreadable` for a `plan`
-the code couldn't read). A refused plan is told, once, to the next turn with that person (when it was for, and why),
-so a promise the model made can be put right. A plan's words are the person's it was made with: other turns and group
-chats see "a plan of your own". Interruptions (`pacing.interruptions`) stay those of its routine.
+Each outcome is audited: `plan_added`, `plan_cancelled`, `plan_called_off` (a promise broken for someone else), or
+`plan_refused` with its reason (`unreadable` for a `plan` the code couldn't read). A refused plan is told, once, to the
+next turn with that person (when it was for, and why), so a promise the model made can be put right.
+
+What others hear of a plan made with someone is its own words as its `share` (chosen by the model) and their levels
+allow (`sharing`), else its public words, also chosen by the model; group chats, with no one person, hear only the
+public words. A `confidential` plan is told in confidence: the model is told so, and to ask them to keep it to
+themselves. The persona's notes about itself (`self`), written by the model and read in every conversation, are not
+held to this: what one person told it could still reach another through them. Interruptions (`pacing.interruptions`)
+stay those of its routine.
 
 ## Service settings
 

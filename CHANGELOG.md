@@ -14,22 +14,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   and so offline then, "at a cousin's birthday"), make time to chat with the person at an hour it would be offline, or
   call one of its plans off by its number; the app may add its own (`store.addEvent`). The model only proposes: the
   code checks each plan against guardrails no setting relaxes (a short reason of plain words, never sleep or school,
-  joined to other words, in other languages or look-alike letters too, never "your", over no other plan; time made to
-  chat between 7 AM and midnight, over no busy block, never more online in a day than its schedule's longest day and
-  one such time, once per person a week; lengths as the time passes, daylight saving in it; a plan called off only
-  with whom it was made; limits per week and days ahead) and audits the outcome (`plan_added`, `plan_cancelled`,
-  `plan_refused`, one it couldn't read too). A plan it refused is told, once, to the next turn with that person, so a
-  promise the model made ("sure, 3 tomorrow" while at work) can be put right; time made at an hour it is online
-  anyway is kept all the same, so no later plan breaks the promise. A busy plan cuts the day's online time and busy
-  blocks (a dentist's hour splits a work day); time made to chat is online time for every channel. DM turns and
-  openers list the coming plans (`calendar.shown`; a number only on a plan made with that person), and its time lines
-  include them, a plan's words always quoted as data and told only to the person it was made with (to anyone else,
-  and in group chats, "a plan of your own"; time made with someone else never named). A plan made with someone who
-  then ends it no longer stands. Interruptions stay the routine's.
+  joined to other words, in other languages or look-alike letters too, never "your", over no other plan of its own;
+  time made to chat between 7 AM and midnight, over no busy block, never more online in a day than its schedule's
+  longest day and one such time, once per person a week; lengths as the time passes, daylight saving in it; limits per
+  week and days ahead) and audits the outcome (`plan_added`, `plan_cancelled`, `plan_called_off`, `plan_refused`, one
+  it couldn't read too). A plan it refused is told, once, to the next turn with that person, so a promise the model
+  made ("sure, 3 tomorrow" while at work) can be put right; time made at an hour it is online anyway is kept all the
+  same, so no later plan breaks the promise lightly. A busy plan cuts the day's online time and busy blocks (a
+  dentist's hour splits a work day); time made to chat is online time for every channel. DM turns and openers list the
+  coming plans (`calendar.shown`, a number on each it may call off there), and its time lines include them, a plan's
+  words always quoted as data. A plan made with someone who then ends it no longer stands. Interruptions stay the
+  routine's.
+- **Promises, kept or broken like a person's.** Time made to chat with someone, and a plan the model marks as with or
+  for them (`withThem`), are promises to them. It may break one for someone who matters as much or more: in a turn
+  with someone not less close to it (their familiarity and affinity levels; one level apart is about as close), by
+  calling it off or by a plan over it, never for someone less close. Its calendar gives it the facts to weigh that
+  with ("you're closer to Kim than to them; you've already called off plans with them twice this month"), and a line
+  on weighing it as in life; measured on a live model, those facts are what it decides by. The one it was broken on is
+  told at their next turn, to say sorry, and with texting first on, it texts them an apology first (a new `apology`
+  opener kind).
+- **Who hears what of its plans** (`calendar.sharing`, on by default). A plan's words are the person's it was made
+  with. The model ranks each as it makes it (`share`: `open`, `personal`, `confidential`) and gives the words anyone
+  may hear (`public`); others hear its words as their relationship levels allow (`sharing.personal`, from "one of your
+  regulars"; `sharing.confidential`, from "one of the people closest to you" and "really fond", told in confidence, so
+  it asks them to keep it to themselves), and its public words otherwise; group chats hear only those. Sharing off,
+  nobody else ever hears a plan's own words, nor whom time was made for. Its notes about itself are not held to this
+  (documented).
 - `brain.hours`: the persona's hours with its calendar (the persona itself while the calendar is off), which its reply
   queue reads; give them to `spanAt`, `fullyOnline` and `watchSpans` so a plan moves your view of its online time too.
-- The store's calendar: `addEvent`, `cancelEvent`, `eventById`, `events`, `eventsMadeSince`, and the `StoredEvent`
-  type. Their `events` table is made when the store opens; `sweep` deletes the events called off and over (the
+- The store's calendar: `addEvent`, `cancelEvent`, `eventById`, `events`, `eventsMadeSince`, `calledOffOn`, and the
+  `StoredEvent` type. Their `events` table is made when the store opens; `sweep` deletes the events called off and over (the
   persona's own of the last 90 days kept, which its limits count), `resetPersona` a persona's calendar, and
   `forgetPerson` the plans made in turns with that person (the app's stay, without them).
 - **Its week in the prompt.** Every prompt with a time line (DM turns, openers, group-chat lines) now gives its usual
