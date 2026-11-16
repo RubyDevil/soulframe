@@ -1518,6 +1518,9 @@ describe('parseTurn: plan', () => {
 		expect(plan({ day: 2, from: '18:00', to: '22:00', busy: 'at the dentist' })).toEqual({ day: 2, from: '18:00', to: '22:00', busy: 'at the dentist' });
 		expect(plan({ day: 2, from: '15:00', to: '16:00', online: true, busy: 'ignored' })).toEqual({ day: 2, from: '15:00', to: '16:00', online: true });
 		expect(plan({ cancel: 4, day: 2 })).toEqual({ cancel: 4 });
+		// A plan in its place it can't read: unreadable, both or neither (never the old one called off alone)
+		expect(plan({ cancel: 4, day: 'saturday', from: '19:00', to: '21:00', busy: 'at the beach with you' })).toBe('unreadable');
+		expect(plan({ cancel: 4, from: '19:00', to: '21:00' })).toBe('unreadable');
 		// A new plan in place of one, as a model writes them together: the plan, which replaces it
 		expect(plan({ cancel: 1, day: 3, from: '14:00', to: '18:00', busy: 'at the beach with you', withThem: true })).toEqual({
 			day: 3,

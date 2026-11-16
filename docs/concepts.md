@@ -219,13 +219,14 @@ Off by default (`settings.initiative.enabled`). With it on, a persona may start 
     thresholds) it hasn't heard from in `quietDays`. As each span of its online time opens, each such person is drawn,
     about once in `meanDays` of their silence, up to twice as often for the closest, so people apart for months drift
     off the list; it goes at a random moment of the span, and is dropped if they talk before it does (`planCheckIns`,
-    initiative.ts:124).
+    initiative.ts:126).
   - **Sharing its day** (`initiative.sharing`, off by default): when a span opens within 30 minutes of a busy block's
     end, now and then (`chance`), it texts one of the people closest to it about it ("at the gym"), within the next
-    30 minutes (`planShare`, initiative.ts:165). The model makes up what happened, keeping to its notes on itself.
+    30 minutes (`planShare`, initiative.ts:167). The model makes up what happened, keeping to its notes on itself.
   - **An apology** (with its calendar on): when it breaks a promise to someone for someone else, it texts them to say
     sorry, at once, for every plan it owes them. It takes a pending check-in's or share's place, but never a
-    follow-up's (that one tells them too), and is given up once the last plan is over or once they talk.
+    follow-up's (that one tells them too), and is given up once the last plan is over or once a reply or another
+    opener told them (a turn left on read tells them nothing).
 
   A follow-up is kept only with the turn that planned it (`Turn.keep`). Every later turn with them sees it, so once
   they talk about it the model drops it, and once its day has come their own turn is asked to bring it up. It may go
@@ -267,7 +268,7 @@ lines say so, and afterwards it is back from it.
 - **Who puts plans in it.** The persona, in a DM turn: its answer's `plan` is a plan of its own, time it makes to chat
   with the person, or one of its plans called off by its number. The app, with `store.addEvent` (a holiday, a team
   day): those are its own to check, and only it calls them off.
-- **The guardrails**, which no setting relaxes (`checkPlan`, calendar.ts:192): the model only proposes. A plan of its
+- **The guardrails**, which no setting relaxes (`checkPlan`, calendar.ts:188): the model only proposes. A plan of its
   own has a short reason of plain words (never sleep or school, joined to other words, in other languages or look-alike
   letters too; never "them" or "their"), over no other plan in its calendar (bar a promise it may break), at most `plans.perWeek` a week; time made to chat lies
   between 7 AM and midnight, over no busy block, never makes the day's online time longer than its schedule's longest
@@ -280,8 +281,8 @@ lines say so, and afterwards it is back from it.
 - **Promises, and breaking them.** Time made to chat with someone, and a plan the model marked as with or for them
   (`withThem`: their party, a game night), are promises to them. Like a person, it may break one for someone who
   matters as much or more: in a turn with someone not less close to it than the one it promised (their familiarity
-  and affinity levels; one level apart is about as close), by calling it off or by a plan over it. Never for someone
-  less close. Its calendar tells it what it weighs that with: "you're closer to Kim than to them; you've already called
+  and affinity levels; one level apart is about as close), by calling it off or by a plan over it (one its calendar
+  listed to that turn, so it weighed it). Never for someone less close. Its calendar tells it what it weighs that with: "you're closer to Kim than to them; you've already called
   off plans with them twice this month", and a line on weighing it as in life. Measured on a live model, those facts
   are what it decides by: it never broke a promise for someone less close, nearly always for someone much closer, and
   a few times in ten for someone about as close, or after letting them down twice. The one it was broken on is told at

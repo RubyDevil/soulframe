@@ -4,7 +4,7 @@ import { followUpWindow, openerBlock, planCheckIns, planShare, REST_MS } from '.
 import type { Rng } from '../src/rng.js';
 import { spanAt } from '../src/schedule.js';
 import { DAY, HOUR, MINUTE, type Settings } from '../src/settings.js';
-import type { Store } from '../src/store.js';
+import { calledOffKey, type Store } from '../src/store.js';
 import { memoryStore, personaOf, settingsOf, testPersona } from './fixtures.js';
 
 // Thursday 20:00 UTC
@@ -92,12 +92,25 @@ describe('followUpWindow', () => {
 });
 
 describe('openerBlock on a check-in or an apology', () => {
-	it.each(['checkIn', 'apology'] as const)('drops a %s once they talked since it was planned (a turn with them told them), and lets it go otherwise', (kind) => {
+	it('drops a check-in once they talked since it was planned, and lets it go otherwise', () => {
 		const { store, person } = setUp();
-		const opener = store.planOpener('robin', person.id, { kind, about: '', dueAt: NOW, expiresAt: NOW + HOUR });
+		const opener = store.planOpener('robin', person.id, { kind: 'checkIn', about: '', dueAt: NOW, expiresAt: NOW + HOUR });
 		expect(openerBlock(store, person, NOW + 3 * HOUR, initiative, opener)).toBeNull();
 		store.addMessage(person.id, 'chat', 'in', 'hey you', NOW + MINUTE);
 		store.updatePerson(person.id, { lastInAt: NOW + MINUTE, handledAt: NOW + MINUTE });
+		expect(openerBlock(store, store.personById(person.id), NOW + 3 * HOUR, initiative, opener)).toEqual({ reason: 'talked_since', final: true });
+	});
+
+	it('drops an apology only once nothing is owed them: talking alone (left on read) told them nothing', () => {
+		const { store, person } = setUp();
+		store.set('robin', calledOffKey(person.id), JSON.stringify([{ id: 1, start: NOW + DAY, end: NOW + DAY + HOUR, kind: 'online', what: '' }]));
+		const opener = store.planOpener('robin', person.id, { kind: 'apology', about: 'x', dueAt: NOW, expiresAt: NOW + 2 * DAY });
+		expect(openerBlock(store, person, NOW + 3 * HOUR, initiative, opener)).toBeNull();
+		store.addMessage(person.id, 'chat', 'in', 'hey you', NOW + MINUTE);
+		store.updatePerson(person.id, { lastInAt: NOW + MINUTE, handledAt: NOW + MINUTE });
+		expect(openerBlock(store, store.personById(person.id), NOW + 3 * HOUR, initiative, opener)).toBeNull();
+		// A reply told them (the brain empties what it owes them)
+		store.set('robin', calledOffKey(person.id), null);
 		expect(openerBlock(store, store.personById(person.id), NOW + 3 * HOUR, initiative, opener)).toEqual({ reason: 'talked_since', final: true });
 	});
 });

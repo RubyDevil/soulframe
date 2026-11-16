@@ -13,7 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   the way it said. A DM turn may put a plan of its own in it (`plan` in the answer format: somewhere it will be, busy
   and so offline then, "at a cousin's birthday"), make time to chat with the person at an hour it would be offline, or
   call one of its plans off by its number (with a new plan in its place, `cancel` in it too: both or neither, a plan
-  moved counted once); the app may add its own
+  of theirs moved counted once); the app may add its own
   (`store.addEvent`). The model only proposes: the
   code checks each plan against guardrails no setting relaxes (a short reason of plain words, never sleep or school,
   joined to other words, in other languages or look-alike letters too, never "them" or "their", over no other plan in its calendar but a promise it may break;
@@ -30,7 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Promises, kept or broken like a person's.** Time made to chat with someone, and a plan the model marks as with or
   for them (`withThem`), are promises to them. It may break one for someone who matters as much or more: in a turn
   with someone not less close to it (their familiarity and affinity levels; one level apart is about as close), by
-  calling it off or by a plan over it, never for someone less close. Its calendar gives it the facts to weigh that
+  calling it off or by a plan over it (only one its calendar listed to that turn), never for someone less close. Its calendar gives it the facts to weigh that
   with ("you're closer to Kim than to them; you've already called off plans with them twice this month"), and a line
   on weighing it as in life; measured on a live model, those facts are what it decides by. The one it was broken on is
   told at their next turn, to say sorry, and with texting first on, it texts them an apology first (a new `apology`

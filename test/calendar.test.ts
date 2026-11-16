@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { calendarHours, checkPlan, closerOf, comingPlans, heardOf, isPromise, sightOf, toOthers, type PlanProposal } from '../src/calendar.js';
+import { calendarHours, checkPlan, closerOf, comingPlans, heardOf, isPromise, sightOf, type PlanProposal } from '../src/calendar.js';
+import { toOthers } from '../src/prompts.js';
 import { ScheduleSchema } from '../src/config/hours.js';
 import { agendaOn, parseClock, spanAt, zonedToUtc, type Hours } from '../src/schedule.js';
 import { DAY, MINUTE } from '../src/settings.js';
@@ -359,6 +360,24 @@ describe('checkPlan: time made to chat (online)', () => {
 		// With time made for Kim lately: the party stands, so the hour isn't theirs, and they are told
 		add({ ...call, day: 2, from: '20:00', to: '21:00' }, kim.id);
 		expect(checkFor(kim.id, eight)).toMatchObject({ refused: 'too_soon' });
+	});
+
+	it('breaks by a plan over it only a promise its turn listed: one past calendar.shown was never weighed', () => {
+		const { add, checkFor, kim, close } = setUp(settingsOf({ calendar: { enabled: true, shown: 2 } }).calendar);
+		close(kim.id, 8);
+		// Two plans sooner, then time made with Sam on Sunday: not among the two Kim's turn lists
+		add({ ...dinner, day: 1, busy: 'at the dentist' });
+		add({ ...dinner, day: 2, busy: 'at the gym' });
+		add(call);
+		expect(checkFor(kim.id, call)).toMatchObject({ refused: 'clash_online' });
+		expect(checkFor(kim.id, { ...dinner, day: 6, from: '14:00', to: '18:00', busy: 'at the cinema' })).toMatchObject({ refused: 'clash_online' });
+	});
+
+	it("counts a plan in place of another's toward the week's cap: breaking a promise is no move", () => {
+		const week = setUp(settingsOf({ calendar: { enabled: true, plans: { perWeek: 1 } } }).calendar);
+		week.close(week.kim.id, 8);
+		const party = week.add({ ...dinner, busy: 'at your party', withThem: true });
+		expect(week.checkFor(week.kim.id, { ...dinner, day: 4, busy: 'at the pool', replaces: party.id })).toMatchObject({ refused: 'week_cap' });
 	});
 
 	it('breaks a busy plan with someone only as a promise: one only told to them is no promise, and refused as a clash', () => {

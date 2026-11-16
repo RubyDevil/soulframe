@@ -6,7 +6,8 @@
  * app may add plans of its own (store.addEvent), which are its own to check.
  */
 
-import { addresses, ADDRESSED, planReasonProblem } from './config/hours.js';
+import { addresses, planReasonProblem } from './config/hours.js';
+import { toOthers } from './prompts.js';
 import { addDays, agendaOn, CLOCK, localDateOf, onlineMinutesByWeekday, parseClock, zonedToUtc, type Busy, type CalendarEvent, type Hours, type LocalDate } from './schedule.js';
 import { DAY, MINUTE, type Settings } from './settings.js';
 import type { Store, StoredEvent } from './store.js';
@@ -86,11 +87,6 @@ export function sightOf(plan: { madeWith?: number; share?: Share }, viewer: View
 	return !close ? 'public' : share === 'confidential' ? 'confidence' : 'full';
 }
 
-/**
- * A plan's own words as someone other than whom it was made with hears them: "you" and "your" in them (`ADDRESSED`: the
- * person in their own chat) said by their name ("at your party" becomes "at Sam's party").
- */
-export const toOthers = (words: string, name: string) => words.replace(ADDRESSED, (word) => (/^(?:your|yours|ur)$/i.test(word) ? `${name}'s` : name));
 
 /** What a reader hears of a plan: its words (none: a plan of its own, unnamed), told in confidence or not. */
 export interface Heard {
@@ -231,6 +227,9 @@ function checkOne(
 	/** A promise to someone else this person may have it called off for. */
 	const bumpable = (event: StoredEvent) =>
 		isPromise(event) && event.personId !== personId && enabled(event.kind) && closerOf(closeness(personId), closeness(event.personId!)) !== 'less';
+	/** Of those, one a plan over it may call off: only one its turn listed, so the model weighed it (`comingPlans`). */
+	const listedIds = new Set(listed(store, hours, now, settings).map(({ event }) => event.id));
+	const bumpableOver = (event: StoredEvent) => bumpable(event) && listedIds.has(event.id);
 	if ('cancel' in proposal) {
 		const event = store.eventById(proposal.cancel);
 		if (!event || event.persona !== hours.id || event.cancelledAt !== null) return refused('no_such_plan');
@@ -260,10 +259,9 @@ function checkOne(
 	const over = store
 		.events(hours.id, addDays(day, -1), addDays(day, 1))
 		.filter((event) => event.id !== replacing?.id && overlaps(block)(instantsOf(event, timezone)));
-	/** Its plans made since `since`, as store.eventsMadeSince counts them, but the one it replaces: a plan moved is no new one. */
+	/** Its plans made since `since`, as store.eventsMadeSince counts them, but the one it replaces, made with them: a plan moved is no new one (another's, broken for this one, is no move). */
 	const madeSince = (since: number, which: { kind: StoredEvent['kind']; personId?: number; unbroken?: boolean }) =>
-		store.eventsMadeSince(hours.id, since, which) -
-		(replacing && replacing.createdAt >= since && replacing.kind === which.kind && (which.personId === undefined || replacing.personId === which.personId) ? 1 : 0);
+		store.eventsMadeSince(hours.id, since, which) - (replacing && replacing.personId === personId && replacing.createdAt >= since && replacing.kind === which.kind ? 1 : 0);
 
 	if (online) {
 		const { maxMinutes, perPersonDays } = settings.makeTime;
@@ -272,7 +270,7 @@ function checkOne(
 		// Promises to others then that this one calls off (time made with someone else is one-on-one time); one it may not, refused
 		const bumped = new Map<number, StoredEvent>();
 		for (const event of over.filter((event) => isPromise(event) && event.personId !== personId)) {
-			if (bumpable(event)) bumped.set(event.id, event);
+			if (bumpableOver(event)) bumped.set(event.id, event);
 			else if (event.kind === 'online') return refusedAt('clash_online');
 		}
 		// The day as it will be once they are called off: what lay under them (work, a night shift) comes back
@@ -307,7 +305,7 @@ function checkOne(
 	if (problem) return refusedAt(`reason_${problem}`);
 	const bumped: StoredEvent[] = [];
 	for (const event of over) {
-		if (bumpable(event)) bumped.push(event);
+		if (bumpableOver(event)) bumped.push(event);
 		// Over time made to chat, or another plan: refused (a promise to someone it is less close to among them)
 		else if (event.kind === 'online') return refusedAt('clash_online');
 		else return refusedAt('clash', { reason: event.what, ...busyOf(event) });
@@ -353,6 +351,16 @@ export interface ComingPlan {
 	promise: { closer: Closer; calledOff: number } | null;
 }
 
+/** Its plans a turn lists (`comingPlans`): those standing from now to `plans.maxDays` ahead, at most `shown`, soonest first. */
+const listed = (store: Store, hours: Hours, now: number, settings: Settings['calendar']) => {
+	const today = localDateOf(now, hours.timezone);
+	return store
+		.events(hours.id, addDays(today, -1), addDays(today, settings.plans.maxDays))
+		.map((event) => ({ event, ...instantsOf(event, hours.timezone) }))
+		.filter(({ end }) => end > now)
+		.slice(0, settings.shown);
+};
+
 /**
  * Its coming plans as a turn with `viewer` lists them (prompts.ts calendarPrompt): those standing from now to
  * `plans.maxDays` ahead, at most `shown`, each with its instants and what that turn may hear of it (`sightOf`); a
@@ -365,35 +373,29 @@ export function comingPlans(
 	hours: Hours,
 	{ now, settings, viewer, closeness = () => 0 }: { now: number; settings: Settings['calendar']; viewer: Viewer; closeness?: (personId: number) => number },
 ): ComingPlan[] {
-	const today = localDateOf(now, hours.timezone);
-	return store
-		.events(hours.id, addDays(today, -1), addDays(today, settings.plans.maxDays))
-		.map((event) => ({ event, ...instantsOf(event, hours.timezone) }))
-		.filter(({ end }) => end > now)
-		.slice(0, settings.shown)
-		.map(({ event, start, end }) => {
-			const madeWith = event.source === 'persona' && event.personId !== null ? event.personId : undefined;
-			const plan = { reason: event.what, ...(madeWith !== undefined && { madeWith }), share: event.share, ...(event.public && { public: event.public }) };
-			const sight = sightOf(plan, viewer, settings.sharing);
-			const heard = heardOf(plan, viewer, settings.sharing, nameIn(store));
-			const promised = isPromise(event) && madeWith !== viewer.id ? closerOf(closeness(viewer.id), closeness(madeWith!)) : null;
-			const cancellable = event.source === 'persona' && (event.kind === 'online' ? settings.makeTime : settings.plans).enabled && promised !== 'less';
-			return {
-				id: cancellable ? event.id : null,
-				start,
-				end,
-				kind: event.kind,
-				words: event.kind !== 'busy' ? null : (heard.words ?? null),
-				confidence: event.kind === 'busy' && heard.confidence === true,
-				for:
-					event.kind === 'busy' || madeWith === undefined
-						? null
-						: madeWith === viewer.id
-							? 'them'
-							: sight === 'public' || nameIn(store)(madeWith) === undefined
-								? 'someone'
-								: { name: nameIn(store)(madeWith)! },
-				promise: promised === null ? null : { closer: promised, calledOff: store.calledOffOn(hours.id, madeWith!, now - 30 * DAY) },
-			};
-		});
+	return listed(store, hours, now, settings).map(({ event, start, end }) => {
+		const madeWith = event.source === 'persona' && event.personId !== null ? event.personId : undefined;
+		const plan = { reason: event.what, ...(madeWith !== undefined && { madeWith }), share: event.share, ...(event.public && { public: event.public }) };
+		const sight = sightOf(plan, viewer, settings.sharing);
+		const heard = heardOf(plan, viewer, settings.sharing, nameIn(store));
+		const promised = isPromise(event) && madeWith !== viewer.id ? closerOf(closeness(viewer.id), closeness(madeWith!)) : null;
+		const cancellable = event.source === 'persona' && (event.kind === 'online' ? settings.makeTime : settings.plans).enabled && promised !== 'less';
+		return {
+			id: cancellable ? event.id : null,
+			start,
+			end,
+			kind: event.kind,
+			words: event.kind !== 'busy' ? null : (heard.words ?? null),
+			confidence: event.kind === 'busy' && heard.confidence === true,
+			for:
+				event.kind === 'busy' || madeWith === undefined
+					? null
+					: madeWith === viewer.id
+						? 'them'
+						: sight === 'public' || nameIn(store)(madeWith) === undefined
+							? 'someone'
+							: { name: nameIn(store)(madeWith)! },
+			promise: promised === null ? null : { closer: promised, calledOff: store.calledOffOn(hours.id, madeWith!, now - 30 * DAY) },
+		};
+	});
 }

@@ -40,6 +40,12 @@ export interface Person {
 }
 
 /**
+ * Where the brain keeps the promises a persona broke on someone for someone else, which they don't know of yet (kv, a
+ * JSON list, under the persona): until a reply or an opener tells them. An apology opener stands while it holds any.
+ */
+export const calledOffKey = (personId: number) => `calendarCalledOff:${personId}`;
+
+/**
  * What made the persona plan to text someone first (settings.initiative): `followUp`, a DM turn's own plan; `checkIn`,
  * someone close gone quiet; `share`, its day, as it comes back from a busy block; `apology`, a plan with them it called
  * off for someone else (settings.calendar), to tell them.
@@ -731,7 +737,7 @@ export function createStore(db: Database, now: () => number = Date.now) {
 			inTransaction(db, () => {
 				db.prepare('DELETE FROM messages WHERE person_id = ?').run(personId);
 				db.prepare('DELETE FROM identities WHERE person_id = ?').run(personId);
-				db.prepare('DELETE FROM kv WHERE persona = ? AND key IN (?, ?, ?)').run(row.persona, `relationship:${personId}`, `calendarRefused:${personId}`, `calendarCalledOff:${personId}`);
+				db.prepare('DELETE FROM kv WHERE persona = ? AND key IN (?, ?, ?)').run(row.persona, `relationship:${personId}`, `calendarRefused:${personId}`, calledOffKey(personId));
 				// Plans made in a turn with them came from their conversation; the app's stay, without them. A promise to someone
 				// else broken for them stays broken (whom it was made with was let down), for someone forgotten (0)
 				db.prepare("DELETE FROM events WHERE person_id = ? AND source = 'persona'").run(personId);

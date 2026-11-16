@@ -29,6 +29,7 @@
  */
 
 import type { ComingPlan, Heard, Share } from './calendar.js';
+import { ADDRESSED } from './config/hours.js';
 import type { Channel } from './channel.js';
 import type { Question } from './decisions.js';
 import { siteOf, type MessageMedia, type SeenImage, type SeenLink } from './perception.js';
@@ -315,6 +316,12 @@ const capitalized = (text: string) => text.charAt(0).toUpperCase() + text.slice(
 
 /** A busy block, as `busyText` reads it (schedule.ts Busy's facts). */
 type BusyLike = { reason: string; event?: number; madeWith?: number; share?: Share; public?: string };
+
+/**
+ * A plan's own words as a prompt says them (calendar.ts heardOf): "you" and "your" in them (`ADDRESSED`: the person it
+ * was made with, in their own chat) said by their name ("at your party" becomes "at Sam's party"), to them too.
+ */
+export const toOthers = (words: string, name: string) => words.replace(ADDRESSED, (word) => (/^(?:your|yours|ur)$/i.test(word) ? `${name}'s` : name));
 
 /** What a prompt's reader hears of each plan (calendar.ts heardOf for them), given its busy block. */
 export type See = (busy: BusyLike) => Heard;

@@ -5,7 +5,7 @@ import type { Llm, LlmMessage } from './llm.js';
 import { splitReply } from './pacing.js';
 import { clip, lookedCard, mediaOf, seenIn, timeLimited, unseen, type IncomingMessage, type MessageMedia, type PreviewLink, type SeenImage, type SeenLink } from './perception.js';
 import { hostOf, isStopRequest, MINOR_EXIT, minorSignal, STOP_ACK, stripForeignLinks } from './safety.js';
-import { calendarHours, checkPlan, comingPlans, heardOf, isPromise, nameIn, toOthers, type PlanCheck, type PlanProposal, type Share, type Viewer } from './calendar.js';
+import { calendarHours, checkPlan, comingPlans, heardOf, isPromise, nameIn, type PlanCheck, type PlanProposal, type Share, type Viewer } from './calendar.js';
 import { followUpWindow } from './initiative.js';
 import { addDays, agendaOn, busyAt, fullyOnline, isOn, localDateOf, situationAt, usualWeek, zonedToUtc, type Hours } from './schedule.js';
 import { DAY, HOUR, MINUTE, ownSettings, SECOND, taskModel, type Settings } from './settings.js';
@@ -50,13 +50,14 @@ import {
 	STOP_QUESTION,
 	stopQuestion,
 	systemPrompt,
+	toOthers,
 	usualWeekPrompt,
 	type Level,
 	type Trend,
 	type See,
 } from './prompts.js';
 import type { Runtime } from './runtime.js';
-import type { Opener, Person, StoredEvent, StoredMessage } from './store.js';
+import { calledOffKey, type Opener, type Person, type StoredEvent, type StoredMessage } from './store.js';
 
 export type Decision =
 	| { kind: 'ignore'; reason: string }
@@ -161,9 +162,11 @@ const planOf = (value: unknown): PlanProposal | 'unreadable' | undefined => {
 	const { cancel, day, from, to, busy, online } = value as Record<string, unknown>;
 	const number = numberOf(cancel);
 	if (number !== null) {
-		// A new plan in its place, as a model writes them together; else the plan called off alone
+		// A new plan in its place, as a model writes them together (both or neither: one it can't read is unreadable, never
+		// the plan called off alone); a stray field, the plan called off alone
 		const instead = planOf({ ...value, cancel: undefined });
-		return instead !== undefined && instead !== 'unreadable' && !('cancel' in instead) ? { ...instead, replaces: number } : { cancel: number };
+		if (instead === 'unreadable') return [from, to, busy, online].some((field) => field !== undefined && field !== null) ? 'unreadable' : { cancel: number };
+		return instead !== undefined && !('cancel' in instead) ? { ...instead, replaces: number } : { cancel: number };
 	}
 	const days = numberOf(day);
 	if (days === null || typeof from !== 'string' || typeof to !== 'string') return 'unreadable';
@@ -473,8 +476,6 @@ export function createBrain({
 			: undefined;
 	/** Where the plan its calendar didn't take is kept for the next turn with them (kv), until a turn with them is kept. */
 	const refusedKey = (personId: number) => `calendarRefused:${personId}`;
-	/** Where the plans it called off on someone for someone else are kept, until a turn with them or an apology tells them (kv). */
-	const calledOffKey = (personId: number) => `calendarCalledOff:${personId}`;
 	/** The plans it called off on them for someone else, which they don't know of yet: not one over two weeks ago, long past telling. */
 	const calledOffOn = (personId: number): CalledOff[] =>
 		(JSON.parse(store.get(persona.id, calledOffKey(personId)) ?? '[]') as CalledOff[]).filter((plan) => plan.end > now() - 14 * DAY);

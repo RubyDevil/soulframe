@@ -9,7 +9,7 @@ import { busyText } from './prompts.js';
 import { weightedPick, type Rng } from './rng.js';
 import { addDays, agendaOn, localDateOf, zonedToUtc, type Busy, type Hours, type Span } from './schedule.js';
 import { DAY, HOUR, MINUTE, type Settings } from './settings.js';
-import type { Opener, Person, Store } from './store.js';
+import { calledOffKey, type Opener, type Person, type Store } from './store.js';
 
 /** At least this long since the last message either way: it never texts first in the middle of a conversation. */
 export const REST_MS = 2 * HOUR;
@@ -45,8 +45,10 @@ export function openerBlock(
 	if (person.incoming === 0) return final('never_wrote');
 	if (person.lastInAt > person.handledAt) return later('reply_owed');
 	const last = store.history(person.id, 1)[0];
-	// A check-in, or an apology a turn with them has told since: no longer theirs to get
-	if ((opener?.kind === 'checkIn' || opener?.kind === 'apology') && last && last.at > opener.createdAt) return final('talked_since');
+	// A check-in they talked since; an apology once a reply or an opener told them all it owed (left on read, or a turn
+	// written before it called the plan off, told them nothing)
+	if (opener?.kind === 'checkIn' && last && last.at > opener.createdAt) return final('talked_since');
+	if (opener?.kind === 'apology' && store.get(person.persona, calledOffKey(person.id)) === null) return final('talked_since');
 	if (last && now - last.at < REST_MS) return later('mid_conversation');
 	const sent = store.sentOpeners(person.id, MAX_BACKOFF + 1);
 	const newest = sent[0];

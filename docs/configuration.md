@@ -605,13 +605,13 @@ What the code checks, whatever the settings say:
 - it calls off only its own plans of a kind it may make now, still ahead; a plan called off still counts toward
   `perWeek` and `perPersonDays` (time broken on someone for someone else doesn't count toward theirs), and
   `store.sweep` keeps the persona's own plans of the last 90 days for that;
-- a plan in place of one (`cancel` in it) is both or neither: the new one checked on the day without the old, neither
-  counted twice toward the limits (a plan moved is no new one); refused, the old one stands (with nothing to replace,
-  no such plan or one over, the new one alone);
+- a plan in place of one (`cancel` in it) is both or neither: the new one checked on the day without the old, a plan
+  of theirs moved counted once toward the limits (another's it breaks for it, no move, counts); refused, or written so
+  the code can't read it, the old one stands (with nothing to replace, no such plan or one over, the new one alone);
 - a promise to someone (time made to chat with them, or a plan the model marked as with or for them) is called off in
   a turn with someone else, by its number or by a plan over it, only when that person is not less close to it than the
   one it was made with (their familiarity and, while it is kept, affinity levels, summed: one level apart is about as
-  close). The one it was broken on is told, at their next turn, and by an apology while texting first is on (or by a
+  close), and by a plan over it only when that turn listed it (`shown`): one it never weighed is a clash. The one it was broken on is told, at their next turn, and by an apology while texting first is on (or by a
   follow-up already planned, which an apology never replaces);
 - a plan made with someone who then ends it (stops, blocks it, is denied) no longer stands: nobody is left to call it
   off with.
