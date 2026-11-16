@@ -602,11 +602,18 @@ const promiseText = ({ closer, calledOff }: NonNullable<ComingPlan['promise']>, 
 		.join('; ');
 
 /**
+ * After a calendar with a plan told in confidence: that the others are its own to tell. Measured on a live model, without
+ * it one confidence made it guarded about all its plans ("not much planned", its friend's party left out).
+ */
+const REST_YOURS = 'The rest are yours to tell as you would.';
+
+/**
  * Its coming plans (settings.calendar, calendar.ts comingPlans) as the turn with `personName` sees them, each with its
  * day and times, and its number when it may call it off there: a busy one by its words, quoted as data (the model wrote
  * them), the ones told in confidence marked so, or "a plan of your own" without any; time made to chat by whom it is
  * for (`MADE_TIME`, or by name); a promise made with someone else with how close it is to each and how often it let
- * them down lately (`promiseText`). Nothing without any.
+ * them down lately (`promiseText`); with one told in confidence, that the rest are its own to tell (`REST_YOURS`).
+ * Nothing without any.
  */
 export const calendarPrompt = (plans: readonly ComingPlan[], timeZone: string, personName: string) =>
 	plans.length
@@ -627,7 +634,7 @@ export const calendarPrompt = (plans: readonly ComingPlan[], timeZone: string, p
 					].filter(Boolean);
 					return `${plan.id !== null ? `[${plan.id}] ` : ''}${dateTimeText(plan.start, timeZone)} to ${clockText(plan.end, timeZone)}: ${what}${notes.length ? ` (${notes.join('; ')})` : ''}`;
 				})
-				.join('; ')}.`
+				.join('; ')}.${plans.some((plan) => plan.confidence) ? ` ${REST_YOURS}` : ''}`
 		: '';
 
 /** A plan it called off on someone for someone else, as it tells them: its day and times, and what it was (theirs to hear whole). */
