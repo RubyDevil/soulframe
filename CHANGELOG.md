@@ -94,6 +94,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `models.default`: the provider and model of every task that names none (`baseUrl`, `apiKeyEnv`, `model`,
   `jsonMode`, `timeoutSeconds`), and a `timeoutSeconds` of each task's own. `personaReport` names the host of a task on
   a provider of its own.
+- `models.default.reasoningEffort` and each task's own (`none` to `xhigh`, sent as `reasoning_effort`; nothing sent
+  unless set), and `personaReport` shows it. A reasoning model's thinking counts toward `maxTokens` and takes time:
+  measured on one, a DM turn weighing a plan answered half the time at the default 400 tokens, and every time, three
+  times faster, with `none`.
 - **A persona's own `pacing` and `relationship`**: only the keys it changes, in its config, merged over its brain's
   settings by `createBrain` (`brain.settings`; a `ConfigError` if they don't fit). `parsePersona` and the loaders check
   them over their new `settings` option.
@@ -172,8 +176,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - A model that now and then answers nothing at all (one in testing did, about one call in twenty) failed the turn into a
-  retry 1 to 4 minutes later, a long silence in a live chat: the model client now asks once more at once. An answer
-  cut at its `maxTokens` with no text is not asked again (it would be cut the same way): the error says so.
+  retry 1 to 4 minutes later, a long silence in a live chat: the model client now asks once more at once. A reasoning
+  model may spend its whole `maxTokens` thinking, a different length each time: when the second ask is cut too, the
+  error says so.
 - A model that takes only its default temperature (OpenAI's reasoning models, among others) failed every request with
   a 400: the model client now asks again without a `temperature` when a provider refuses one, and sends that model
   none from then on. OpenAI's `gpt-5` models still get none from the start.

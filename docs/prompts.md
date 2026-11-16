@@ -1061,8 +1061,8 @@ No links in the post.
 export const POST_REQUEST = '[post] Write the post.';
 ```
 
-The one `user` message of a post. The canned model (`createCannedLlm`, llm.ts:220-231) answers its fixed post when
-the last message is exactly this text (llm.ts:226); its other answers are fixed DM replies. Neither is prompt text.
+The one `user` message of a post. The canned model (`createCannedLlm`, llm.ts:222-233) answers its fixed post when
+the last message is exactly this text (llm.ts:228); its other answers are fixed DM replies. Neither is prompt text.
 
 ## Typed screening (Decisions)
 
@@ -1259,7 +1259,7 @@ Everything else is inserted as it is, without quotes or delimiters:
 
 ## What switches parts on and off
 
-### `settings.context` (settings.ts:434-461)
+### `settings.context` (settings.ts:446-473)
 
 "false leaves that text out of the prompt, and nothing else changes". All default to `true`.
 
@@ -1273,7 +1273,7 @@ Everything else is inserted as it is, without quotes or delimiters:
 
 With `situation`, `upcoming` and (in a DM turn) the away line all absent, `AWARE_PROMPT` goes too.
 
-### `settings.memory` (settings.ts:240-290)
+### `settings.memory` (settings.ts:252-302)
 
 - `personNotes` (280), `selfNotes` (800): the numbers in the answer format's notes and self lines.
 - `historyMessages` (20): how many `user` and `assistant` messages follow a DM turn's system prompt.
@@ -1282,11 +1282,11 @@ With `situation`, `upcoming` and (in a DM turn) the away line all absent, `AWARE
   steps and fading, and the hysteresis margin; `affinity.enabled: false` takes affinity out of the answer format and
   the relationship line.
 
-### `settings.models` (settings.ts:122-141)
+### `settings.models` (settings.ts:134-153)
 
 The model, provider, `maxTokens`, `temperature` and `jsonMode` per task, over `models.default`. No text changes.
 
-### `settings.decisions` (settings.ts:167-237)
+### `settings.decisions` (settings.ts:179-249)
 
 Only with the Decisions client on (the service settings' `decisions.enabled`, off by default):
 
@@ -1364,7 +1364,7 @@ It is Saturday, November 7, 8:00 PM for you. Their last message was just now. Yo
 hey, how was your day?
 ```
 
-`samplePrompt({ persona, channel, now })` (report.ts:131) returns the same system prompt: it runs the same brain on a
+`samplePrompt({ persona, channel, now })` (report.ts:135) returns the same system prompt: it runs the same brain on a
 throwaway store, with a person "Sam" who wrote "hey".
 
 ### Group-chat line
@@ -1502,7 +1502,7 @@ other text.
 - `STOP_ACK` (safety.ts:9): "got it, I won't message you again. take care!" and `MINOR_EXIT` (safety.ts:10): "sorry,
   I only chat with adults, so I'm going to stop here. take care!" are sent to the person by the code, never to the
   model.
-- The canned model's answers (llm.ts:221, :226) are fixed replies, and a fixed photo description, for dry runs.
+- The canned model's answers (llm.ts:223, :228) are fixed replies, and a fixed photo description, for dry runs.
 - `report.ts` (`personaReport`, `personaWarnings`, `settingsWarnings`) writes config-check lines for the operator. Only `samplePrompt`
   shows a prompt, built by the brain itself.
 

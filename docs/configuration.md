@@ -272,6 +272,7 @@ mostly a decision to stay quiet) or move to a provider of its own.
 | `model` | string | none | The model of every text task that doesn't name its own (never `vision`'s). |
 | `jsonMode` | boolean | `false` | Ask for strict JSON (`response_format: json_object`), for providers that support it. |
 | `timeoutSeconds` | number, 5 to 300 | `60` | Before a request is given up (it is retried once). |
+| `reasoningEffort` | `none`, `minimal`, `low`, `medium`, `high` or `xhigh` | none | How much a reasoning model thinks before it answers, sent as `reasoning_effort` (which values it takes is its provider's); left out, nothing is sent and the model's own default applies. Its thinking counts toward each task's `maxTokens` and takes time: `none` or `low` keeps a texting persona quick. Goes with the default model only. |
 
 `default` is no task: it holds the connection only. Each task's answer limits are its own:
 
@@ -292,8 +293,23 @@ Each task takes:
 | `apiKeyEnv` | string | `default.apiKeyEnv` on the default provider | Empty disables authentication. |
 | `jsonMode` | boolean | `default.jsonMode` on the default provider, off on its own | |
 | `timeoutSeconds` | number, 5 to 300 | `default.timeoutSeconds` | |
-| `maxTokens` | integer, 16 to 4000 | see above | The most tokens the answer may hold. |
+| `reasoningEffort` | as above | `default.reasoningEffort` while it uses the default model, else none | Its model's. |
+| `maxTokens` | integer, 16 to 4000 | see above | The most tokens the answer may hold, a reasoning model's thinking included. |
 | `temperature` | number, 0 to 2 | see above | Higher is more varied. Left out of the request to OpenAI's own `gpt-5` models (at `api.openai.com`); a model that refuses it (a 400 naming `temperature`: it takes only its default) is asked again without, and its client sends it none from then on. |
+
+**A reasoning model** spends part of `maxTokens` thinking before it writes, and a different part each time: at the
+defaults, one may now and then spend all of a DM turn's 400 before writing a word. The model client asks once more at
+once when an answer comes back empty, and the turn is retried minutes later if that one is empty too (its error names
+the limit). Measured on one such model, a DM turn that weighs a plan in its calendar answered half the time at 400 with
+its default effort, every time at 800, and every time, three times faster, with `reasoningEffort: none`:
+
+```yaml
+models:
+  default:
+    baseUrl: https://api.openai.com/v1
+    model: a-reasoning-model
+    reasoningEffort: none   # or low; else raise each task's maxTokens
+```
 
 **A task on a provider of its own** (its own `baseUrl`) takes nothing of the default provider but its timeout: no key,
 no model, no `jsonMode`. It names its own `model` and `apiKeyEnv` (empty for none), and `parseSettings` refuses it

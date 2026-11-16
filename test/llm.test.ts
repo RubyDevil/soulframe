@@ -246,12 +246,46 @@ describe('createConfiguredLlm', () => {
 		expect(fetch).toHaveBeenCalledTimes(2);
 	});
 
-	it('asks nothing more when the answer was cut at its limit, and says so', async () => {
-		const cut = new Response(JSON.stringify({ choices: [{ message: { content: '' }, finish_reason: 'length' }], usage: { total_tokens: 400 } }), { status: 200 });
-		const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(cut);
+	it('asks once more at once when a reasoning model spent its answer limit thinking, and says so when it does again', async () => {
+		// A reasoning model thinks for a different length each time: the second ask often fits
+		const cut = () => new Response(JSON.stringify({ choices: [{ message: { content: '' }, finish_reason: 'length' }], usage: { total_tokens: 400 } }), { status: 200 });
+		const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(cut()).mockResolvedValueOnce(answer('hey you', 380));
 		const { llm } = setUp(0);
-		await expect(llm.complete([{ role: 'user', content: 'hey' }], { task: 'directMessage' })).rejects.toThrow('LLM answered no text: its answer limit (maxTokens 400) was spent');
-		expect(fetch).toHaveBeenCalledTimes(1);
+		expect(await llm.complete([{ role: 'user', content: 'hey' }], { task: 'directMessage' })).toBe('hey you');
+		expect(fetch).toHaveBeenCalledTimes(2);
+		fetch.mockReset().mockImplementation(async () => cut());
+		await expect(llm.complete([{ role: 'user', content: 'hey' }], { task: 'directMessage' })).rejects.toThrow('LLM answered no text: its answer limit (maxTokens 400) was spent, its reasoning included');
+		expect(fetch).toHaveBeenCalledTimes(2);
+	});
+
+	it("sends a reasoning effort only when set: the default model's with it, a task's own for its model, never another model's", async () => {
+		const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => answer('{"reply":"hi"}', 1));
+		const llm = createConfiguredLlm({
+			settings: SettingsSchema.parse({
+				models: {
+					default: { baseUrl: 'https://llm.example/v1', model: 'mid-model', reasoningEffort: 'none' },
+					groupChat: { model: 'cheap-model' },
+					post: { model: 'post-model', reasoningEffort: 'low' },
+					vision: { model: 'eyes-model' },
+					initiative: { baseUrl: 'https://other.example/v1', apiKeyEnv: '', model: 'mid-model' },
+				},
+			}),
+			apiKeyOf: () => 'key',
+		});
+		const effortOf = async (task: Parameters<typeof llm.complete>[1]['task']) => {
+			await llm.complete([{ role: 'user', content: 'hey' }], { task });
+			return sent(fetch, fetch.mock.calls.length - 1).body.reasoning_effort;
+		};
+		expect(await effortOf('directMessage')).toBe('none');
+		expect(await effortOf('post')).toBe('low');
+		// Another model, or another provider: the default model's effort is not theirs
+		expect(await effortOf('groupChat')).toBeUndefined();
+		expect(await effortOf('vision')).toBeUndefined();
+		expect(await effortOf('initiative')).toBeUndefined();
+		// None set: none sent
+		await setUp(0).llm.complete([], { task: 'directMessage' });
+		expect(sent(fetch, fetch.mock.calls.length - 1).body).not.toHaveProperty('reasoning_effort');
+		expect(() => SettingsSchema.parse({ models: { default: { reasoningEffort: 'turbo' } } })).toThrow();
 	});
 
 	it('refuses to call the model once the day is spent', async () => {

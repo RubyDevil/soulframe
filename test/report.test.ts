@@ -61,6 +61,9 @@ describe('the report on a persona', () => {
 		// A task on a provider of its own shows its host; vision shows only once it names a model
 		const split = settingsOf({ models: { ...TEXT.models, post: { baseUrl: 'https://other.example/v1', apiKeyEnv: 'OTHER_KEY', model: 'post-model' }, vision: { model: 'eyes' } } });
 		expect(reportOf({ schedule: EVENINGS }, undefined, split)).toContain('  models: directMessage chat-model, groupChat chat-model, post post-model (other.example), vision eyes');
+		// And a reasoning effort where one is sent
+		const effort = settingsOf({ models: { default: { ...TEXT.models.default, reasoningEffort: 'none' }, post: { baseUrl: 'https://other.example/v1', apiKeyEnv: '', model: 'post-model', reasoningEffort: 'low' } } });
+		expect(reportOf({ schedule: EVENINGS }, undefined, effort)).toContain('  models: directMessage chat-model (reasoning none), groupChat chat-model (reasoning none), post post-model (other.example, reasoning low)');
 	});
 
 	it('says how it texts first, and its model for it, only while that is on', () => {

@@ -186,6 +186,7 @@ export function createConfiguredLlm({
 						...(openAi ? { max_completion_tokens: used.maxTokens } : { max_tokens: used.maxTokens }),
 						...(temperature && { temperature: used.temperature }),
 						...(used.jsonMode && json && { response_format: { type: 'json_object' } }),
+						...(used.reasoningEffort && { reasoning_effort: used.reasoningEffort }),
 					}, used.timeoutSeconds * 1000, () => between(rng, 2_000, 6_000), 'LLM');
 				// OpenAI's gpt-5 models take only their default temperature, and so do others: one that refuses it is asked again without, and remembered
 				const temperature = !(openAi && model.startsWith('gpt-5')) && !noTemperature.has(which);
@@ -207,10 +208,11 @@ export function createConfiguredLlm({
 				return { answer, spent };
 			});
 			// A model now and then answers nothing at all: asked once more at once, rather than the turn failing into a retry
-			// minutes later; not when its answer limit was spent, which it would be again
+			// minutes later. Its answer limit spent too: a reasoning model thinks for a different length each time, and the
+			// second ask often fits (the error says so when it doesn't: raise maxTokens, or lower reasoningEffort)
 			let asked = await ask();
-			if (!asked.answer && !asked.spent) asked = await ask();
-			if (!asked.answer) throw new Error(asked.spent ? `LLM answered no text: its answer limit (maxTokens ${used.maxTokens}) was spent` : 'LLM answered no text');
+			if (!asked.answer) asked = await ask();
+			if (!asked.answer) throw new Error(asked.spent ? `LLM answered no text: its answer limit (maxTokens ${used.maxTokens}) was spent, its reasoning included` : 'LLM answered no text');
 			return asked.answer;
 		},
 	};

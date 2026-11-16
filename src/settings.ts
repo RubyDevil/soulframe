@@ -68,6 +68,14 @@ const levels = (min: number) =>
 export const TASKS = ['directMessage', 'groupChat', 'post', 'vision', 'initiative'] as const;
 export type Task = (typeof TASKS)[number];
 
+/**
+ * How much a reasoning model thinks before it answers, sent as `reasoning_effort` to a model that takes it (which
+ * values, its provider's): its thinking counts toward `maxTokens`, and takes time. `'none'` or `'low'` keeps a texting
+ * persona quick.
+ */
+const ReasoningEffortSchema = z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']);
+export type ReasoningEffort = z.infer<typeof ReasoningEffortSchema>;
+
 /** The provider and model every task uses unless it names its own (`models.default`). */
 const DefaultModelSchema = z
 	.object({
@@ -81,6 +89,8 @@ const DefaultModelSchema = z
 		jsonMode: z.boolean().default(false),
 		/** Seconds before a request is given up (it is retried once). */
 		timeoutSeconds: z.number().min(5).max(300).default(60),
+		/** How much a reasoning model thinks before it answers (`ReasoningEffort`); none sent unless set. */
+		reasoningEffort: ReasoningEffortSchema.optional(),
 	})
 	.default({});
 
@@ -103,7 +113,9 @@ const TaskModelSchema = (defaults: { maxTokens: number; temperature: number }) =
 			jsonMode: z.boolean().optional(),
 			/** Seconds before its request is given up; else `default.timeoutSeconds`. */
 			timeoutSeconds: z.number().min(5).max(300).optional(),
-			/** The most tokens the answer may hold. */
+			/** How much its model thinks first; else `default.reasoningEffort` when it uses the default model, none otherwise. */
+			reasoningEffort: ReasoningEffortSchema.optional(),
+			/** The most tokens the answer may hold (a reasoning model's thinking included). */
 			maxTokens: z.number().int().min(16).max(4000).default(defaults.maxTokens),
 			/** 0 to 2: higher is more varied, lower more predictable. */
 			temperature: z.number().min(0).max(2).default(defaults.temperature),
@@ -598,6 +610,8 @@ export interface TaskModel {
 	model?: string;
 	jsonMode: boolean;
 	timeoutSeconds: number;
+	/** Sent as `reasoning_effort` when set. */
+	reasoningEffort?: ReasoningEffort;
 	maxTokens: number;
 	temperature: number;
 	/** It names a `baseUrl` of its own: nothing of the default provider (key, model, jsonMode) is used for it. */
@@ -609,19 +623,23 @@ export interface TaskModel {
 /**
  * The model a task calls: what it names, else `models.default`'s, but on a provider of its own (its own `baseUrl`)
  * only what it names (the default key, model and jsonMode belong to the default provider), and for `vision` never the
- * default model (it may not take images). The timeout comes from `default` either way.
+ * default model (it may not take images). The timeout comes from `default` either way; the reasoning effort only with
+ * the default model.
  */
 export function taskModel(settings: Settings, task: Task): TaskModel {
 	const { default: base } = settings.models;
 	const own = settings.models[task];
 	const ownProvider = own.baseUrl !== undefined;
 	const model = own.model ?? (ownProvider || task === 'vision' ? undefined : base.model);
+	// The default model's goes with it: another model may not take one
+	const reasoningEffort = own.reasoningEffort ?? (own.model === undefined && !ownProvider ? base.reasoningEffort : undefined);
 	return {
 		baseUrl: own.baseUrl ?? base.baseUrl,
 		apiKeyEnv: own.apiKeyEnv ?? (ownProvider ? undefined : base.apiKeyEnv),
 		model,
 		jsonMode: own.jsonMode ?? (ownProvider ? false : base.jsonMode),
 		timeoutSeconds: own.timeoutSeconds ?? base.timeoutSeconds,
+		...(reasoningEffort && { reasoningEffort }),
 		maxTokens: own.maxTokens,
 		temperature: own.temperature,
 		ownProvider,
