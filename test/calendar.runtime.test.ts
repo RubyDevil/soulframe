@@ -78,6 +78,26 @@ describe('its calendar through the reply queue', () => {
 		expect(store.get('robin', calledOffKey(sam.id))).toBeNull();
 	});
 
+	it('makes no plan of a reply cut short after its first message: what promised it never reached them', async () => {
+		const { clock, store, queue, sent, conv, say } = setUp({ dm: { ...CINEMA, reply: 'omg hi!!\nyes cinema saturday at 7, promise' } });
+		const { sam, party } = samAndKim(store);
+		let sends = 0;
+		const kimConv = conv('kim', {
+			send: async (text) => {
+				if (++sends > 1) throw new UnreachableError('blocked');
+				sent.push({ to: 'kim', text });
+			},
+		});
+		queue.start();
+		await say('kim', 'Kim', 'cinema saturday 7?', kimConv);
+		await clock.run({ until: NOW + 3 * HOUR });
+		queue.stop();
+		expect(sent).toEqual([{ to: 'kim', text: 'omg hi!!' }]);
+		expect(store.eventById(party.id)?.cancelledAt).toBeNull();
+		expect(store.events('robin', SATURDAY, SATURDAY)).toEqual([expect.objectContaining({ id: party.id })]);
+		expect(store.get('robin', calledOffKey(sam.id))).toBeNull();
+	});
+
 	it('keeps what it owes someone when its reply to them never went out, and lets the apology tell them', async () => {
 		const { clock, store, queue, sent, conv, say } = setUp({ dm: { reply: "hey! so sorry, i can't make jo's party saturday" } });
 		const sam = known(store, 'sam', 'Sam', 0.25, 0.2, NOW - 2 * HOUR);

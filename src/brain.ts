@@ -937,13 +937,28 @@ export function createBrain({
 			const { action } = turn;
 			const invite = invitation === undefined ? {} : !joinNow ? { inviteWaits: true as const } : turn.acceptInvite && action === 'none' ? { acceptInvite: true as const } : {};
 			let kept = false;
-			// Stored only once the queue keeps the turn: a draft it drops leaves nothing behind
+			let reached = false;
+			// Stored only once the queue keeps the turn: a draft it drops leaves nothing behind. What it told them, once all of
+			// its reply reached them (`delivered`, maybe at a later call): only then are its plan and what it told them true
 			const keep = ({ delivered = true }: { delivered?: boolean } = {}) => {
-				if (kept) return;
-				kept = true;
 				const id = person.id;
-				// Its reply reached them, still in the conversation: only then is its plan made, and what it told them told
-				const spoke = !!reply && delivered && action !== 'block' && store.personById(id).state === 'active';
+				if (!kept) {
+					kept = true;
+					keepTurn(id);
+				}
+				if (!delivered || reached || !reply) return;
+				reached = true;
+				// Its last refused plan, and the plans it called off on them, were told to this turn's reply (one that sends
+				// nothing, left on read, or never reached them, tells them nothing): a plan of this one may be refused in turn
+				if (calendar.enabled) {
+					store.set(persona.id, refusedKey(id), null);
+					told(id, owed.ids);
+				}
+				// A plan never told them is no promise, and breaks none of anyone else's; nor one with someone no longer in it
+				if (planning && turn.plan !== undefined && action !== 'block' && store.personById(id).state === 'active') applyPlan(id, turn.plan, writtenAt);
+			};
+			/** What the turn wrote and decided, kept once (its calendar's part waits for its reply to reach them: `keep`). */
+			const keepTurn = (id: number) => {
 				if (turn.notes !== undefined) store.updatePerson(id, { summary: clip(turn.notes, settings.memory.personNotes) });
 				if (turn.self !== undefined) store.set(persona.id, 'selfNotes', clip(turn.self, settings.memory.selfNotes));
 				// What the turn meant: familiarity grows by its importance (unrated, an ordinary chat), affinity moves one step at most
@@ -955,14 +970,6 @@ export function createBrain({
 					...(turn.importance !== undefined && { importance: turn.importance, importanceAt: now() }),
 				});
 				if (followingUp && turn.followUp !== undefined) planFollowUp(id, turn.followUp);
-				// Its last refused plan, and the plans it called off on them, were told to this turn, and by its reply to them (one
-				// that sends nothing, left on read, or never reached them, tells them nothing): a plan of this one may be refused in turn
-				if (calendar.enabled && spoke) {
-					store.set(persona.id, refusedKey(id), null);
-					told(id, owed.ids);
-				}
-				// A plan never told them is no promise, and breaks none of anyone else's
-				if (planning && turn.plan !== undefined && spoke) applyPlan(id, turn.plan, writtenAt);
 				if (action === 'block') {
 					store.updatePerson(id, { state: 'blocked' });
 					store.audit(persona.id, 'blocked', { personId: id, platform: channel.id });
@@ -1038,13 +1045,18 @@ export function createBrain({
 			if (!parsed) throw new Error('LLM answered unreadable JSON');
 			const reply = parsed.reply ? clip(allowedLinksOnly(parsed.reply), channel.maxLength) : '';
 			let kept = false;
+			let reached = false;
 			const keep = ({ delivered = true }: { delivered?: boolean } = {}) => {
-				if (kept) return;
-				kept = true;
-				if (parsed.notes !== undefined) store.updatePerson(person.id, { summary: clip(parsed.notes, settings.memory.personNotes) });
-				if (parsed.self !== undefined) store.set(persona.id, 'selfNotes', clip(parsed.self, settings.memory.selfNotes));
-				// Sent to them: the plans it told of are told (one it chose not to send, or that never reached them, leaves them for their next turn)
-				if (reply && delivered) told(person.id, owed.ids);
+				if (!kept) {
+					kept = true;
+					if (parsed.notes !== undefined) store.updatePerson(person.id, { summary: clip(parsed.notes, settings.memory.personNotes) });
+					if (parsed.self !== undefined) store.set(persona.id, 'selfNotes', clip(parsed.self, settings.memory.selfNotes));
+				}
+				// All of it reached them: the plans it told of are told (one it chose not to send, or that never reached them,
+				// leaves them for their next turn)
+				if (!delivered || reached || !reply) return;
+				reached = true;
+				told(person.id, owed.ids);
 			};
 			return { messages: reply ? splitReply(reply, runtime.rng, settings.pacing) : [], action: 'none', keep };
 		},

@@ -614,8 +614,8 @@ What the code checks, whatever the settings say:
   close), and by a plan over it only when that turn listed it (`shown`): one it never weighed is a clash. The one it was broken on is told, at their next turn, and by an apology while texting first is on (or by a
   follow-up already planned, which an apology never replaces);
 - a plan made with someone who then ends it (stops, blocks it, is denied) no longer stands: nobody is left to call it
-  off with; if they come back (`store.unblock`, `store.undeny`), it is called off, its time perhaps someone else's
-  since.
+  off with; if they come back (`store.unblock`, `store.undeny`), it stands again, but called off (as with them) if
+  another plan took its time meanwhile: it is never in two places at once.
 
 Each outcome is audited: `plan_added`, `plan_cancelled`, `plan_called_off` (a promise broken for someone else), or
 `plan_refused` with its reason (`unreadable` for a `plan` the code couldn't read). A refused plan is told, once, to the

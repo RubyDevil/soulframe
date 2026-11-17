@@ -404,10 +404,29 @@ export function createStore(db: Database, now: () => number = Date.now) {
 	// A plan the persona made with someone who then stopped, blocked it or was denied no longer stands: nobody is left to
 	// call it off with, and nothing of them is kept to
 	/**
-	 * Someone who ended it and comes back: the plans made with them while they were away stood for nobody, and others may
-	 * have taken their time since. Called off for good, by the app (no promise broken for anyone).
+	 * Someone who ended it comes back: the plans made with them stand again, but for those whose time another plan took
+	 * while they were away (hidden then, so nothing was weighed against them): those are called off, as with them (no
+	 * promise broken for anyone), so it is never in two places at once.
 	 */
-	const endPlans = (personId: number) => db.prepare("UPDATE events SET cancelled_at = ? WHERE person_id = ? AND source = 'persona' AND cancelled_at IS NULL").run(now(), personId);
+	const standAgain = (personId: number) => {
+		const rows = db.prepare("SELECT * FROM events WHERE person_id = ? AND source = 'persona' AND cancelled_at IS NULL").all(personId) as unknown as EventRow[];
+		/** Local minutes from a fixed day: a persona's plans, all in its time zone, compared as its clock reads them. */
+		const span = (event: StoredEvent) => {
+			const base = Date.UTC(event.day.year, event.day.month - 1, event.day.day) / 60_000;
+			return { start: base + event.from, end: base + event.to };
+		};
+		for (const event of rows.map(toEvent)) {
+			const mine = span(event);
+			const near = (standingEvents.all(event.persona, dayKey(shiftDay(event.day, -1)), dayKey(shiftDay(event.day, 1))) as unknown as EventRow[]).map(toEvent);
+			const taken = near.some((other) => other.personId !== personId && span(other).start < mine.end && mine.start < span(other).end);
+			if (taken) db.prepare('UPDATE events SET cancelled_at = ?, cancelled_by = ? WHERE id = ? AND cancelled_at IS NULL').run(now(), personId, event.id);
+		}
+	};
+	/** A local date `days` from `day`. */
+	const shiftDay = (day: LocalDate, days: number): LocalDate => {
+		const date = new Date(Date.UTC(day.year, day.month - 1, day.day + days));
+		return { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate() };
+	};
 	/**
 	 * Its day shared with someone (`share_planned`), just back from a plan made with someone forgotten (`madeWith`, one of
 	 * `gone`): what that opener said goes (pending, it is dropped), and the audit line keeps nothing of it.
@@ -711,7 +730,7 @@ export function createStore(db: Database, now: () => number = Date.now) {
 			const row = db.prepare('SELECT persona, state FROM people WHERE id = ?').get(personId) as unknown as { persona: string; state: PersonState } | undefined;
 			if (!row || (row.state !== 'stopped' && row.state !== 'blocked')) return false;
 			db.prepare("UPDATE people SET state = 'active', updated_at = ? WHERE id = ?").run(now(), personId);
-			endPlans(personId);
+			standAgain(personId);
 			db.prepare('INSERT INTO audit (at, persona, kind, detail) VALUES (?, ?, ?, ?)').run(now(), row.persona, 'unblocked', JSON.stringify({ personId, from: row.state, source: 'manual' }));
 			return true;
 		},
@@ -732,7 +751,7 @@ export function createStore(db: Database, now: () => number = Date.now) {
 						.get(id);
 					if (stillDenied) continue;
 					db.prepare("UPDATE people SET state = 'active', updated_at = ? WHERE id = ?").run(now(), id);
-					endPlans(id);
+					standAgain(id);
 					db.prepare('INSERT INTO audit (at, persona, kind, detail) VALUES (?, ?, ?, ?)').run(now(), persona, 'undenied', JSON.stringify({ personId: id, platform: channel, source: 'manual' }));
 				}
 				return true;

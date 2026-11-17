@@ -324,7 +324,7 @@ type BusyLike = { reason: string; event?: number; madeWith?: number; share?: Sha
 export const toOthers = (words: string, name: string) =>
 	words
 		// "you're" and "you've" as "Sam's", "you'll" and "you'd" as "Sam'll" and "Sam'd"
-		.replace(/(?:\byou|^You)(['’])(re|ve|ll|d)\b/g, (_, mark: string, end: string) => `${name}${mark}${/^(?:re|ve)$/.test(end) ? 's' : end}`)
+		.replace(/(?<![\p{L}\p{N}_])(?:you|You|YOU)(['’])(re|ve|ll|d|RE|VE|LL|D)(?![\p{L}\p{N}_])/gu, (_, mark: string, end: string) => `${name}${mark}${/^(?:re|ve)$/i.test(end) ? 's' : end.toLowerCase()}`)
 		.replace(ADDRESSED, (word) => (/^yours?$/i.test(word) ? `${name}'s` : name))
 		.replace(TEXTED, (word) => (word === 'ur' ? `${name}'s` : name));
 

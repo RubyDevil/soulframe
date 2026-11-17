@@ -14,8 +14,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   and so offline then, "at a cousin's birthday"), make time to chat with the person at an hour it would be offline, or
   call one of its plans off by its number (with a new plan in its place, `cancel` in it too: both or neither, a plan
   of theirs moved counted once); the app may add its own
-  (`store.addEvent`). The model only proposes, and only a reply that reached them makes its plan (`Turn.keep` takes
-  `{ delivered }`: the reply queue says when nothing went out, or when a dry run rehearsed it). The code checks each
+  (`store.addEvent`). The model only proposes, and only a reply that all reached them makes its plan (`Turn.keep` takes
+  `{ delivered }`: the reply queue keeps the turn at its first message and its calendar's part once all of it went
+  out; never for a reply cut short, nor in a dry run). The code checks each
   plan against guardrails no setting relaxes (a short reason of plain words, never sleep or school,
   joined to other words, in other languages or look-alike letters too, never "them" or "their", over no other plan in
   its calendar but a promise it may break;
@@ -28,8 +29,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   same, so no later plan breaks the promise lightly. A busy plan cuts the day's online time and busy blocks (a
   dentist's hour splits a work day); time made to chat is online time for every channel. DM turns and openers list the
   coming plans (`calendar.shown`, a number on each it may call off there), and its time lines include them, a plan's
-  words always quoted as data. A plan made with someone who then ends it no longer stands, and is called off if they
-  come back (`unblock`, `undeny`). Interruptions stay the
+  words always quoted as data. A plan made with someone who then ends it no longer stands; if they come back
+  (`unblock`, `undeny`) it stands again, unless another plan took its time meanwhile. Interruptions stay the
   routine's.
 - **Promises, kept or broken like a person's.** Time made to chat with someone, and a plan the model marks as with or
   for them (`withThem`), are promises to them. It may break one for someone who matters as much or more: in a turn
@@ -48,7 +49,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   relationship levels allow (`sharing.personal`, from "getting close"; `sharing.confidential`, from "one of the people closest to you" and "really fond", told in confidence, so
   it asks them to keep it to themselves), and its public words otherwise; group chats hear an `open` plan's words
   and only the public words of the rest; words that say "you" or "your" are never `open`, and whom a plan was made
-  with is named only to someone who may hear a personal plan's words ("the one you made it with" otherwise). Sharing
+  with is named only to someone who may hear that plan's words, a personal one's at least ("the one you made it
+  with" otherwise). Sharing
   its day never volunteers a plan told in confidence. A threshold left out keeps
   its default (`affinity: -1` drops that gate).
   Sharing off, nobody else ever hears a plan's own words, nor whom time was made for. Its notes about itself are not

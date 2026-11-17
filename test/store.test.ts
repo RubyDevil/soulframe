@@ -538,22 +538,27 @@ describe('calendar events', () => {
 		expect(store.events('kim', friday, friday)).toHaveLength(1);
 	});
 
-	it('calls off the plans made with someone who comes back (unblocked, undenied): others may have taken their time', () => {
+	it('lets the plans made with someone who comes back (unblocked, undenied) stand again, but for those whose time was taken meanwhile', () => {
 		const store = memoryStore(() => 1_000);
 		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const kim = store.createPerson('robin', 'chat', 'kim', 'Kim');
 		const lee = store.createPerson('robin', 'chat', 'lee', 'Lee');
 		const time = store.addEvent('robin', { kind: 'online', day: friday, from: 900, to: 960, personId: sam.id, source: 'persona' });
+		const later = store.addEvent('robin', { kind: 'online', day: friday, from: 1200, to: 1260, personId: sam.id, source: 'persona' });
 		const party = store.addEvent('robin', { kind: 'busy', day: saturday, from: 900, to: 960, what: 'at your party', personId: lee.id, source: 'persona', withThem: true });
 		store.block(sam.id);
 		expect(store.events('robin', friday, friday)).toEqual([]);
+		// While Sam was away, Kim's plan took the time of one of theirs (hidden then, so nothing weighed it)
+		const kims = store.addEvent('robin', { kind: 'busy', day: friday, from: 930, to: 1000, what: 'at the cinema', personId: kim.id, source: 'persona' });
 		store.unblock(sam.id);
-		// Gone for good, by the app: no promise broken for anyone
-		expect(store.events('robin', friday, friday)).toEqual([]);
-		expect(store.eventById(time.id)).toMatchObject({ cancelledBy: null, cancelledAt: 1_000 });
+		// That one called off, as with Sam (no promise broken for anyone); the other stands again
+		expect(store.events('robin', friday, friday).map((event) => event.id)).toEqual([kims.id, later.id]);
+		expect(store.eventById(time.id)).toMatchObject({ cancelledBy: sam.id, cancelledAt: 1_000 });
 		expect(store.calledOffOn('robin', sam.id, 0)).toBe(0);
+		// Nothing took Lee's time: it stands again
 		store.deny('chat', 'lee', 'minor');
 		store.undeny('chat', 'lee');
-		expect(store.eventById(party.id)?.cancelledAt).toBe(1_000);
+		expect(store.eventById(party.id)?.cancelledAt).toBeNull();
 	});
 
 	it('keeps a promise broken for someone else through a sweep for 30 days, which its calendar still tells', () => {

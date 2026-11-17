@@ -1846,6 +1846,19 @@ describe('its calendar (settings.calendar)', () => {
 		expect(store.get('robin', `calendarCalledOff:${sam.id}`)).toBeNull();
 	});
 
+	it('marks what a reply told them told, even as it blocks them: let back, they are not told again', async () => {
+		const store = memoryStore(() => NOW);
+		const sam = known(store, 'sam', 'Sam', 0.25, 0.2);
+		store.set('robin', `calendarCalledOff:${sam.id}`, JSON.stringify([{ id: 1, start: NOW + DAY, end: NOW + DAY + HOUR, kind: 'online', what: '' }]));
+		const { seen, say } = robinFor(CALENDAR, [{ reply: "sorry i had to cancel thursday. and i'm done here", action: 'block' }, { reply: 'hi' }], store);
+		await say('sam', 'Sam', 'so is thursday still on??');
+		expect(seen[0]).toContain('You called off a plan with them');
+		expect(store.personById(sam.id).state).toBe('blocked');
+		store.unblock(sam.id);
+		await say('sam', 'Sam', 'hello?');
+		expect(seen[1]).not.toContain('You called off');
+	});
+
 	it('lets a refused plan go once two weeks past, and reads past kv values it cannot read as none', async () => {
 		const store = memoryStore(() => NOW);
 		const sam = known(store, 'sam', 'Sam', 0.25, 0.2);

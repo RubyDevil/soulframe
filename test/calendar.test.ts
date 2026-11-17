@@ -124,10 +124,19 @@ describe('checkPlan: a plan of its own (busy)', () => {
 		expect(toOthers("dinner you've planned, you'll love it, you'd said", 'Sam')).toBe("dinner Sam's planned, Sam'll love it, Sam'd said");
 		expect(toOthers('see ya at ur place', 'Sam')).toBe("see Sam at Sam's place");
 		expect(toOthers('Your party, then YOURS', 'Sam')).toBe("Sam's party, then Sam's");
-		for (const words of ['at the U.S. consulate', 'picking up a U-Haul', "at Ya Ya's", 'at Yours Truly cafe', 'at a youth club', 'at the bayou']) {
+		expect(toOthers("at Your party, YOU'RE late, with u.", 'Sam')).toBe("at Sam's party, Sam's late, with Sam.");
+		// Words that only look like it stay as they are, and those that may speak to them, however written, are never open
+		for (const words of ['at the U.S. consulate', 'picking up a U-Haul', "at Ya Ya's", 'at Yours Truly cafe', 'helping U move']) {
+			expect(toOthers(words, 'Sam'), words).toBe(words);
+			expect(check({ ...dinner, busy: words, share: 'open' }), words).toMatchObject({ add: { share: 'personal' } });
+		}
+		for (const words of ['at a youth club', 'at the bayou', 'at the Céu bar', 'in Ñuñoa']) {
 			expect(toOthers(words, 'Sam'), words).toBe(words);
 			expect(check({ ...dinner, busy: words, share: 'open' }), words).toMatchObject({ add: { share: 'open' } });
 		}
+		// Look-alike letters and marks, read plain as the checks read them: never open either
+		for (const words of ['helping．u move', 'at ＇ur place', 'at Your party']) expect(check({ ...dinner, busy: words, share: 'open' }), words).toMatchObject({ add: { share: 'personal' } });
+		expect(check({ ...dinner, busy: 'at the cinema', public: 'at Your place' })).toMatchObject({ add: { public: null } });
 	});
 
 	it("takes words that only contain the ones it refuses, and names: the persona's own life", () => {

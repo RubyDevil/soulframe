@@ -531,9 +531,10 @@ interface Brain {
   until the turn's `keep()` is called, what it wrote and decided: the rewritten notes on the person and on itself, a
   block, an action (each audited then). The reply queue calls `keep()` once it keeps the turn (its first message sent,
   or its messages marked handled) and never for a draft it drops to write the reply again; call it yourself when you
-  use `compose` without the queue. `keep({ delivered: false })` says its reply never reached them (cut short before its
-  first message, unreachable, or rehearsed in a dry run; the queue says so itself): the turn's calendar plan is then
-  not made, and what the calendar owed them is not told. The checks' own outcomes (a stop, a deny-listing, a minor caution) are stored at
+  use `compose` without the queue. Its calendar's part (the turn's plan, and what the calendar owed them, told) is kept
+  only once all of its reply reached them: `keep({ delivered: false })` keeps the rest, and a later `keep()` (or
+  `keep({ delivered: true })`) adds that part. The queue calls the first at its first message and the second once all
+  of it went out, never for a reply cut short, unreachable, or rehearsed in a dry run; `keep()` alone does both. The checks' own outcomes (a stop, a deny-listing, a minor caution) are stored at
   once. `invitation` is a pending group-chat invitation's name, heeded only where `channel.invitations`; `extraLines`
   gives the application's lines for this turn. Throws when the model's answer can't be read (the queue retries). The
   answer, `Turn`, is:
@@ -1009,13 +1010,13 @@ failed?: true }[]; links: (LinkPreview & { looked?: true })[] }`. A photo keeps 
   application sweeps its own tables.
 - **`block`**, **`unblock`**: by hand, for an operator. `block` makes an active person `blocked`: the persona ignores
   what they write and cuts a reply under way. `unblock` makes someone `stopped` (they asked to stop) or `blocked`
-  `active` again (calling off the plans its calendar made with them: they stood for nobody while they were away, and
-  others may have taken their time since). Both are audited with `source: 'manual'`, answer whether anything changed, and only touch the store:
+  `active` again (the plans its calendar made with them stand again, but for those whose time another plan took while
+  they were away: those are called off, as with them). Both are audited with `source: 'manual'`, answer whether anything changed, and only touch the store:
   blocking on the platform itself is the application's (`act`), and unblocking someone who asked to stop is your call,
   not the persona's.
 - **`undeny`**, **`clearMinorCaution`**: by hand, the other way for the safety lists: `undeny` takes an account off the
   deny list and makes the people with it `active` again, unless another of their accounts is still listed (their plans
-  called off, as `unblock`);
+  standing again, as `unblock`);
   `clearMinorCaution` takes the flag off an account. They answer whether the account was on the list, and `undeny` is
   audited for each persona. These lists protect people: use them for a mistake you checked, not as routine.
 - **`forgetPerson`**: deletes one person (their messages, notes, familiarity and affinity, accounts, the plans its
@@ -1063,8 +1064,8 @@ read only while it is on:
   them, or a plan with or for them) were called off in turns with someone else since a time: promises it broke for
   others, as its calendar tells it.
 - **`events`**: the persona's standing plans from one date to another, both included, in order: what its agenda lays
-  over each drawn day; not one it made with someone who has since ended it (stopped, blocked or denied), which is
-  called off if they come back (`unblock`, `undeny`). **`eventsMadeSince`**: how many it made itself since a time, called off or not, by kind and
+  over each drawn day; not one it made with someone who has since ended it (stopped, blocked or denied), which stands
+  again if they come back (`unblock`, `undeny`) unless another plan took its time meanwhile. **`eventsMadeSince`**: how many it made itself since a time, called off or not, by kind and
   person when given: what its guardrails count; `unbroken` leaves out those called off for someone else (time broken
   on them is no time they had). A forgotten person's plans made in turns with them go with them; the
   app's stay, with `personId` `null`.

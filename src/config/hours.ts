@@ -49,13 +49,20 @@ export const refuseSchool = ({ schedule }: { schedule?: { days: Record<string, {
 const TALK_WORDS = /\b(?:online|chat(?:ting)?|text(?:ing)?|messag(?:e|es|ing))\b/i;
 
 /**
- * The words a plan's own words may call the person it was made with by, in their chat ("at your party", "you're in"):
- * prompts.ts `toOthers` names them in every prompt. Only the second person, which means them there; and texting's
- * "u", "ur" and "ya" (`TEXTED`), in lowercase and on their own only, never the "U" of "U.S." or "U-Haul", nor "Ya Ya's".
- * Capitalized only as the first word: "Yours Truly" mid-way is a name.
+ * The words a plan's own words may call the person it was made with by, in their chat ("at your party", "you're in"),
+ * which prompts.ts `toOthers` says by their name in every prompt: the second person, which means them there, lowercase,
+ * all in capitals, or capitalized but before a capitalized word ("Yours Truly" is a name); and texting's "u", "ur" and "ya"
+ * (`TEXTED`), in lowercase and on their own only, never the "U" of "U.S." or "U-Haul", nor "Ya Ya's". A word's edges are
+ * any letter's, accented ones too ("Céu" holds no "u").
  */
-export const ADDRESSED = /(?:\byou|^You)(?:rs|rself|rselves|r)?\b|\bYOU(?:RS|RSELF|R)?\b/g;
-export const TEXTED = /(?<![\w.'’-])(?:u|ur|ya)(?![\w.'’-])/g;
+export const ADDRESSED =
+	/(?<![\p{L}\p{N}_])(?:you(?:rs|rself|rselves|r)?(?![\p{L}\p{N}_])|You(?:rs|rself|rselves|r)?(?![\p{L}\p{N}_])(?!\s+\p{Lu})|YOU(?:RS|RSELF|RSELVES|R)?(?![\p{L}\p{N}_]))/gu;
+export const TEXTED = /(?<![\p{L}\p{N}_.'’-])(?:u|ur|ya)(?![\p{L}\p{N}_'’-])(?!\.\p{L})/gu;
+/**
+ * Whether words may speak to someone, held to the strictest (whatever their case or what stands next to them: "at Your
+ * party", "helping U move", "with u."), as calendar.ts reads a plan's words before telling them to others.
+ */
+const SPEAKS_TO = /(?<![\p{L}\p{N}_])(?:you(?:rs|rself|rselves|r)?|u|ur|ya)(?![\p{L}\p{N}_])/iu;
 /** Words that point at someone of the conversation a plan came from, but not surely at whom (their party: theirs, or another's). */
 const THIRD_PERSON = /\b(?:them|their|theirs|themselves)\b/i;
 
@@ -72,8 +79,8 @@ const PLAN_SLEEP_WORDS = /sleep|\bbed|\bnap(?:s|ped|ping)?\b|\bdoz(?:e|ed|ing)\b
 const PLAN_SCHOOL_WORDS =
 	/school|schul|ecole|escuel|escola|scuol|colegio|lycee|liceo|colleg|univers|\buni\b|homework|\blectures?\b|\bexams?\b|campus|student|teacher|\btutor|detention|\bprom\b|homeroom|\bgrade\b|\brecess\b|semester|classmate|\bpupils?\b|\b(?:clases?|classe|klassen?)\b/i;
 
-/** Whether a plan's words speak to the person it was made with ("at your party", `ADDRESSED`, `TEXTED`), read plain (`plainOf`). */
-export const addresses = (words: string) => new RegExp(ADDRESSED.source).test(plainOf(words)) || new RegExp(TEXTED.source).test(plainOf(words));
+/** Whether a plan's words may speak to the person it was made with ("at your party", `SPEAKS_TO`), as written and read plain (`plainOf`). */
+export const addresses = (words: string) => SPEAKS_TO.test(words) || SPEAKS_TO.test(plainOf(words));
 
 /**
  * Why the reason of a plan the persona made itself (calendar.ts) is refused, or null: it completes "you're ..." as a
