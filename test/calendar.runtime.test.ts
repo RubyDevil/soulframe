@@ -98,6 +98,23 @@ describe('its calendar through the reply queue', () => {
 		expect(store.get('robin', calledOffKey(sam.id))).toBeNull();
 	});
 
+	it('makes the plan of a reply that all went out, even when taking typing down fails after it', async () => {
+		const { clock, store, queue, sent, conv, say } = setUp({ dm: CINEMA });
+		const { kim, party } = samAndKim(store);
+		const kimConv = conv('kim', {
+			typing: async (on) => {
+				if (!on) throw new Error('typing rate-limited');
+			},
+		});
+		queue.start();
+		await say('kim', 'Kim', 'cinema saturday 7?', kimConv);
+		await clock.run({ until: NOW + HOUR });
+		queue.stop();
+		expect(sent[0]).toEqual({ to: 'kim', text: CINEMA.reply });
+		expect(store.eventById(party.id)).toMatchObject({ cancelledBy: kim.id });
+		expect(store.events('robin', SATURDAY, SATURDAY)).toEqual([expect.objectContaining({ what: 'at the cinema', personId: kim.id })]);
+	});
+
 	it('keeps what it owes someone when its reply to them never went out, and lets the apology tell them', async () => {
 		const { clock, store, queue, sent, conv, say } = setUp({ dm: { reply: "hey! so sorry, i can't make jo's party saturday" } });
 		const sam = known(store, 'sam', 'Sam', 0.25, 0.2, NOW - 2 * HOUR);

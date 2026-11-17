@@ -51,18 +51,18 @@ const TALK_WORDS = /\b(?:online|chat(?:ting)?|text(?:ing)?|messag(?:e|es|ing))\b
 /**
  * The words a plan's own words may call the person it was made with by, in their chat ("at your party", "you're in"),
  * which prompts.ts `toOthers` says by their name in every prompt: the second person, which means them there, lowercase,
- * all in capitals, or capitalized but before a capitalized word ("Yours Truly" is a name); and texting's "u", "ur" and "ya"
+ * all in capitals, or capitalized but next to a capitalized word ("Yours Truly", "Thank You" are names); and texting's "u", "ur" and "ya"
  * (`TEXTED`), in lowercase and on their own only, never the "U" of "U.S." or "U-Haul", nor "Ya Ya's". A word's edges are
- * any letter's, accented ones too ("Céu" holds no "u").
+ * any letter's or mark's, accented ones too ("Céu" holds no "u"), and a hyphen's for "you" ("thank-you").
  */
 export const ADDRESSED =
-	/(?<![\p{L}\p{N}_])(?:you(?:rs|rself|rselves|r)?(?![\p{L}\p{N}_])|You(?:rs|rself|rselves|r)?(?![\p{L}\p{N}_])(?!\s+\p{Lu})|YOU(?:RS|RSELF|RSELVES|R)?(?![\p{L}\p{N}_]))/gu;
-export const TEXTED = /(?<![\p{L}\p{N}_.'’-])(?:u|ur|ya)(?![\p{L}\p{N}_'’-])(?!\.\p{L})/gu;
+	/(?<![\p{L}\p{M}\p{N}_-])(?:you(?:rs|rself|rselves|r)?(?![\p{L}\p{M}\p{N}_'’-])|(?<!\p{Lu}\p{L}*\s+)You(?:rs|rself|rselves|r)?(?![\p{L}\p{M}\p{N}_'’-])(?!\s+\p{Lu})|YOU(?:RS|RSELF|RSELVES|R)?(?![\p{L}\p{M}\p{N}_'’-]))/gu;
+export const TEXTED = /(?<![\p{L}\p{M}\p{N}_.'’-])(?:u|ur|ya)(?![\p{L}\p{M}\p{N}_'’-])(?!\.\p{L})/gu;
 /**
  * Whether words may speak to someone, held to the strictest (whatever their case or what stands next to them: "at Your
  * party", "helping U move", "with u."), as calendar.ts reads a plan's words before telling them to others.
  */
-const SPEAKS_TO = /(?<![\p{L}\p{N}_])(?:you(?:rs|rself|rselves|r)?|u|ur|ya)(?![\p{L}\p{N}_])/iu;
+const SPEAKS_TO = /(?<![\p{L}\p{M}\p{N}_])(?:you(?:rs|rself|rselves|r)?|u|ur|ya)(?![\p{L}\p{M}\p{N}_])/iu;
 /** Words that point at someone of the conversation a plan came from, but not surely at whom (their party: theirs, or another's). */
 const THIRD_PERSON = /\b(?:them|their|theirs|themselves)\b/i;
 

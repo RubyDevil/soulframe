@@ -287,8 +287,8 @@ The brain fills it in at brain.ts:897-924. Each slot:
 | `personNotes` | `person.summary`, written by the model |
 | `channel` | the `Channel` (its `invitations` and `actions`) |
 | `memory` | `settings.memory` (`personNotes`, `selfNotes`) |
-| `extraLines` | `options.extraLines?.(person) ?? []`: the reply queue passes `Conversation.extraLines` (runtime.ts:798) |
-| `invitation` | `options.invitation` where `channel.invitations`, else nothing (brain.ts:889); the queue passes the name of `Conversation.invitation` (runtime.ts:775, :798) |
+| `extraLines` | `options.extraLines?.(person) ?? []`: the reply queue passes `Conversation.extraLines` (runtime.ts:802) |
+| `invitation` | `options.invitation` where `channel.invitations`, else nothing (brain.ts:889); the queue passes the name of `Conversation.invitation` (runtime.ts:779, :802) |
 | `joinNow` | `fullyOnline(hours, channel.id, now())`: a full online span is open on the channel (brain.ts:889) |
 | `time` | `directMessageTimePrompt` |
 | `minorCaution` | `!!channel.adult && minorCautioned(person)` (brain.ts:886) |
@@ -484,7 +484,7 @@ export const BREAK_INVITE_PROMPT = "You're only on for a few minutes, so you can
 
 DM turn only. Present when the channel has `invitations` and a name is passed: the app attaches
 `Conversation.invitation` (`{ name, join }`, runtime.ts:89) to the conversation, the reply queue keeps it from the
-incoming message (runtime.ts:1153) and passes its `name` to `compose` where `channel.invitations` (runtime.ts:775, :798). The
+incoming message (runtime.ts:1157) and passes its `name` to `compose` where `channel.invitations` (runtime.ts:779, :802). The
 name is the app's data, quoted as a JSON string. With a full online span open on the channel (`joinNow`) the line asks
 for a decision; on a break `BREAK_INVITE_PROMPT` takes its place, and the turn reports `inviteWaits` (brain.ts:938).
 Rendered (`joinNow` true, name `Friday "movie" night`):

@@ -126,11 +126,11 @@ describe('checkPlan: a plan of its own (busy)', () => {
 		expect(toOthers('Your party, then YOURS', 'Sam')).toBe("Sam's party, then Sam's");
 		expect(toOthers("at Your party, YOU'RE late, with u.", 'Sam')).toBe("at Sam's party, Sam's late, with Sam.");
 		// Words that only look like it stay as they are, and those that may speak to them, however written, are never open
-		for (const words of ['at the U.S. consulate', 'picking up a U-Haul', "at Ya Ya's", 'at Yours Truly cafe', 'helping U move']) {
+		for (const words of ['at the U.S. consulate', 'picking up a U-Haul', "at Ya Ya's", 'at Yours Truly cafe', 'helping U move', 'at a Thank You dinner', "at You've Got Mail night", 'at You-Tube live', 'at a thank-you dinner']) {
 			expect(toOthers(words, 'Sam'), words).toBe(words);
 			expect(check({ ...dinner, busy: words, share: 'open' }), words).toMatchObject({ add: { share: 'personal' } });
 		}
-		for (const words of ['at a youth club', 'at the bayou', 'at the Céu bar', 'in Ñuñoa']) {
+		for (const words of ['at a youth club', 'at the bayou', 'at the Céu bar', 'in Ñuñoa', 'at the u\u0308ber club']) {
 			expect(toOthers(words, 'Sam'), words).toBe(words);
 			expect(check({ ...dinner, busy: words, share: 'open' }), words).toMatchObject({ add: { share: 'open' } });
 		}

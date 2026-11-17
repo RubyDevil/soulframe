@@ -29,8 +29,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   same, so no later plan breaks the promise lightly. A busy plan cuts the day's online time and busy blocks (a
   dentist's hour splits a work day); time made to chat is online time for every channel. DM turns and openers list the
   coming plans (`calendar.shown`, a number on each it may call off there), and its time lines include them, a plan's
-  words always quoted as data. A plan made with someone who then ends it no longer stands; if they come back
-  (`unblock`, `undeny`) it stands again, unless another plan took its time meanwhile. Interruptions stay the
+  words always quoted as data. A plan made with someone who then ends it no longer stands: it lapses, called off for
+  good if they come back (`unblock`, `undeny`). Interruptions stay the
   routine's.
 - **Promises, kept or broken like a person's.** Time made to chat with someone, and a plan the model marks as with or
   for them (`withThem`), are promises to them. It may break one for someone who matters as much or more: in a turn

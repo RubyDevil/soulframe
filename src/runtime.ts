@@ -438,6 +438,7 @@ export function createReplyQueue({
 		for (const text of messages) {
 			if (sent) await sleep(betweenMessagesMs(runtime.rng, pacing));
 			if ((stop = cut()) !== 'done') break;
+			let typingError: unknown;
 			try {
 				// Once, before the first message is typed (nothing follows a failed one), and nothing typed if that was the end of it
 				if (!sent && markRead) {
@@ -453,26 +454,29 @@ export function createReplyQueue({
 					runtime.store.addMessage(personId, channel, 'out', text);
 					runtime.log(persona.id, 'dm_sent', { personId, platform: channel, text });
 				}
-				conversation.delivered?.(text);
 				sent++;
 				if (state) {
-					// Something went out: the turn is kept, and no newer message makes it start over now
+					// Something went out: the turn is kept, and no newer message makes it start over now; what it told them, once
+					// all of it went out (unless rehearsed: a dry run changes nothing its calendar keeps), whatever fails after
 					state.sent = sent;
 					state.writing = false;
-					// What it wrote is kept; what it told them, once all of it went out (below)
-					state.keep?.({ delivered: false });
+					state.keep?.({ delivered: sent === messages.length && !runtime.dryRun });
 				}
+				conversation.delivered?.(text);
 			} catch (error) {
 				stop = failedDelivery(error, personId, channel, sent);
 				break;
 			} finally {
-				if (typingShown) await typing(false);
+				// Typing taken down: a rejection is a failed delivery, as any of the conversation's (what went out went out)
+				if (typingShown) await typing(false).catch((error: unknown) => (typingError = error ?? new Error('typing failed')));
+			}
+			if (typingError !== undefined) {
+				stop = failedDelivery(typingError, personId, channel, sent);
+				break;
 			}
 		}
 		if (stop === 'halt_switch' || stop === 'stopped' || stop === 'ended') runtime.log(persona.id, 'reply_cancelled', { personId, platform: channel, sent, unsent: messages.length - sent, reason: stop });
 		else if (stop === 'done') {
-			// All of it reached them, unless rehearsed: only then is its calendar's part true (a dry run changes nothing of it)
-			state?.keep?.({ delivered: !runtime.dryRun });
 			if (!runtime.dryRun) runtime.store.audit(persona.id, 'sent', { personId, platform: channel, messages: messages.length });
 			runtime.log(persona.id, 'reply_sent', { personId, platform: channel, messages: messages.length, dryRun: runtime.dryRun });
 		}

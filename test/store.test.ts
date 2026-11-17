@@ -538,7 +538,7 @@ describe('calendar events', () => {
 		expect(store.events('kim', friday, friday)).toHaveLength(1);
 	});
 
-	it('lets the plans made with someone who comes back (unblocked, undenied) stand again, but for those whose time was taken meanwhile', () => {
+	it('lets the plans made with someone who ended it lapse: called off as by them when they come back (unblocked, undenied)', () => {
 		const store = memoryStore(() => 1_000);
 		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
 		const kim = store.createPerson('robin', 'chat', 'kim', 'Kim');
@@ -551,14 +551,14 @@ describe('calendar events', () => {
 		// While Sam was away, Kim's plan took the time of one of theirs (hidden then, so nothing weighed it)
 		const kims = store.addEvent('robin', { kind: 'busy', day: friday, from: 930, to: 1000, what: 'at the cinema', personId: kim.id, source: 'persona' });
 		store.unblock(sam.id);
-		// That one called off, as with Sam (no promise broken for anyone); the other stands again
-		expect(store.events('robin', friday, friday).map((event) => event.id)).toEqual([kims.id, later.id]);
+		// Both lapsed, as by Sam (their leaving): no promise broken for anyone, and never in two places at once
+		expect(store.events('robin', friday, friday).map((event) => event.id)).toEqual([kims.id]);
 		expect(store.eventById(time.id)).toMatchObject({ cancelledBy: sam.id, cancelledAt: 1_000 });
+		expect(store.eventById(later.id)).toMatchObject({ cancelledBy: sam.id });
 		expect(store.calledOffOn('robin', sam.id, 0)).toBe(0);
-		// Nothing took Lee's time: it stands again
 		store.deny('chat', 'lee', 'minor');
 		store.undeny('chat', 'lee');
-		expect(store.eventById(party.id)?.cancelledAt).toBeNull();
+		expect(store.eventById(party.id)).toMatchObject({ cancelledBy: lee.id });
 	});
 
 	it('keeps a promise broken for someone else through a sweep for 30 days, which its calendar still tells', () => {
