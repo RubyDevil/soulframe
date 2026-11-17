@@ -8,7 +8,8 @@
  * - someone forgotten leaves nothing behind: no later prompt, kv value, opener or audit line names them or holds their
  *   plans' words;
  * - a promise broken on someone is told to them exactly once: at the first turn with them that replies (or opener that
- *   is sent), never again, and no notice is told when nothing is owed.
+ *   is sent), never again, and no notice is told when nothing is owed;
+ * - its standing plans never overlap: it is never in two places at once, not even once someone blocked comes back.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -42,7 +43,7 @@ const clock = (minutes: number) => `${String(Math.floor(minutes / 60) % 24).padS
 const named = (name: string, text: string) => new RegExp(`\\b${name}\\b`).test(text);
 
 /** What the runs did, across seeds: the test of the tests (`is not trivial`). */
-const outcomes = { promisesTold: 0, apologiesSent: 0, followUpsTelling: 0, othersWordsShown: 0, groupWordsShown: 0, forgotten: 0, replaced: 0, refused: 0, shares: 0 };
+const outcomes = { returned: 0, promisesTold: 0, apologiesSent: 0, followUpsTelling: 0, othersWordsShown: 0, groupWordsShown: 0, forgotten: 0, replaced: 0, refused: 0, shares: 0 };
 
 function simulate(seed: number, sharing: Sharing) {
 	const rng = seededRng(`calendar-${sharing}-${seed}`);
@@ -201,6 +202,19 @@ function simulate(seed: number, sharing: Sharing) {
 		}
 	};
 
+	/** Its standing plans, as its agenda reads them, never overlap. */
+	const checkOverlaps = () => {
+		const standing = store
+			.events('robin', { year: 2026, month: 1, day: 1 }, { year: 2027, month: 12, day: 31 })
+			.filter((event) => event.source === 'persona')
+			.map((event) => ({ event, start: zonedToUtc(event.day, event.from, persona.timezone), end: zonedToUtc(event.day, event.to, persona.timezone) }));
+		for (const [i, a] of standing.entries()) {
+			for (const b of standing.slice(i + 1)) {
+				if (a.start < b.end && b.start < a.end) throw new Error(`plans ${a.event.id} and ${b.event.id} overlap: "${a.event.what}" (${a.event.personId}) and "${b.event.what}" (${b.event.personId})`);
+			}
+		}
+	};
+
 	const groupLine = async () => {
 		answerFor = () => ({ reply: null });
 		const before = prompts.length;
@@ -212,7 +226,8 @@ function simulate(seed: number, sharing: Sharing) {
 		const tokens = plans()
 			.filter((event) => event.personId === person.id)
 			.flatMap((event) => tokenOf(event) ?? []);
-		store.forgetPerson(person.id);
+		// Someone who ended it (blocked here) is kept: forgetting them would let it answer them again
+		if (!store.forgetPerson(person.id)) return;
 		living.delete(person.id);
 		forgotten.push({ name: person.name, tokens });
 		outcomes.forgotten++;
@@ -258,8 +273,14 @@ function simulate(seed: number, sharing: Sharing) {
 						now = Math.max(now, share.dueAt);
 						await openers();
 					}
-				} else if (roll < 0.97) await groupLine();
-				else if (left.length > 2) forget(store.personById(pick(rng, left).id));
+				} else if (roll < 0.91) await groupLine();
+				else if (roll < 0.98) {
+					// Someone blocks it a while, then is let back
+					const person = store.personById(pick(rng, left).id);
+					if (person.state === 'active') store.block(person.id);
+					else if (store.unblock(person.id)) outcomes.returned++;
+				} else if (left.length > 2) forget(store.personById(pick(rng, left).id));
+				checkOverlaps();
 			}
 		},
 	};
@@ -282,6 +303,7 @@ describe('the calendar through the brain, at random', () => {
 		expect(outcomes.groupWordsShown).toBeGreaterThan(1);
 		expect(outcomes.followUpsTelling).toBeGreaterThan(2);
 		expect(outcomes.forgotten).toBeGreaterThan(5);
+		expect(outcomes.returned).toBeGreaterThan(5);
 		expect(outcomes.refused).toBeGreaterThan(50);
 		expect(outcomes.shares).toBeGreaterThan(3);
 	});
