@@ -727,8 +727,8 @@ describe('texting first (settings.initiative)', () => {
 
 describe('the calendar (planField, calendarPrompt)', () => {
 	const format = (plan?: Parameters<typeof directMessageAnswerFormat>[4]) => directMessageAnswerFormat({}, DEFAULT_SETTINGS.memory, true, undefined, plan);
-	const BUSY = (day = 3, sharing = true, school = false) =>
-		`When you tell them about a plan of your own that keeps you off your phone (a dentist appointment, dinner at a friend's on Friday): {"day": ${day}, "from": "18:00", "to": "22:00", "busy": "at Jo's birthday dinner", "public": "at a friend's for dinner",${sharing ? ' "share": "personal",' : ''} "withThem": false}: "busy", a few plain words (Latin letters) that complete "you're …", as you'd say them to them ("at your party", never "them" or "their"${school ? '; nothing of school or classes: "at yoga", not "at a yoga class"' : ''}); "public", the same as anyone may hear it (no names, no "your");${sharing ? ` "share", who else may hear "busy": "open" anyone, "personal" those you're close to (it names someone, their party), "confidential" only your closest, in confidence (something sensitive, or that they asked you to keep to yourself);` : ''} "withThem", true when it's with or for them (their party, a game night together), a promise to them. You're offline then, so never for time with them here.`;
+	const BUSY = (day = 3, sharing = true) =>
+		`When you tell them about a plan of your own that keeps you off your phone (a dentist appointment, dinner at a friend's on Friday): {"day": ${day}, "from": "18:00", "to": "22:00", "busy": "at Jo's birthday dinner", "public": "at a friend's for dinner",${sharing ? ' "share": "personal",' : ''} "withThem": false}: "busy", a few plain words (Latin letters) that complete "you're …", as you'd say them to them ("at your party", never "them" or "their"); "public", the same as anyone may hear it (no names, no "your");${sharing ? ` "share", who else may hear "busy": "open" anyone, "personal" those you're close to (it names someone, their party), "confidential" only your closest, in confidence (something sensitive, or that they asked you to keep to yourself);` : ''} "withThem", true when it's with or for them (their party, a game night together), a promise to them. You're offline then, so never for time with them here.`;
 	const WEIGH =
 		"Before calling off a plan you made with someone else, weigh it as you would in life: how close you are to each, how often you've let them down, how they'd feel. People do cancel for someone who matters more, and they feel it, and they tell them.";
 	const MAKE_TIME = (length: string, day = 1, often = 'once a week') =>
@@ -753,8 +753,6 @@ describe('the calendar (planField, calendarPrompt)', () => {
 		expect(format({ busy: false, maxDays: 60, makeTime: { maxMinutes: 60, perPersonDays: 3 }, sharing: true })).toContain('"online": true}, between 7 AM and midnight, 1 hour at most, once in 3 days for each person. Nothing to plan');
 		// Sharing off: no "share" to ask for, still its public words
 		expect(format({ busy: true, maxDays: 60, makeTime: null, sharing: false }).split('\n').at(-1)).toBe(field(BUSY(3, false), DAYS(60)));
-		// A persona in 18+ conversations: nothing of school or classes in its words, it is told
-		expect(format({ busy: true, maxDays: 60, makeTime: null, sharing: true, school: true }).split('\n').at(-1)).toBe(field(BUSY(3, true, true), DAYS(60)));
 	});
 
 	it('gives examples within its days ahead, and today only when that is all it may plan', () => {
@@ -793,9 +791,8 @@ describe('the calendar (planField, calendarPrompt)', () => {
 		expect(refused({ reason: 'clash_online', block })).toBe(`Your calendar didn't take the plan you made last time (${when}): you already made time to be online then.${AFTER}`);
 		expect(refused({ reason: 'night', block })).toBe(`Your calendar didn't take the plan you made last time (${when}): that's too late at night or too early.${AFTER}`);
 		expect(refused({ reason: 'too_soon', block })).toBe(`Your calendar didn't take the plan you made last time (${when}): you already made time for them lately.${AFTER}`);
-		// Sleep and school are never words of its day, even refused
+		// Sleep is never a word of its day, even refused
 		expect(refused({ reason: 'reason_sleep', block })).toBe(`Your calendar didn't take the plan you made last time (${when}): that isn't a plan your calendar keeps.${AFTER}`);
-		expect(refused({ reason: 'reason_school', block })).toBe(refused({ reason: 'reason_sleep', block }));
 		// Its words alone: to make it again in other words, nothing to put right with them
 		const REWORD = ' If you still mean it, make it again in other words.';
 		expect(refused({ reason: 'reason_characters', block })).toBe(`Your calendar didn't take the plan you made last time (${when}): it wasn't put in a few plain words.${REWORD}`);
@@ -808,7 +805,7 @@ describe('the calendar (planField, calendarPrompt)', () => {
 		expect(refused({ reason: 'times' })).toBe(`Your calendar didn't take the plan you made last time: its times weren't on a 24-hour clock.${AFTER}`);
 		expect(refused({ reason: 'over', cancel: true, block })).toBe(`Your calendar couldn't call off your plan (${when}): it's over already.`);
 		expect(refused({ reason: 'no_such_plan', cancel: true })).toBe("Your calendar couldn't call off that plan: it isn't one of your plans.");
-		for (const reason of ['busy', 'clash', 'clash_online', 'night', 'too_much', 'too_long', 'too_short', 'too_soon', 'week_cap', 'day', 'too_far', 'past', 'times', 'off', 'reason_sleep', 'reason_school', 'reason_length']) {
+		for (const reason of ['busy', 'clash', 'clash_online', 'night', 'too_much', 'too_long', 'too_short', 'too_soon', 'week_cap', 'day', 'too_far', 'past', 'times', 'off', 'reason_sleep', 'reason_length']) {
 			expect(refused({ reason, block })).not.toMatch(/sleep|bed|school|student|homework/i);
 		}
 	});

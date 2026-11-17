@@ -81,8 +81,6 @@ describe('checkPlan: a plan of its own (busy)', () => {
 		['too_long', { from: '06:00', to: '19:00' }],
 		['reason_sleep', { busy: 'asleep' }],
 		['reason_sleep', { busy: 'in bed early' }],
-		['reason_school', { busy: 'at school' }],
-		['reason_school', { busy: 'doing homework' }],
 		['reason_online', { busy: 'playing games online with them' }],
 		['reason_online', { busy: 'chatting with Sam' }],
 		['reason_characters', { busy: 'at "the" gym' }],
@@ -93,15 +91,7 @@ describe('checkPlan: a plan of its own (busy)', () => {
 		// "Them" and "their": whom they meant is not sure
 		['reason_person', { busy: 'at their place' }],
 		['reason_person', { busy: 'helping them move' }],
-		// Joined, in other words or languages, in look-alike letters: sleep and school never
-		['reason_school', { busy: 'at highschool' }],
-		['reason_school', { busy: 'doing schoolwork' }],
-		['reason_school', { busy: 'in detention' }],
-		['reason_school', { busy: 'in 10th grade' }],
-		['reason_school', { busy: 'in der Schule' }],
-		['reason_school', { busy: "à l'école" }],
-		['reason_school', { busy: 'at ｓｃｈｏｏｌ' }],
-		['reason_school', { busy: 'at 𝐬𝐜𝐡𝐨𝐨𝐥' }],
+		// Joined, in other words or languages, in look-alike letters: sleep never
 		['reason_characters', { busy: 'at sсhооl' }],
 		['reason_characters', { busy: 'в школе' }],
 		['reason_sleep', { busy: 'at a sleepover' }],
@@ -111,20 +101,12 @@ describe('checkPlan: a plan of its own (busy)', () => {
 		expect(setUp().check({ ...dinner, ...change })).toMatchObject({ refused: reason });
 	});
 
-	it('takes school and classes for a persona not in 18+ conversations, and refuses them for one that is', () => {
-		const { store, hours, sam } = setUp();
-		const checkAs = (adult: boolean, busy: string, publicWords?: string) =>
-			checkPlan({ ...dinner, busy, ...(publicWords && { public: publicWords }) }, { store, hours, settings: ON, now: NOW, personId: sam.id, adult });
-		for (const busy of ['at school', 'at a yoga class', 'at the university library', 'doing homework', 'at an eye exam']) {
-			expect(checkAs(false, busy), busy).toMatchObject({ add: { what: busy } });
-			expect(checkAs(true, busy), busy).toMatchObject({ refused: 'reason_school' });
+	it('takes school, classes and exams as plans, in its public words too: adults go to school', () => {
+		const { check } = setUp();
+		for (const busy of ['at school', 'at a yoga class', 'at the university library', 'doing homework', 'at an eye exam', "à l'école"]) {
+			expect(check({ ...dinner, busy }), busy).toMatchObject({ add: { what: busy } });
 		}
-		// Its public words too; sleep never, either way
-		expect(checkAs(false, 'at the dentist', 'at a class')).toMatchObject({ add: { public: 'at a class' } });
-		expect(checkAs(true, 'at the dentist', 'at a class')).toMatchObject({ add: { public: null } });
-		expect(checkAs(false, 'asleep early')).toMatchObject({ refused: 'reason_sleep' });
-		// Nothing of school in it: a theme park's name
-		expect(checkAs(true, 'at Universal Studios')).toMatchObject({ add: { what: 'at Universal Studios' } });
+		expect(check({ ...dinner, busy: 'at the dentist', public: 'at a class' })).toMatchObject({ add: { public: 'at a class' } });
 	});
 
 	it('takes words that speak to them, as said in their chat, which anyone else hears by their name', () => {

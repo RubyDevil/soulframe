@@ -45,11 +45,11 @@ export const testPersona = (fields: Record<string, unknown> = {}) => ({
 	...fields,
 });
 
-/** parsePersona on this config with `prompt`, on `channels` (both test channels unless given), for 18+ conversations with `adult`. */
+/** parsePersona on this config with `prompt`, on `channels` (both test channels unless given). */
 export const parsedOf = (
 	config: unknown,
-	{ prompt = 'A voice.', channels = ['forum', 'chat'], adult, settings, source }: { prompt?: string; channels?: ChannelId[]; adult?: boolean; settings?: Settings; source?: string } = {},
-) => parsePersona({ config, prompt, channels, adult, settings, source });
+	{ prompt = 'A voice.', channels = ['forum', 'chat'], settings, source }: { prompt?: string; channels?: ChannelId[]; settings?: Settings; source?: string } = {},
+) => parsePersona({ config, prompt, channels, settings, source });
 
 /** The persona of parsedOf, which must have no problem. */
 export const personaOf = (config: unknown, options?: Parameters<typeof parsedOf>[1]) => {

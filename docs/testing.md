@@ -29,9 +29,7 @@ export function testSettings(raw: unknown = {}): Settings {
 ```
 
 To test config errors, assert on `issues`. `parsePersonaMarkdown` reads a persona file's text, and `loadPersonas`
-takes a `files` option (`ConfigFiles`: `read` and `exists`) for a folder that lives only in memory. If your
-application loads its personas with `adult: true` (for 18+ conversations), pass it in tests too, so they run the same
-checks.
+takes a `files` option (`ConfigFiles`: `read` and `exists`) for a folder that lives only in memory.
 
 ## An in-memory store
 

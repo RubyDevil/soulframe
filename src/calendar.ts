@@ -207,7 +207,6 @@ function checkOne(
 		today = localDateOf(now, hours.timezone),
 		closeness = () => 0,
 		replacing,
-		adult = true,
 	}: {
 		store: Store;
 		hours: Hours;
@@ -220,8 +219,6 @@ function checkOne(
 		closeness?: (personId: number) => number;
 		/** The plan this one takes the place of (`replaces`), checked as gone. */
 		replacing?: StoredEvent;
-		/** A persona in 18+ conversations (`Persona.adult`): nothing of school in its plans' words. As strict unless false. */
-		adult?: boolean;
 	},
 ): PlanCheck {
 	const refused = (reason: string, more: { block?: { start: number; end: number }; clash?: Clash } = {}) => ({ refused: reason, ...more });
@@ -304,7 +301,7 @@ function checkOne(
 	const { maxHours, perWeek } = settings.plans;
 	if (minutes > maxHours * 60) return refusedAt('too_long');
 	// Its own words may speak to them ("at your party"): anyone else who may hear them hears their name (`toOthers`)
-	const problem = 'busy' in proposal ? planReasonProblem(proposal.busy, { addressed: true, school: adult }) : 'missing';
+	const problem = 'busy' in proposal ? planReasonProblem(proposal.busy, { addressed: true }) : 'missing';
 	if (problem) return refusedAt(`reason_${problem}`);
 	const bumped: StoredEvent[] = [];
 	for (const event of over) {
@@ -315,7 +312,7 @@ function checkOne(
 	}
 	if (madeSince(now - 7 * DAY, { kind: 'busy' }) >= perWeek) return refusedAt('week_cap');
 	// Its public words, held to the same as its own; left out (a plan of its own, to others) when they fall short
-	const shown = 'busy' in proposal && proposal.public !== undefined && !planReasonProblem(proposal.public, { school: adult }) ? proposal.public.trim() : null;
+	const shown = 'busy' in proposal && proposal.public !== undefined && !planReasonProblem(proposal.public) ? proposal.public.trim() : null;
 	const { share: ranked = 'personal', withThem = false } = proposal as { share?: Share; withThem?: boolean };
 	// Words that speak to them name them to anyone else (`toOthers`): never open to anyone
 	const share = ranked === 'open' && addresses(proposal.busy) ? 'personal' : ranked;

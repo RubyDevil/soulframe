@@ -158,7 +158,7 @@ export async function converse(setup: Setup, scenario: Scenario, { dir, run }: {
 		} catch (error) {
 			throw new SetupError(`can't read ${path} (${(error as { code?: string }).code ?? String(error)})`);
 		}
-		const { persona, issues } = parsePersonaMarkdown(text, { id: basename(path, '.md'), channels: [CHANNEL_ID], adult: scenario.adult, settings, source: path });
+		const { persona, issues } = parsePersonaMarkdown(text, { id: basename(path, '.md'), channels: [CHANNEL_ID], settings, source: path });
 		if (!persona) throw new SetupError(`the persona has problems:\n  ${issues.join('\n  ')}`);
 		return persona;
 	};

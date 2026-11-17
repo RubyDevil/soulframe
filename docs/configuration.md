@@ -78,8 +78,7 @@ must be the file's name.
 
 `loadPersonas({ dir, channels })` reads `<dir>/<id>.md` for each key of `channels`, whose value lists the channel ids
 that persona is on (the names its hours' `on:` may use). `parsePersonaMarkdown(text, { id, channels })` reads one file's
-text, for files you read yourself (a bundler, remote storage). Both take `adult: true` for personas used in 18+
-conversations: a busy reason about school is then refused (see [`schedule`](#schedule)). Neither is required: see
+text, for files you read yourself (a bundler, remote storage). Neither is required: see
 [your own loader](#your-own-loader).
 
 ## The config
@@ -152,8 +151,7 @@ and both (`mon-wed,fri`). Every weekday must be in exactly one key; write `"sun:
 - blocks that can overlap, within a day and into the next one (`sun` into `mon` too); blocks may touch;
 - a break must be inside one busy block's core (from its latest start to its earliest end: a break from it) or clear
   of it;
-- a busy reason may not be sleep ("bed", "nap", ...: the night is simply offline); parsed with `adult: true`, it may
-  not be about school or students either ("at an evening class" at most), nor may its calendar's plans.
+- a busy reason may not be sleep ("bed", "nap", ...: the night is simply offline).
 
 The same hours every day are one online block under `mon-sun`:
 
@@ -588,9 +586,8 @@ What the code checks, whatever the settings say:
 - every length counts as the time passes: 10 PM to midnight on a night the clock goes back is three hours;
 - a plan of its own has a reason of 2 to 40 characters, only Latin letters once read plain (look-alike letters as the
   plain ones, accents off), digits, spaces and `, . ' ’ & -` (a few plain words, which every prompt quotes as data),
-  never sleep, and for a persona parsed with `adult: true` never school either, as its schedule (joined to other
-  words, as "highschool" or "sleepover", and in the other languages most likely too: what the model writes is held
-  to the strictest; its plan field says so then, "at yoga", not "at a yoga class"), never talking with them ("online", "chatting": a busy plan is time away from
+  never sleep (joined to other words, as "sleepover", and in the other languages most likely too: what the model
+  writes is held to the strictest), never talking with them ("online", "chatting": a busy plan is time away from
   the phone), never "them" or "their" (whose is not sure; "you" and "your" mean the person it was made with, and anyone
   else who may hear it hears their name: "at Sam's party"), and lies over no other plan in its calendar (bar a promise
   it may break), the app's too; over its routine

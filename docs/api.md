@@ -49,7 +49,6 @@ function parsePersona(options: {
 	config: unknown;                    // id, name, timezone, schedule
 	prompt: string;                     // the persona's voice and background, in Markdown
 	channels: readonly ChannelId[];     // the channels it is on: the names its hours' `on:` may use
-	adult?: boolean;                    // for 18+ conversations: busy reasons about school are refused
 	settings?: Settings;                // its brain's: its own pacing and relationship are checked over them (default: the defaults)
 	source?: string;                    // named before each problem ("robin.md › schedule: Required")
 }): { persona?: Persona; issues: string[] };
@@ -66,7 +65,6 @@ problem there is no `persona`, and `issues` says what is wrong. The prompt is ke
 function parsePersonaMarkdown(text: string, options: {
 	id: string;                         // its id: the file's name without .md
 	channels: readonly ChannelId[];
-	adult?: boolean;
 	settings?: Settings;
 	source?: string;
 }): { persona?: Persona; issues: string[] };
@@ -84,7 +82,6 @@ function loadPersonas(options: {
 	dir: string;
 	channels: Readonly<Record<string, readonly ChannelId[]>>;
 	files?: ConfigFiles;
-	adult?: boolean;
 	settings?: Settings;
 }): LoadedPersonas;
 ```
@@ -151,7 +148,6 @@ A persona's config, checked: only what the code computes with. It satisfies the 
 ```ts
 interface Persona extends PersonaConfig {
 	prompt: string;  // its voice and background, trimmed: first in every system prompt
-	adult?: true;    // parsed with `adult` (18+ conversations): nothing of school in its schedule nor its calendar's plans
 }
 ```
 

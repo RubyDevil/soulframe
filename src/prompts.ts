@@ -497,8 +497,6 @@ export interface PlanOptions {
 	makeTime: { maxMinutes: number; perPersonDays: number } | null;
 	/** Others may hear a plan's own words (`sharing.enabled`): it says how widely (`share`). */
 	sharing: boolean;
-	/** A persona in 18+ conversations (`Persona.adult`): nothing of school or classes in its plans' words, it says. */
-	school?: boolean;
 }
 
 /** "2 hours", "90 minutes", "1 hour": a length of time in minutes, as a person says it. */
@@ -520,11 +518,11 @@ const WEIGH_PROMISE =
  * (`share`), and whether it is with or for them, a promise (`withThem`). Calling off a plan made with someone else, it
  * weighs it as a person would (`WEIGH_PROMISE`). Its examples' days stay within `maxDays`, which the field says.
  */
-const planField = ({ busy, maxDays, makeTime, sharing, school = false }: PlanOptions) =>
+const planField = ({ busy, maxDays, makeTime, sharing }: PlanOptions) =>
 	[
 		'- plan: null most of the time. Your calendar keeps your plans, so your days go the way you said.',
 		busy
-			? `When you tell them about a plan of your own that keeps you off your phone (a dentist appointment, dinner at a friend's on Friday): {"day": ${Math.min(maxDays, 3)}, "from": "18:00", "to": "22:00", "busy": "at Jo's birthday dinner", "public": "at a friend's for dinner",${sharing ? ' "share": "personal",' : ''} "withThem": false}: "busy", a few plain words (Latin letters) that complete "you're …", as you'd say them to them ("at your party", never "them" or "their"${school ? '; nothing of school or classes: "at yoga", not "at a yoga class"' : ''}); "public", the same as anyone may hear it (no names, no "your");${sharing ? ` "share", who else may hear "busy": "open" anyone, "personal" those you're close to (it names someone, their party), "confidential" only your closest, in confidence (something sensitive, or that they asked you to keep to yourself);` : ''} "withThem", true when it's with or for them (their party, a game night together), a promise to them. You're offline then, so never for time with them here.`
+			? `When you tell them about a plan of your own that keeps you off your phone (a dentist appointment, dinner at a friend's on Friday): {"day": ${Math.min(maxDays, 3)}, "from": "18:00", "to": "22:00", "busy": "at Jo's birthday dinner", "public": "at a friend's for dinner",${sharing ? ' "share": "personal",' : ''} "withThem": false}: "busy", a few plain words (Latin letters) that complete "you're …", as you'd say them to them ("at your party", never "them" or "their"); "public", the same as anyone may hear it (no names, no "your");${sharing ? ` "share", who else may hear "busy": "open" anyone, "personal" those you're close to (it names someone, their party), "confidential" only your closest, in confidence (something sensitive, or that they asked you to keep to yourself);` : ''} "withThem", true when it's with or for them (their party, a game night together), a promise to them. You're offline then, so never for time with them here.`
 			: '',
 		makeTime
 			? `When you promise to be online for them (to chat, or to play something together) at an hour you'd usually be offline but free (never while you're busy, at work say; rarely, only if it matters to you): {"day": ${Math.min(maxDays, 1)}, "from": "15:00", "to": "16:00", "online": true}, between 7 AM and midnight, ${minutesLength(makeTime.maxMinutes)} at most, ${makeTime.perPersonDays === 7 ? 'once a week' : `once in ${makeTime.perPersonDays} days`} for each person. Nothing to plan when you're online then anyway.`
@@ -561,14 +559,13 @@ const REFUSED_PLAN: Record<string, string> = {
 	not_its_own: "it isn't yours to call off",
 	over: "it's over already",
 	reason_online: "time with them here isn't time away from your phone: make it time to be online for them, or nothing if you're online then anyway",
-	// Never a word of what it named: sleep and school are never its day's
+	// Never a word of what it named: sleep is never its day's
 	reason_sleep: "that isn't a plan your calendar keeps",
-	reason_school: "that isn't a plan your calendar keeps",
 	reason_person: 'its words said "them" or "their", and whose wasn\'t clear: say whose, as "at Jo\'s party" or "at your party"',
 };
 
 /** Reasons about how a plan was written alone, its time fine: it may make it again, nothing to put right with them. */
-const REWORD = (reason: string) => reason === 'unreadable' || (reason.startsWith('reason_') && !['reason_sleep', 'reason_school', 'reason_online'].includes(reason));
+const REWORD = (reason: string) => reason === 'unreadable' || (reason.startsWith('reason_') && !['reason_sleep', 'reason_online'].includes(reason));
 
 /**
  * That the calendar didn't take the plan its last kept turn with them made (calendar.ts checkPlan), once, in the next

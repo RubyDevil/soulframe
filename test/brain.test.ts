@@ -1914,26 +1914,12 @@ describe('its calendar (settings.calendar)', () => {
 		expect(off.seen[0]).not.toContain('Sam');
 	});
 
-	it('keeps a plan of school or classes for a persona not in 18+ conversations, and tells one that is to say none', async () => {
+	it('keeps a plan of school or classes: adults go to school too', async () => {
 		const yoga = { day: 3, from: '10:00', to: '11:00', busy: 'at a yoga class' };
-		const ask = async (adult: boolean) => {
-			const store = memoryStore(() => NOW);
-			const seen: string[] = [];
-			const llm: Llm = { complete: async (messages) => (seen.push(messages[0]!.content), JSON.stringify({ reply: 'deal', plan: yoga })) };
-			const who = personaOf(robin(), { prompt: 'You are playful and warm.', adult });
-			const brain = createBrain({ settings: CALENDAR, persona: who, identity: TEST_IDENTITY, runtime: { store, rng: () => 0.99, now: () => NOW }, llm });
-			const decision = brain.incoming(DM.chat, 'sam', 'Sam', 'yoga class with me saturday at 10?');
-			if (decision.kind !== 'reply') throw new Error('expected a reply');
-			(await brain.compose(decision.person.id, DM.chat)).keep?.();
-			return { seen, store };
-		};
-		const plain = await ask(false);
-		expect(plain.seen[0]).not.toContain('nothing of school or classes');
-		expect(plain.store.events('robin', SATURDAY, SATURDAY)).toEqual([expect.objectContaining({ what: 'at a yoga class' })]);
-		const adult = await ask(true);
-		expect(adult.seen[0]).toContain('nothing of school or classes: "at yoga", not "at a yoga class"');
-		expect(adult.store.events('robin', SATURDAY, SATURDAY)).toEqual([]);
-		expect(adult.store.auditLog('robin').find((row) => row.kind === 'plan_refused')?.detail).toMatchObject({ reason: 'reason_school' });
+		const { store, seen, turn } = robinWith(CALENDAR, { reply: 'deal', plan: yoga });
+		(await turn('yoga class with me saturday at 10?')).turn.keep?.();
+		expect(seen[0]).not.toMatch(/school|classes/);
+		expect(store.events('robin', SATURDAY, SATURDAY)).toEqual([expect.objectContaining({ what: 'at a yoga class' })]);
 	});
 
 	it('keeps nothing of a draft dropped, and audits a plan the code refuses', async () => {

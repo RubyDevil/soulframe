@@ -21,7 +21,7 @@ import { z } from 'zod';
 import type { ChannelId } from '../channel.js';
 import { isPlainObject } from '../merge.js';
 import { DEFAULT_SETTINGS, mergedSettings, type PersonaSettings, type Settings } from '../settings.js';
-import { refuseSchool, ScheduleSchema, type ScheduleConfig } from './hours.js';
+import { ScheduleSchema, type ScheduleConfig } from './hours.js';
 import { readConfig, sourced, suggest, type Problem } from './issues.js';
 
 /** A persona's id: the key of everything stored about it and the seed of its days; a persona file's name without .md. */
@@ -59,9 +59,6 @@ const PersonaConfigSchema = z.object({
 	initiative: ownOf<'initiative'>(),
 });
 
-/** With `adult`, refusing busy reasons about school too (config/hours.ts refuseSchool). */
-const ADULT_SCHEMA = PersonaConfigSchema.superRefine(refuseSchool);
-
 /** A persona's config, checked: what the code computes with. */
 export type PersonaConfig = z.output<typeof PersonaConfigSchema>;
 
@@ -69,8 +66,6 @@ export type PersonaConfig = z.output<typeof PersonaConfigSchema>;
 export interface Persona extends PersonaConfig {
 	/** Its voice and background, free Markdown, trimmed: first in every system prompt. */
 	prompt: string;
-	/** Loaded for 18+ conversations (`parsePersona`'s `adult`): nothing of school in its schedule, nor in its calendar's plans. */
-	adult?: true;
 }
 
 /** Keys that the persona files of the 0.1 betas held, each with where it went: an error saying so, rather than only "unknown key". */
@@ -96,8 +91,7 @@ type Parsed = { persona?: Persona; issues: string[] };
 
 /**
  * A persona from its config and its prompt, checked, from wherever the app keeps them (its own loader, a database,
- * values in code). `channels` are the channels the app puts it on: the names its hours' `on:` may use. With `adult`
- * (personas used in 18+ conversations), a busy reason about school is refused too. Its own pacing and relationship
+ * values in code). `channels` are the channels the app puts it on: the names its hours' `on:` may use. Its own pacing and relationship
  * are checked over `settings` (the defaults unless given). `source` names where it came from in the problems (a file,
  * say). Never throws: with any problem there is no persona, and `issues` say what is wrong.
  */
@@ -105,15 +99,12 @@ export function parsePersona({
 	config,
 	prompt,
 	channels,
-	adult,
 	settings = DEFAULT_SETTINGS,
 	source,
 }: {
 	config: unknown;
 	prompt: string;
 	channels: readonly ChannelId[];
-	/** For 18+ conversations: busy reasons about school are refused. */
-	adult?: boolean;
 	/** The settings its brain will run with: its own pacing, relationship and initiative are checked over them. */
 	settings?: Settings;
 	/** Where it came from, before each problem ("robin.md › schedule: Required"). */
@@ -121,7 +112,7 @@ export function parsePersona({
 }): Parsed {
 	const issues = (problems: Problem[]) => ({ issues: problems.map((problem) => sourced(source, problem)) });
 	if (!isPlainObject(config)) return issues([{ path: [], message: "the config must be a mapping (the persona's id, name, timezone, schedule…)" }]);
-	const { value, problems } = readConfig(adult ? ADULT_SCHEMA : PersonaConfigSchema, config, {
+	const { value, problems } = readConfig(PersonaConfigSchema, config, {
 		// A key the 0.1 betas read says where it went
 		moved: MOVED,
 		check: (persona) => [
@@ -132,7 +123,7 @@ export function parsePersona({
 	});
 	if (typeof prompt !== 'string') problems.push({ path: ['prompt'], message: "must be text: the persona's voice and background, in Markdown" });
 	if (!value || problems.length) return issues(problems);
-	return { persona: { ...value, prompt: prompt.trim(), ...(adult && { adult: true as const }) }, issues: [] };
+	return { persona: { ...value, prompt: prompt.trim() }, issues: [] };
 }
 
 /** The YAML between the `---` line a persona file starts with and the next one, and the text after it; else what is wrong. */
@@ -152,7 +143,7 @@ const splitFrontmatter = (text: string): { yaml: string; body: string } | string
  */
 export function parsePersonaMarkdown(
 	text: string,
-	{ id, channels, adult, settings, source }: { id: string; channels: readonly ChannelId[]; adult?: boolean; settings?: Settings; source?: string },
+	{ id, channels, settings, source }: { id: string; channels: readonly ChannelId[]; settings?: Settings; source?: string },
 ): Parsed {
 	const whole = (message: string) => ({ issues: [sourced(source, { path: [], message })] });
 	const split = splitFrontmatter(text);
@@ -165,7 +156,7 @@ export function parsePersonaMarkdown(
 		return whole(error instanceof Error ? error.message : String(error));
 	}
 	if (!isPlainObject(config)) return whole("its frontmatter must be a mapping (the persona's config: name, timezone, schedule…)");
-	const parsed = parsePersona({ config: { ...config, id }, prompt: split.body, channels, adult, settings, source });
+	const parsed = parsePersona({ config: { ...config, id }, prompt: split.body, channels, settings, source });
 	if (config.id === undefined || config.id === id) return parsed;
 	// Another id is one problem among the others: every one shows at once
 	return { issues: [sourced(source, { path: ['id'], message: `${JSON.stringify(config.id)} but its id is "${id}" (its file's name without .md)` }), ...parsed.issues] };
@@ -199,14 +190,11 @@ export function loadPersonas({
 	dir,
 	channels,
 	files = nodeFiles,
-	adult,
 	settings,
 }: {
 	dir: string;
 	channels: Readonly<Record<string, readonly ChannelId[]>>;
 	files?: ConfigFiles;
-	/** For 18+ conversations: busy reasons about school are refused. */
-	adult?: boolean;
 	/** As parsePersona's. */
 	settings?: Settings;
 }): LoadedPersonas {
@@ -238,7 +226,7 @@ export function loadPersonas({
 			issues.push(sourced(file, { path: [], message: `can't read it (${(error as { code?: string }).code ?? String(error)})` }));
 			continue;
 		}
-		const loaded = parsePersonaMarkdown(text, { id, channels: own, adult, settings, source: file });
+		const loaded = parsePersonaMarkdown(text, { id, channels: own, settings, source: file });
 		issues.push(...loaded.issues);
 		if (loaded.persona) personas.push(loaded.persona);
 	}

@@ -143,7 +143,7 @@ the same platform, since the id keys hours and identities.
   minors safeguard there: a message that says or hints that its writer is under 18 ends the conversation and
   deny-lists them, the Decisions age check runs when it is on, and the prompt says the persona only talks with adults.
   Left out, none of it runs. Set it the same way on every surface of an 18+ platform (its DMs, its group chats, its
-  posting channels), and load the personas with `loadPersonas({ ..., adult: true })` too.
+  posting channels).
 
 ## `Conversation`
 

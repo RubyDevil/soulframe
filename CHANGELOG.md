@@ -17,9 +17,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   (`store.addEvent`). The model only proposes, and only a reply that all reached them makes its plan (`Turn.keep` takes
   `{ delivered }`: the reply queue keeps the turn at its first message and its calendar's part once all of it went
   out; never for a reply cut short, nor in a dry run). The code checks each
-  plan against guardrails no setting relaxes (a short reason of plain words, never sleep, nor school for a persona
-  parsed with `adult: true` (the new `Persona.adult`), joined to other words, in other languages or look-alike letters
-  too, never "them" or "their", over no other plan in
+  plan against guardrails no setting relaxes (a short reason of plain words, never sleep, joined to other words, in
+  other languages or look-alike letters too, never "them" or "their", over no other plan in
   its calendar but a promise it may break;
   time made to chat between 7 AM and midnight, over no busy block, never more online in a day than its schedule's
   longest day and one such time, once per person a week; lengths as the time passes, daylight saving in it; limits per
@@ -185,6 +184,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Removed
 
+- **BREAKING: `adult` in `parsePersona`, `parsePersonaMarkdown` and `loadPersonas`.** It refused a persona's busy
+  reasons about school or students ("at an evening class" at most), but adults go to school, to a yoga class, to an
+  exam: a busy reason may be any of these now. Drop the option. `Channel.adult` and the minors safeguard it turns on
+  (the age checks on what people write, the prompt's adults-only line) are unchanged.
 - **BREAKING: `_shared.yaml` and the layering of persona files.** Each persona's config is its own. Settings shared by
   every persona are one settings object given to every brain; a limit every persona keeps belongs in the
   `policy.rules` you give each brain, after the persona's prompt, where no persona can drop it.
