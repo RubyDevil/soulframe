@@ -153,7 +153,7 @@ and both (`mon-wed,fri`). Every weekday must be in exactly one key; write `"sun:
 - a break must be inside one busy block's core (from its latest start to its earliest end: a break from it) or clear
   of it;
 - a busy reason may not be sleep ("bed", "nap", ...: the night is simply offline); parsed with `adult: true`, it may
-  not be about school or students either ("at an evening class" at most).
+  not be about school or students either ("at an evening class" at most), nor may its calendar's plans.
 
 The same hours every day are one online block under `mon-sun`:
 
@@ -588,8 +588,9 @@ What the code checks, whatever the settings say:
 - every length counts as the time passes: 10 PM to midnight on a night the clock goes back is three hours;
 - a plan of its own has a reason of 2 to 40 characters, only Latin letters once read plain (look-alike letters as the
   plain ones, accents off), digits, spaces and `, . ' ’ & -` (a few plain words, which every prompt quotes as data),
-  never sleep and never school (in any conversation; joined to other words, as "highschool" or "sleepover", and in
-  the other languages most likely too), never talking with them ("online", "chatting": a busy plan is time away from
+  never sleep, and for a persona parsed with `adult: true` never school either, as its schedule (joined to other
+  words, as "highschool" or "sleepover", and in the other languages most likely too: what the model writes is held
+  to the strictest; its plan field says so then, "at yoga", not "at a yoga class"), never talking with them ("online", "chatting": a busy plan is time away from
   the phone), never "them" or "their" (whose is not sure; "you" and "your" mean the person it was made with, and anyone
   else who may hear it hears their name: "at Sam's party"), and lies over no other plan in its calendar (bar a promise
   it may break), the app's too; over its routine

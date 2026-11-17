@@ -727,8 +727,8 @@ describe('texting first (settings.initiative)', () => {
 
 describe('the calendar (planField, calendarPrompt)', () => {
 	const format = (plan?: Parameters<typeof directMessageAnswerFormat>[4]) => directMessageAnswerFormat({}, DEFAULT_SETTINGS.memory, true, undefined, plan);
-	const BUSY = (day = 3, sharing = true) =>
-		`When you tell them about a plan of your own that keeps you off your phone (a dentist appointment, dinner at a friend's on Friday): {"day": ${day}, "from": "18:00", "to": "22:00", "busy": "at Jo's birthday dinner", "public": "at a friend's for dinner",${sharing ? ' "share": "personal",' : ''} "withThem": false}: "busy", a few plain words (Latin letters) that complete "you're …", as you'd say them to them ("at your party", never "them" or "their"; nothing of school or classes: "at yoga", not "at a yoga class"); "public", the same as anyone may hear it (no names, no "your");${sharing ? ` "share", who else may hear "busy": "open" anyone, "personal" those you're close to (it names someone, their party), "confidential" only your closest, in confidence (something sensitive, or that they asked you to keep to yourself);` : ''} "withThem", true when it's with or for them (their party, a game night together), a promise to them. You're offline then, so never for time with them here.`;
+	const BUSY = (day = 3, sharing = true, school = false) =>
+		`When you tell them about a plan of your own that keeps you off your phone (a dentist appointment, dinner at a friend's on Friday): {"day": ${day}, "from": "18:00", "to": "22:00", "busy": "at Jo's birthday dinner", "public": "at a friend's for dinner",${sharing ? ' "share": "personal",' : ''} "withThem": false}: "busy", a few plain words (Latin letters) that complete "you're …", as you'd say them to them ("at your party", never "them" or "their"${school ? '; nothing of school or classes: "at yoga", not "at a yoga class"' : ''}); "public", the same as anyone may hear it (no names, no "your");${sharing ? ` "share", who else may hear "busy": "open" anyone, "personal" those you're close to (it names someone, their party), "confidential" only your closest, in confidence (something sensitive, or that they asked you to keep to yourself);` : ''} "withThem", true when it's with or for them (their party, a game night together), a promise to them. You're offline then, so never for time with them here.`;
 	const WEIGH =
 		"Before calling off a plan you made with someone else, weigh it as you would in life: how close you are to each, how often you've let them down, how they'd feel. People do cancel for someone who matters more, and they feel it, and they tell them.";
 	const MAKE_TIME = (length: string, day = 1, often = 'once a week') =>
@@ -753,6 +753,8 @@ describe('the calendar (planField, calendarPrompt)', () => {
 		expect(format({ busy: false, maxDays: 60, makeTime: { maxMinutes: 60, perPersonDays: 3 }, sharing: true })).toContain('"online": true}, between 7 AM and midnight, 1 hour at most, once in 3 days for each person. Nothing to plan');
 		// Sharing off: no "share" to ask for, still its public words
 		expect(format({ busy: true, maxDays: 60, makeTime: null, sharing: false }).split('\n').at(-1)).toBe(field(BUSY(3, false), DAYS(60)));
+		// A persona in 18+ conversations: nothing of school or classes in its words, it is told
+		expect(format({ busy: true, maxDays: 60, makeTime: null, sharing: true, school: true }).split('\n').at(-1)).toBe(field(BUSY(3, true, true), DAYS(60)));
 	});
 
 	it('gives examples within its days ahead, and today only when that is all it may plan', () => {

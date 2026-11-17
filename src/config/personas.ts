@@ -69,6 +69,8 @@ export type PersonaConfig = z.output<typeof PersonaConfigSchema>;
 export interface Persona extends PersonaConfig {
 	/** Its voice and background, free Markdown, trimmed: first in every system prompt. */
 	prompt: string;
+	/** Loaded for 18+ conversations (`parsePersona`'s `adult`): nothing of school in its schedule, nor in its calendar's plans. */
+	adult?: true;
 }
 
 /** Keys that the persona files of the 0.1 betas held, each with where it went: an error saying so, rather than only "unknown key". */
@@ -130,7 +132,7 @@ export function parsePersona({
 	});
 	if (typeof prompt !== 'string') problems.push({ path: ['prompt'], message: "must be text: the persona's voice and background, in Markdown" });
 	if (!value || problems.length) return issues(problems);
-	return { persona: { ...value, prompt: prompt.trim() }, issues: [] };
+	return { persona: { ...value, prompt: prompt.trim(), ...(adult && { adult: true as const }) }, issues: [] };
 }
 
 /** The YAML between the `---` line a persona file starts with and the next one, and the text after it; else what is wrong. */

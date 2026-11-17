@@ -460,6 +460,7 @@ export function createBrain({
 				maxDays: calendar.plans.maxDays,
 				makeTime: calendar.makeTime.enabled ? { maxMinutes: calendar.makeTime.maxMinutes, perPersonDays: calendar.makeTime.perPersonDays } : null,
 				sharing: calendar.sharing.enabled,
+				school: !!persona.adult,
 			}
 		: undefined;
 	/** What a prompt for `viewer` hears of each plan (calendar.ts heardOf): none, a group chat's, only what anyone may hear. */
@@ -542,7 +543,7 @@ export function createBrain({
 		const checked: PlanCheck =
 			proposal === 'unreadable'
 				? { refused: 'unreadable' }
-				: checkPlan(proposal, { store, hours, settings: calendar, now: now(), personId, today: localDateOf(writtenAt, persona.timezone), closeness: closenessOf });
+				: checkPlan(proposal, { store, hours, settings: calendar, now: now(), personId, today: localDateOf(writtenAt, persona.timezone), closeness: closenessOf, adult: !!persona.adult });
 		if ('refused' in checked) {
 			store.audit(persona.id, 'plan_refused', { personId, reason: checked.refused });
 			if (checked.refused !== 'already_online') {

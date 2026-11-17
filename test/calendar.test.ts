@@ -111,6 +111,22 @@ describe('checkPlan: a plan of its own (busy)', () => {
 		expect(setUp().check({ ...dinner, ...change })).toMatchObject({ refused: reason });
 	});
 
+	it('takes school and classes for a persona not in 18+ conversations, and refuses them for one that is', () => {
+		const { store, hours, sam } = setUp();
+		const checkAs = (adult: boolean, busy: string, publicWords?: string) =>
+			checkPlan({ ...dinner, busy, ...(publicWords && { public: publicWords }) }, { store, hours, settings: ON, now: NOW, personId: sam.id, adult });
+		for (const busy of ['at school', 'at a yoga class', 'at the university library', 'doing homework', 'at an eye exam']) {
+			expect(checkAs(false, busy), busy).toMatchObject({ add: { what: busy } });
+			expect(checkAs(true, busy), busy).toMatchObject({ refused: 'reason_school' });
+		}
+		// Its public words too; sleep never, either way
+		expect(checkAs(false, 'at the dentist', 'at a class')).toMatchObject({ add: { public: 'at a class' } });
+		expect(checkAs(true, 'at the dentist', 'at a class')).toMatchObject({ add: { public: null } });
+		expect(checkAs(false, 'asleep early')).toMatchObject({ refused: 'reason_sleep' });
+		// Nothing of school in it: a theme park's name
+		expect(checkAs(true, 'at Universal Studios')).toMatchObject({ add: { what: 'at Universal Studios' } });
+	});
+
 	it('takes words that speak to them, as said in their chat, which anyone else hears by their name', () => {
 		const { check } = setUp();
 		for (const busy of ['at your birthday party', 'at ur bday party', 'at a game night with you', 'helping you move']) expect(check({ ...dinner, busy }), busy).toMatchObject({ add: { what: busy } });

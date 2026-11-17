@@ -151,6 +151,7 @@ A persona's config, checked: only what the code computes with. It satisfies the 
 ```ts
 interface Persona extends PersonaConfig {
 	prompt: string;  // its voice and background, trimmed: first in every system prompt
+	adult?: true;    // parsed with `adult` (18+ conversations): nothing of school in its schedule nor its calendar's plans
 }
 ```
 

@@ -271,8 +271,8 @@ lines say so, and afterwards it is back from it.
   with the person, or one of its plans called off by its number. The app, with `store.addEvent` (a holiday, a team
   day): those are its own to check, and only it calls them off.
 - **The guardrails**, which no setting relaxes (`checkPlan`, calendar.ts:188): the model only proposes. A plan of its
-  own has a short reason of plain words (never sleep or school, joined to other words, in other languages or look-alike
-  letters too; never "them" or "their"), over no other plan in its calendar (bar a promise it may break), at most `plans.perWeek` a week; time made to chat lies
+  own has a short reason of plain words (never sleep, nor school for a persona in 18+ conversations, joined to other
+  words, in other languages or look-alike letters too; never "them" or "their"), over no other plan in its calendar (bar a promise it may break), at most `plans.perWeek` a week; time made to chat lies
   between 7 AM and midnight, over no busy block, never makes the day's online time longer than its schedule's longest
   day and one such time, and comes once per person in `makeTime.perPersonDays`; lengths count as the time passes,
   daylight saving in it. Time made at an hour it is online anyway adds nothing but is kept, so the promise holds. So
@@ -406,7 +406,8 @@ ships:
   after the persona's prompt and wins over it, and no persona file can drop it.
 - **Busy reasons.** Sleep is never a busy reason (the night is simply offline). Load personas meant for 18+
   conversations with `adult: true` (`parsePersona({ ..., adult: true })`, `loadPersonas({ dir, channels, adult: true })`):
-  a reason about school or students is then refused too ("at an evening class" at most).
+  a reason about school or students is then refused too ("at an evening class" at most), and so is a plan its calendar
+  keeps. Any other persona may go to school, or to a yoga class.
 - **Settings are the application's.** A persona's config holds no setting: the provider, the budget and the checks
   are only ever what your code gives `createBrain`.
 - **Actions.** A persona may block someone abusive (the conversation ends for good) or, where the channel declares

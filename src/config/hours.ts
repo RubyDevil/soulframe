@@ -73,31 +73,33 @@ const THIRD_PERSON = /\b(?:them|their|theirs|themselves)\b/i;
  */
 const plainOf = (text: string) => text.normalize('NFKD').replace(/\p{M}/gu, '');
 /**
- * What a plan of its own may never be, held to the strictest, as the model wrote it: sleep and school joined to other
- * words ("highschool", "sleepover", "bedtime"), in the few other languages most likely, and school's other words.
+ * What a plan of its own may never be, held to the strictest, as the model wrote it: sleep, and for a persona in 18+
+ * conversations school, joined to other words ("highschool", "sleepover", "bedtime"), in the few other languages most
+ * likely, and school's other words.
  */
 const PLAN_SLEEP_WORDS = /sleep|\bbed|\bnap(?:s|ped|ping)?\b|\bdoz(?:e|ed|ing)\b|snooz|slumber|schlaf|\bdorm|\bdurm|sommeil|sueno|slaap/i;
 const PLAN_SCHOOL_WORDS =
-	/school|schul|ecole|escuel|escola|scuol|colegio|lycee|liceo|colleg|univers|\buni\b|homework|\blectures?\b|\bexams?\b|campus|student|teacher|\btutor|detention|\bprom\b|homeroom|\bgrade\b|\brecess\b|semester|classmate|\bpupils?\b|\b(?:clases?|classe|klassen?)\b/i;
+	/school|schul|ecole|escuel|escola|scuol|colegio|lycee|liceo|colleg|universit|\buni\b|homework|\blectures?\b|\bexams?\b|campus|student|teacher|\btutor|detention|\bprom\b|homeroom|\bgrade\b|\brecess\b|semester|classmate|\bpupils?\b|\b(?:clases?|classe|klassen?)\b/i;
 
 /** Whether a plan's words may speak to the person it was made with ("at your party", `SPEAKS_TO`), as written and read plain (`plainOf`). */
 export const addresses = (words: string) => SPEAKS_TO.test(words) || SPEAKS_TO.test(plainOf(words));
 
 /**
  * Why the reason of a plan the persona made itself (calendar.ts) is refused, or null: it completes "you're ..." as a
- * busy reason does, never sleep and never school (in any conversation: what the model writes is held to the strictest),
+ * busy reason does, never sleep, and for a persona in 18+ conversations (`school`, as `refuseSchool` for its schedule)
+ * never school, held to the strictest (any conversation's: its words reach them all),
  * never talking with them (`online`: a busy plan is offline time), never "them" or "their" (`person`: whom they meant
  * is not sure), nor, in words for anyone (`addressed` false: its public words), "you" or "your" (`ADDRESSED`), and only
  * words, in one short line (Latin letters once read plain, `plainOf`, digits, spaces, and , . ' ’ & -): a few plain
  * words at most, which every prompt quotes as data (prompts.ts busyText).
  */
-export const planReasonProblem = (reason: string, { addressed = false }: { addressed?: boolean } = {}): string | null => {
+export const planReasonProblem = (reason: string, { addressed = false, school = true }: { addressed?: boolean; school?: boolean } = {}): string | null => {
 	const text = reason.trim();
 	if (text.length < 2 || text.length > 40) return 'length';
 	const plain = plainOf(text);
 	if (!/^[A-Za-z0-9 ,.'’&-]+$/.test(plain)) return 'characters';
 	if (SLEEP_WORDS.test(plain) || PLAN_SLEEP_WORDS.test(plain)) return 'sleep';
-	if (SCHOOL_WORDS.test(plain) || PLAN_SCHOOL_WORDS.test(plain)) return 'school';
+	if (school && (SCHOOL_WORDS.test(plain) || PLAN_SCHOOL_WORDS.test(plain))) return 'school';
 	if (TALK_WORDS.test(plain)) return 'online';
 	if (THIRD_PERSON.test(plain) || (!addressed && addresses(plain))) return 'person';
 	return null;
