@@ -125,6 +125,7 @@ describe('checkPlan: a plan of its own (busy)', () => {
 		expect(toOthers('see ya at ur place', 'Sam')).toBe("see Sam at Sam's place");
 		expect(toOthers('Your party, then YOURS', 'Sam')).toBe("Sam's party, then Sam's");
 		expect(toOthers("at Your party, YOU'RE late, with u.", 'Sam')).toBe("at Sam's party, Sam's late, with Sam.");
+		expect(toOthers('you-and-me time at your-place', 'Sam')).toBe("Sam-and-me time at Sam's-place");
 		// Words that only look like it stay as they are, and those that may speak to them, however written, are never open
 		for (const words of ['at the U.S. consulate', 'picking up a U-Haul', "at Ya Ya's", 'at Yours Truly cafe', 'helping U move', 'at a Thank You dinner', "at You've Got Mail night", 'at You-Tube live', 'at a thank-you dinner']) {
 			expect(toOthers(words, 'Sam'), words).toBe(words);

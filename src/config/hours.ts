@@ -53,10 +53,11 @@ const TALK_WORDS = /\b(?:online|chat(?:ting)?|text(?:ing)?|messag(?:e|es|ing))\b
  * which prompts.ts `toOthers` says by their name in every prompt: the second person, which means them there, lowercase,
  * all in capitals, or capitalized but next to a capitalized word ("Yours Truly", "Thank You" are names); and texting's "u", "ur" and "ya"
  * (`TEXTED`), in lowercase and on their own only, never the "U" of "U.S." or "U-Haul", nor "Ya Ya's". A word's edges are
- * any letter's or mark's, accented ones too ("Céu" holds no "u"), and a hyphen's for "you" ("thank-you").
+ * any letter's or mark's, accented ones too ("Céu" holds no "u"); "you" after a hyphen is no one ("thank-you"), before
+ * one is them ("you-and-me"), and before an apostrophe a contraction (`toOthers` says those).
  */
 export const ADDRESSED =
-	/(?<![\p{L}\p{M}\p{N}_-])(?:you(?:rs|rself|rselves|r)?(?![\p{L}\p{M}\p{N}_'’-])|(?<!\p{Lu}\p{L}*\s+)You(?:rs|rself|rselves|r)?(?![\p{L}\p{M}\p{N}_'’-])(?!\s+\p{Lu})|YOU(?:RS|RSELF|RSELVES|R)?(?![\p{L}\p{M}\p{N}_'’-]))/gu;
+	/(?<![\p{L}\p{M}\p{N}_-])(?:you(?:rs|rself|rselves|r)?(?![\p{L}\p{M}\p{N}_'’])|(?<!\p{Lu}\p{L}*\s+)You(?:rs|rself|rselves|r)?(?![\p{L}\p{M}\p{N}_'’-])(?!\s+\p{Lu})|YOU(?:RS|RSELF|RSELVES|R)?(?![\p{L}\p{M}\p{N}_'’]))/gu;
 export const TEXTED = /(?<![\p{L}\p{M}\p{N}_.'’-])(?:u|ur|ya)(?![\p{L}\p{M}\p{N}_'’-])(?!\.\p{L})/gu;
 /**
  * Whether words may speak to someone, held to the strictest (whatever their case or what stands next to them: "at Your

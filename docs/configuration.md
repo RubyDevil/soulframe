@@ -614,11 +614,13 @@ What the code checks, whatever the settings say:
   close), and by a plan over it only when that turn listed it (`shown`): one it never weighed is a clash. The one it was broken on is told, at their next turn, and by an apology while texting first is on (or by a
   follow-up already planned, which an apology never replaces);
 - a plan made with someone who then ends it (stops, blocks it, is denied) no longer stands: nobody is left to call it
-  off with, and it lapses: if they come back (`store.unblock`, `store.undeny`), it is called off for good, as by them
+  off with, and it lapses: if they come back (`store.unblock`, `store.undeny`), it is called off for good (if still
+  ahead), as by them
   (hidden while they were away, its time may be another's now), counting toward the limits as any plan called off
   with them.
 
-Each outcome is audited: `plan_added`, `plan_cancelled`, `plan_called_off` (a promise broken for someone else), or
+Each outcome is audited: `plan_added`, `plan_cancelled`, `plan_called_off` (a promise broken for someone else),
+`plan_lapsed` (one with someone who ended it, as they came back), or
 `plan_refused` with its reason (`unreadable` for a `plan` the code couldn't read). A refused plan is told, once, to the
 next turn with that person that replies (when it was for, and why), so a promise the model made can be put right;
 once its time has passed, to own up to, and two weeks past, not at all.

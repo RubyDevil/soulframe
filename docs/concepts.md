@@ -279,7 +279,7 @@ lines say so, and afterwards it is back from it.
   nobody can talk it into being online all night, nor one person into more than one such time a week. A plan is only
   kept with the turn that made it (`Turn.keep`), once all of its reply reached them (none sent, rehearsed in a dry run or
   unreachable, it promised nothing), and each outcome is audited (`plan_added`, `plan_cancelled`,
-  `plan_called_off`, `plan_refused` with the reason, one it couldn't read too). The plans made with someone who then
+  `plan_called_off`, `plan_lapsed`, `plan_refused` with the reason, one it couldn't read too). The plans made with someone who then
   ends it (stops, blocks, is denied) no longer stand (they lapse, called off for good if they come back), and
   forgetting a person
   (`store.forgetPerson`) forgets them.

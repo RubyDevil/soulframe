@@ -435,10 +435,11 @@ export function createReplyQueue({
 		};
 		let sent = 0;
 		let stop: Stop = 'done';
+		/** Taking typing down rejected: a failed delivery, as any of the conversation's (what went out went out). */
+		let typingError: unknown;
 		for (const text of messages) {
 			if (sent) await sleep(betweenMessagesMs(runtime.rng, pacing));
 			if ((stop = cut()) !== 'done') break;
-			let typingError: unknown;
 			try {
 				// Once, before the first message is typed (nothing follows a failed one), and nothing typed if that was the end of it
 				if (!sent && markRead) {
@@ -460,20 +461,25 @@ export function createReplyQueue({
 					// all of it went out (unless rehearsed: a dry run changes nothing its calendar keeps), whatever fails after
 					state.sent = sent;
 					state.writing = false;
-					state.keep?.({ delivered: sent === messages.length && !runtime.dryRun });
-				}
-				conversation.delivered?.(text);
+					try {
+						state.keep?.({ delivered: sent === messages.length && !runtime.dryRun });
+					} finally {
+						// Called for each message that went out, whatever keeping the turn did
+						conversation.delivered?.(text);
+					}
+				} else conversation.delivered?.(text);
 			} catch (error) {
 				stop = failedDelivery(error, personId, channel, sent);
 				break;
 			} finally {
-				// Typing taken down: a rejection is a failed delivery, as any of the conversation's (what went out went out)
-				if (typingShown) await typing(false).catch((error: unknown) => (typingError = error ?? new Error('typing failed')));
+				if (typingShown) await typing(false).catch((error: unknown) => (typingError ??= error ?? new Error('typing failed')));
 			}
-			if (typingError !== undefined) {
-				stop = failedDelivery(typingError, personId, channel, sent);
-				break;
-			}
+			if (typingError !== undefined) break;
+		}
+		// Told as a failed delivery unless one already was (a send's own failure is the one told); after a cut too
+		if (typingError !== undefined && stop !== 'failed' && stop !== 'unreachable') {
+			const failed = failedDelivery(typingError, personId, channel, sent);
+			if (stop === 'done') stop = failed;
 		}
 		if (stop === 'halt_switch' || stop === 'stopped' || stop === 'ended') runtime.log(persona.id, 'reply_cancelled', { personId, platform: channel, sent, unsent: messages.length - sent, reason: stop });
 		else if (stop === 'done') {

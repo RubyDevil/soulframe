@@ -404,12 +404,20 @@ export function createStore(db: Database, now: () => number = Date.now) {
 	// A plan the persona made with someone who then stopped, blocked it or was denied no longer stands: nobody is left to
 	// call it off with, and nothing of them is kept to
 	/**
-	 * Someone who ended it comes back: the plans made with them lapsed when they left (hidden since, so nothing was weighed
-	 * against them, and their time may be another's now). Called off for good, as by them (it was their leaving): no
-	 * promise broken for anyone, and counted toward the limits as any plan called off with them.
+	 * Someone who ended it comes back: the plans made with them still ahead lapsed when they left (hidden since, so nothing
+	 * was weighed against them, and their time may be another's now). Called off for good, as by them (it was their
+	 * leaving), each audited (`plan_lapsed`): no promise broken for anyone, and counted toward the limits as any plan
+	 * called off with them. Those over are left as they were: dated before yesterday (over in every time zone).
 	 */
-	const lapse = (personId: number) =>
-		db.prepare("UPDATE events SET cancelled_at = ?, cancelled_by = ? WHERE person_id = ? AND source = 'persona' AND cancelled_at IS NULL").run(now(), personId, personId);
+	const lapse = (personId: number) => {
+		const yesterday = new Date(now() - 86_400_000);
+		const from = dayKey({ year: yesterday.getUTCFullYear(), month: yesterday.getUTCMonth() + 1, day: yesterday.getUTCDate() });
+		const rows = db.prepare("SELECT id, persona FROM events WHERE person_id = ? AND source = 'persona' AND cancelled_at IS NULL AND day >= ?").all(personId, from) as unknown as { id: number; persona: string }[];
+		for (const { id, persona } of rows) {
+			db.prepare('UPDATE events SET cancelled_at = ?, cancelled_by = ? WHERE id = ?').run(now(), personId, id);
+			db.prepare('INSERT INTO audit (at, persona, kind, detail) VALUES (?, ?, ?, ?)').run(now(), persona, 'plan_lapsed', JSON.stringify({ personId, eventId: id }));
+		}
+	};
 	/**
 	 * Its day shared with someone (`share_planned`), just back from a plan made with someone forgotten (`madeWith`, one of
 	 * `gone`): what that opener said goes (pending, it is dropped), and the audit line keeps nothing of it.

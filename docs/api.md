@@ -1011,8 +1011,8 @@ failed?: true }[]; links: (LinkPreview & { looked?: true })[] }`. A photo keeps 
   application sweeps its own tables.
 - **`block`**, **`unblock`**: by hand, for an operator. `block` makes an active person `blocked`: the persona ignores
   what they write and cuts a reply under way. `unblock` makes someone `stopped` (they asked to stop) or `blocked`
-  `active` again (the plans its calendar made with them lapsed when they left, hidden since and their time perhaps
-  another's now: called off for good, as by them, counting toward its limits). Both are audited with `source: 'manual'`, answer whether anything changed, and only touch the store:
+  `active` again (the plans its calendar made with them still ahead lapsed when they left, hidden since and their time
+  perhaps another's now: called off for good, as by them, counting toward its limits, each audited `plan_lapsed`). Both are audited with `source: 'manual'`, answer whether anything changed, and only touch the store:
   blocking on the platform itself is the application's (`act`), and unblocking someone who asked to stop is your call,
   not the persona's.
 - **`undeny`**, **`clearMinorCaution`**: by hand, the other way for the safety lists: `undeny` takes an account off the

@@ -30,7 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   dentist's hour splits a work day); time made to chat is online time for every channel. DM turns and openers list the
   coming plans (`calendar.shown`, a number on each it may call off there), and its time lines include them, a plan's
   words always quoted as data. A plan made with someone who then ends it no longer stands: it lapses, called off for
-  good if they come back (`unblock`, `undeny`). Interruptions stay the
+  good if they come back (`unblock`, `undeny`; those still ahead, audited `plan_lapsed`). Interruptions stay the
   routine's.
 - **Promises, kept or broken like a person's.** Time made to chat with someone, and a plan the model marks as with or
   for them (`withThem`), are promises to them. It may break one for someone who matters as much or more: in a turn
@@ -224,6 +224,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   none from then on. OpenAI's `gpt-5` models still get none from the start.
 - A config key named like a built-in member of every object (`constructor`, `toString`, `valueOf`) was taken as known
   and dropped without a word; it is refused as unknown like any other (`unknownKeys` too).
+- `Conversation.typing(false)` rejecting as a reply's typing was taken down escaped the reply queue: the turn was never
+  marked handled (answered again at the next start), and `handle` rejected for a goodbye. It is a failed delivery now,
+  as the docs said (`delivery_failed`, or `unreachable` for an `UnreachableError`), told even after a reply was cut.
+- `Conversation.delivered` is called for each message that went out before anything else can fail, and
+  `delivery_failed`'s `sent` counts a message whose `delivered` threw: it went out (an opener of one such message
+  closes as `sent`).
 
 ## [0.1.0-beta.1] - 2026-11-08
 

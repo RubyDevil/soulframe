@@ -546,6 +546,8 @@ describe('calendar events', () => {
 		const time = store.addEvent('robin', { kind: 'online', day: friday, from: 900, to: 960, personId: sam.id, source: 'persona' });
 		const later = store.addEvent('robin', { kind: 'online', day: friday, from: 1200, to: 1260, personId: sam.id, source: 'persona' });
 		const party = store.addEvent('robin', { kind: 'busy', day: saturday, from: 900, to: 960, what: 'at your party', personId: lee.id, source: 'persona', withThem: true });
+		// Over long before now (1 January 1970): left as it was
+		const over = store.addEvent('robin', { kind: 'online', day: { year: 1969, month: 12, day: 20 }, from: 900, to: 960, personId: sam.id, source: 'persona' });
 		store.block(sam.id);
 		expect(store.events('robin', friday, friday)).toEqual([]);
 		// While Sam was away, Kim's plan took the time of one of theirs (hidden then, so nothing weighed it)
@@ -555,6 +557,8 @@ describe('calendar events', () => {
 		expect(store.events('robin', friday, friday).map((event) => event.id)).toEqual([kims.id]);
 		expect(store.eventById(time.id)).toMatchObject({ cancelledBy: sam.id, cancelledAt: 1_000 });
 		expect(store.eventById(later.id)).toMatchObject({ cancelledBy: sam.id });
+		expect(store.eventById(over.id)).toMatchObject({ cancelledAt: null });
+		expect(store.auditLog('robin').filter((row) => row.kind === 'plan_lapsed').map((row) => row.detail.eventId)).toEqual([later.id, time.id]);
 		expect(store.calledOffOn('robin', sam.id, 0)).toBe(0);
 		store.deny('chat', 'lee', 'minor');
 		store.undeny('chat', 'lee');
