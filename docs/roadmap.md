@@ -61,6 +61,16 @@ Refactors with no change in behaviour, each guarded by the tests and the calenda
 - **Docs that point at code by name** ([#23](https://github.com/RubyDevil/soulframe/issues/23)): references the docs
   test resolves by symbol, so no source edit breaks them.
 
+## Planned: perception and messages
+
+- **Voice notes** ([#27](https://github.com/RubyDevil/soulframe/issues/27)): audio someone sends, transcribed once by an optional speech-to-text model and read
+  as a voice note in the history, as photos are described now.
+- **Videos** ([#28](https://github.com/RubyDevil/soulframe/issues/28)): to explore; no design yet.
+- **Edits, deletions and replies** ([#29](https://github.com/RubyDevil/soulframe/issues/29)): what someone edited read as edited, what they deleted never shown
+  again, and which message a reply answers.
+- **Replying to a message itself** ([#30](https://github.com/RubyDevil/soulframe/issues/30)): on channels that have replies, the model may answer an earlier
+  message as a reply when that is clearer, or not, as its persona would; never an algorithm's choice.
+
 ## Planned: realism
 
 - **A mood that follows what happens, shared by everyone it talks with.** A persona has no mood today. Planned: one
@@ -89,3 +99,15 @@ Refactors with no change in behaviour, each guarded by the tests and the calenda
   was meant: where the channel can edit a sent message (an optional `Conversation.edit`), the persona edits it back a
   few seconds later; elsewhere it sends a short correction ("*tomorrow"), in a style the settings choose (the word
   with an asterisk, or nothing at all).
+- **Artificial delays** ([#24](https://github.com/RubyDevil/soulframe/issues/24)): the time a person takes to check their calendar ("free March 3rd?"), look
+  something up or remember, or a "lemme check" now and the answer later, kept like a short follow-up.
+- **The world around it** ([#25](https://github.com/RubyDevil/soulframe/issues/25)): weather, holidays and headlines as the app gives them, in the time line as
+  data; soulframe fetches nothing itself.
+- **Their time zone** ([#26](https://github.com/RubyDevil/soulframe/issues/26)): noticed from what they say and inferred while unknown, never asked for; used for
+  their local time, plans in both zones, and texting first outside their night.
+- **Feelings about each person** ([#31](https://github.com/RubyDevil/soulframe/issues/31)): tension, affection, trust, hurt, worry, each with a reason in the
+  model's words, updated by the model, faded by the code, shaping the prompt and texting first.
+- **Who is who** ([#32](https://github.com/RubyDevil/soulframe/issues/32)): group-chat speakers tied to the people it knows, a light map of who knows whom, and
+  the same person on two channels merged by the app or a check through the account it knows, never by a claim in
+  chat.
+- **Languages and how well it speaks them** ([#33](https://github.com/RubyDevil/soulframe/issues/33)): fluent English only unless its config says otherwise.
