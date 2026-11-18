@@ -42,9 +42,24 @@ Follow-ups, check-ins and sharing its day are the kinds of opener so far (`setti
 Plans of its own, time made to chat and the app's plans are in (`settings.calendar`,
 [concepts](./concepts.md#its-calendar)). Planned:
 
-- **Plans that move**: rescheduling one of its plans in place (today it calls one off and makes another, which counts
-  twice toward `perWeek`).
 - **Plans from group chats**: a group-chat line may make a plan the whole chat agreed on, under the same checks.
+
+## Planned: code structure
+
+Refactors with no change in behaviour, each guarded by the tests and the calendar simulation as they stand:
+
+- **The reply queue in three parts** ([#19](https://github.com/RubyDevil/soulframe/issues/19)): scheduling (who is due
+  and when), delivery (typing and sending one reply) and texting first, with each person's state in one record
+  instead of parallel maps.
+- **A slimmer brain** ([#20](https://github.com/RubyDevil/soulframe/issues/20)): relationship levels, the calendar's
+  promises and notices, perception and the safety checks in units of their own; `createBrain` only assembles turns.
+- **Typed state and ids never reused** ([#21](https://github.com/RubyDevil/soulframe/issues/21)): one accessor (or
+  table) per piece of state now kept as JSON under kv keys, `AUTOINCREMENT` ids for events and openers, and the store
+  split by area.
+- **Prompts by task** ([#22](https://github.com/RubyDevil/soulframe/issues/22)): `src/prompts/` with a file per task,
+  every rendered prompt identical.
+- **Docs that point at code by name** ([#23](https://github.com/RubyDevil/soulframe/issues/23)): references the docs
+  test resolves by symbol, so no source edit breaks them.
 
 ## Planned: realism
 
