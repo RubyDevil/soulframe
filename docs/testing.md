@@ -63,7 +63,8 @@ const brain = createBrain({ persona, settings: testSettings(), identity: 'a guid
 A brain tested without a queue needs only those three: `createBrain({ persona, settings, runtime: { store, now, rng }, llm })`.
 
 The agenda is drawn from a seed of the persona id and the date, not from `rng`, so a fixed clock fixes the hours too:
-check the spans with `spanAt(persona, NOW, 'chat')`. A constant `rng` makes every random choice the same (delays,
+check the spans with `spanAt(brain.hours, NOW, 'chat')` (with its calendar's plans; `spanAt(persona, …)` for its
+routine alone). A constant `rng` makes every random choice the same (delays,
 the canned line, splitting a long reply). The package does not export a seeded generator; any `() => number` in
 `[0, 1)` works, such as a small mulberry32.
 
@@ -78,7 +79,8 @@ without `adult` runs no age check, and a brain without a `policy` adds no rules 
 ### The canned model
 
 `createCannedLlm(rng)` answers one of a few fixed lines for DMs and group chats (as the JSON the brain expects), a
-fixed post and, once `models.vision.model` is set, a fixed photo description. It never touches the network: good for flows where the text doesn't matter.
+fixed opener ("hey, how did it go?"), a fixed post and, once `models.vision.model` is set, a fixed photo description.
+It never touches the network: good for flows where the text doesn't matter.
 
 ### A scripted or recording model
 
@@ -94,6 +96,7 @@ const llm: Llm = {
 		if (task === 'directMessage') return JSON.stringify({ reply: 'hey you!', notes: 'likes hiking', self: null, action: 'none' });
 		if (task === 'groupChat') return '{"reply": null}';
 		if (task === 'vision') return '{"seen": "a grey cat asleep on a laptop"}';
+		if (task === 'initiative') return JSON.stringify({ reply: 'hey, how did the interview go?', notes: null, self: null });
 		return 'evenings are for slow chats, say hi';
 	},
 };
@@ -103,8 +106,12 @@ const llm: Llm = {
 without a test harness, which is handy for snapshot tests of a persona's prompt.
 
 A DM answer is a JSON object with `reply` (a string, `\n` between messages, or `null`), `notes` and `self` (rewritten
-notes, or `null` to keep them), `action` (`"none"`, `"block"`, or the name of one of the channel's `actions`) and, where invitations are offered,
-`acceptInvite`. A rejection from `complete` is a failed attempt the reply queue retries (`settings.retries`).
+notes, or `null` to keep them), `importance` (0 to 3), `affinity` (-1, 0 or 1, while `relationship.affinity` is on),
+`action` (`"none"`, `"block"`, or the name of one of the channel's `actions`) and, where they are offered, `followUp`
+(`initiative.followUps`), `plan` (`calendar`) and `acceptInvite` (a channel with `invitations`); the fields left out
+change nothing. An opener's answer has `reply`, `notes` and `self`. Each field is in the DM
+answer format ([system prompts](./prompts.md)). A rejection from `complete` is a failed
+attempt the reply queue retries (`settings.retries`).
 
 ## Decisions
 
@@ -138,8 +145,8 @@ Return `null` from `ask` to test that a failure behaves as if the checks were of
 
 ## The reply queue
 
-The reply queue uses real timers (`setTimeout`, `setInterval`) for its delays, typing and backlog. Two ways to keep
-tests fast:
+The reply queue waits with its runtime's `timers` for its delays, typing and backlog: the system's (`setTimeout`,
+`setInterval`, as `systemTimers`) unless `createRuntime({ timers })` gives others. Ways to keep tests fast:
 
 - **Zero the pacing** in the test brain's settings: `testSettings({ pacing: { glance: { delaySeconds: [0, 0] },
   watching: { delaySeconds: [0, 0] }, interruptions: { meanMinutes: 0 }, typingDurationSeconds: [0, 0],

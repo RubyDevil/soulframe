@@ -4,7 +4,7 @@ How a persona decides **when** it answers, **who** it answers first, and **how w
 with every setting that changes it explained in plain terms. The [configuration reference](./configuration.md#settings)
 lists the same keys in tables, with their types and ranges; this page says what each one does, and what to expect when
 you change it. All of them are settings of a persona's brain (`createBrain({ settings })`): one object for every
-persona, with [its own](./configuration.md#its-own-pacing-and-relationship) over them for one that should answer
+persona, with [its own](./configuration.md#its-own-pacing-relationship-and-initiative) over them for one that should answer
 differently.
 
 - [The model in one minute](#the-model-in-one-minute)
@@ -15,6 +15,7 @@ differently.
 - [`pacing.priority`: who goes first](#pacingpriority-who-goes-first)
 - [`pacing.burst`: people who write in bursts](#pacingburst-people-who-write-in-bursts)
 - [`decisions.importance`: knowing what matters before the model reads it](#decisionsimportance-knowing-what-matters-before-the-model-reads-it)
+- [`perception`: photos and links](#perception-photos-and-links)
 - [Drawn ranges and their shapes](#drawn-ranges-and-their-shapes)
 - [Coming from 0.1.0-beta.0](#coming-from-010-beta0)
 
@@ -211,8 +212,8 @@ least and the most:
 - **`uniform`**: any value as likely as any other;
 - **`normal`**: most near the middle, a bell curve with about 95% of them inside the range (the rest at its ends): for
   a speed someone keeps close to;
-- **`lognormal`**: most near a typical value low in the range (its geometric middle, √(least × most)), a few out to the
-  most: for waits and pauses, the shape of the time people take.
+- **`lognormal`**: most near a typical value low in the range (its geometric middle, √(least × most), with a tenth of
+  the most in place of a least of 0), a few out to the most: for waits and pauses, the shape of the time people take.
 
 | Key | What is drawn | Default |
 | --- | --- | --- |
@@ -230,10 +231,9 @@ least and the most:
 Write `[least, most]` to keep a setting's own shape, `{ range: [least, most], shape }` to choose one:
 
 ```yaml
-settings:
-  pacing:
-    backlogGapSeconds: [20, 90]                              # still lognormal
-    typingCharsPerSecond: { range: [4, 8], shape: uniform }
+pacing:
+  backlogGapSeconds: [20, 90]                              # still lognormal
+  typingCharsPerSecond: { range: [4, 8], shape: uniform }
 ```
 
 In `Settings`, these read as `{ range, shape }` whichever way they were written. Ranges that are only limits
@@ -242,7 +242,7 @@ a value is kept inside them, not drawn from them.
 
 ## Coming from 0.1.0-beta.0
 
-A config that still sets one of these fails to load (`unknown key`). Delete the line, or use what replaced it:
+Settings that still set one of these are refused (`unknown key`). Delete the line, or use what replaced it:
 
 | Removed | Use instead |
 | --- | --- |
@@ -257,9 +257,25 @@ Roughly: a persona that answered slowly sets a higher `glance.medianSeconds`; on
 `interruptions.minutes` higher; one that answered faster than most sets `glance.medianSeconds` lower and
 `watching.halfLifeSeconds` higher.
 
+New, and on by default: [`watching`](#pacingwatching-on-its-phone), [`glance`](#pacingglance-off-its-phone),
+[`interruptions`](#pacinginterruptions-short-absences-while-online) (`meanMinutes: 0` for none),
+[`priority`](#pacingpriority-who-goes-first), [`burst`](#pacingburst-people-who-write-in-bursts) and
+[`relationship`](#relationship-getting-to-know-and-like-each-person); [`perception`](#perception-photos-and-links) is
+off until `models.vision` names a model.
+
+Faster defaults, for a live chat (set the old values to keep the old typing and reading speeds):
+
+| Key | Was | Now |
+| --- | --- | --- |
+| `pacing.typingCharsPerSecond` | `[3.5, 7]` | `[4.5, 8]`, normal |
+| `pacing.typingDurationSeconds` | `[1.5, 45]` | `[0.8, 45]` |
+| `pacing.readingDurationSeconds` | `[1, 20]` | `[0.3, 20]` |
+
 Unchanged keys whose behaviour changed:
 
 - the drawn ranges above now follow their shape (`[least, most]` still loads, with that setting's default shape);
 - `markRead` is called as it starts writing each draft, also for a turn it then leaves on read;
-- `brain.compose` stores nothing of a turn until its `keep()` is called (the reply queue does it): code that calls
-  `compose` without the queue calls `turn.keep?.()`.
+- the model's time counts as typing: what the model takes past the reading is taken off the first message's typing
+  time, so a slow model no longer adds its whole time to every reply;
+- `brain.compose` stores nothing of a turn until its `keep({ delivered })` is called (the reply queue does it): code
+  that calls `compose` without the queue calls `turn.keep?.({ delivered: true })` once the reply went out.

@@ -16,10 +16,9 @@ Where the beta stands and what is planned before 1.0.
 
 ## Before 1.0
 
-- **How readily it speaks in group chats, per persona.** A persona's config sets its own `pacing` and
-  `relationship`; `decisions.groupChatGate.chimeInAt` may join them, so a quiet persona and a talkative one can share
+- **How readily it speaks in group chats, per persona.** A persona's config sets its own `pacing`, `relationship` and
+  `initiative`; `decisions.groupChatGate.chimeInAt` may join them, so a quiet persona and a talkative one can share
   their settings.
-
 - Export the test helpers (a scripted Decisions client, a seeded random source) and the error classes a custom model
   client needs to signal a spent budget or an outage.
 - Freeze the public API and the database layout; document the migration policy.
@@ -27,8 +26,8 @@ Where the beta stands and what is planned before 1.0.
 
 ## Planned: texting first
 
-Follow-ups, check-ins and sharing its day are the kinds of opener so far (`settings.initiative`,
-[concepts](./concepts.md#texting-first)). Planned, on the same table, guardrails and turn:
+Follow-ups, check-ins, sharing its day and apologies for a broken promise (with its calendar on) are the kinds of
+opener so far (`settings.initiative`, [concepts](./concepts.md#texting-first)). Planned, on the same table, guardrails and turn:
 
 - **The app's own openers**: a reason only the application knows, quoted as data.
 - **A cheap check first**: with the Decisions client on, whether a text would be welcome now, before paying for the
