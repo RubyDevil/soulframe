@@ -261,7 +261,7 @@ export interface Brain {
 	 * reads them here.
 	 */
 	readonly hours: Hours;
-	/** The settings it runs with, the persona's own pacing and relationship over `createBrain`'s: its reply queue reads them here. */
+	/** The settings it runs with, the persona's own pacing, relationship and initiative over `createBrain`'s: its reply queue reads them here. */
 	readonly settings: Settings;
 	/**
 	 * A message they wrote on `channel` as `name` (the name they go by there: the person keeps the one of their newest
@@ -397,8 +397,8 @@ export function createBrain({
 	persona: Persona;
 	/**
 	 * What it runs with: models, limits, memory, pacing, the typed checks (`parseSettings`; `parseSettings({})` for every
-	 * default), the persona's own pacing and relationship over them (a ConfigError if they don't fit). Its reply queue
-	 * reads them from the brain; make its model client with the same (`llmsFor`).
+	 * default), the persona's own pacing, relationship and initiative over them (a ConfigError if they don't fit). Its
+	 * reply queue reads them from the brain; make its model client with the same (`llmsFor`).
 	 */
 	settings: Settings;
 	/** The app's phrase on what the persona is, after its name in the identity line ("You are Robin, <identity>, chatting by text in …"); none for the name alone. */
