@@ -103,8 +103,9 @@ Refactors with no change in behaviour, each guarded by the tests and the calenda
   something up or remember, or a "lemme check" now and the answer later, kept like a short follow-up.
 - **The world around it** ([#25](https://github.com/RubyDevil/soulframe/issues/25)): weather, holidays and headlines as the app gives them, in the time line as
   data; soulframe fetches nothing itself.
-- **Their time zone** ([#26](https://github.com/RubyDevil/soulframe/issues/26)): noticed from what they say and inferred while unknown, never asked for; used for
-  their local time, plans in both zones, and texting first outside their night.
+- **Their time zone** ([#26](https://github.com/RubyDevil/soulframe/issues/26)): noticed from what they say and inferred while unknown; asked
+  only when it fits (a plan for a set hour, messages at odd hours), never out of nowhere; used for their local time,
+  plans in both zones, and texting first outside their night.
 - **Feelings about each person** ([#31](https://github.com/RubyDevil/soulframe/issues/31)): tension, affection, trust, hurt, worry, each with a reason in the
   model's words, updated by the model, faded by the code, shaping the prompt and texting first.
 - **Who is who** ([#32](https://github.com/RubyDevil/soulframe/issues/32)): group-chat speakers tied to the people it knows, a light map of who knows whom, and
