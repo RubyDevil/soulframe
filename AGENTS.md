@@ -29,8 +29,10 @@ Node >= 22.13 (it uses `node:sqlite`). Runtime dependencies: `zod` and `yaml` on
 7. **Build must work in ESM and CJS.** No `import.meta.*`, top-level await or `__dirname` in `src/`. `node:sqlite` is
    loaded with `process.getBuiltinModule` (see `src/store.ts`), which works in both formats.
 8. **Docs are tested.** `test/docs.test.ts` checks every `file.ts:NN` reference (it must point at lines that exist and
-   at the code span written just before it), the export/heading match and every relative link. When you move lines in
-   `src/`, update the references that point at them.
+   at the code span written just before it), the export/heading match, every relative link, and the settings: each one
+   in `docs/configuration.md`, each timing and relationship one explained in `docs/attention.md`, and no removed one
+   left outside the notes on moving from the first beta. When you move lines in `src/`, update the references that
+   point at them.
 9. **Tests next to the behaviour:** `src/foo.ts` is tested in `test/foo.test.ts`; use `:memory:` stores.
 10. **CHANGELOG** ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/)). Anything a user would notice gets a
     hand-written line under `[Unreleased]` in `CHANGELOG.md`, in the same change as the code.
@@ -56,18 +58,18 @@ Node >= 22.13 (it uses `node:sqlite`). Runtime dependencies: `zod` and `yaml` on
 
 ```sh
 npm install              # once
+npm run type-check       # tsc --noEmit over src, test, examples, scripts
 npm test                 # vitest run (includes the docs tests)
-npm run type-check       # tsc --noEmit over src, test, examples
 npm run build            # tsdown -> dist/
 npm run lint:pkg         # publint + are-the-types-wrong against the packed tarball
-npm run check            # all of it, in order: run this before you say you are done
-npx tsx examples/console-chat.ts   # the example must still run, offline
+npm run check            # the four above, in that order: run this before you say you are done
+npx tsx examples/console-chat.ts   # the example must still run, offline (check doesn't run it)
 npm run persona-test -- --canned --suite scripts/persona-test/suite.yaml   # after a change to scripts/persona-test: still runs, offline
 ```
 
 1. Read the code you will change and its test file first.
 2. Make the smallest change that does the job, with its test, docs and CHANGELOG line.
-3. Run `npm run check`. Report failures as they are; do not claim a pass you did not see.
+3. Run `npm run check` and the example. Report failures as they are; do not claim a pass you did not see.
 4. `dist/` is build output and is git-ignored: never edit or commit it.
 5. Commit on a branch or `main` as the maintainer prefers, with a Conventional Commits message (rule 11) and no AI
    attribution (rule 13). Do not push, tag, publish or rewrite history unless asked.
@@ -77,7 +79,8 @@ npm run persona-test -- --canned --suite scripts/persona-test/suite.yaml   # aft
 ## CI and releases
 
 - Versions follow SemVer (rule 12). While in beta they are prereleases `0.x.y-beta.N` (first release:
-  `0.1.0-beta.0`, tag `v0.1.0-beta.0`), published on the `beta` dist-tag. `1.0.0` is the first stable version.
+  `0.1.0-beta.0`, tag `v0.1.0-beta.0`), published on the `beta` dist-tag; a breaking change starts the next minor's
+  betas (`0.2.0-beta.0`). `1.0.0` is the first stable version.
 - `.github/workflows/ci.yml` builds and runs `npm run check` once on Node 24 (tsdown needs Node >= 22.18), then runs
   the tests and a CJS/ESM smoke test of that build on Node 22.13, 22, 24 (Linux) and 22 on Windows and macOS.
 - `.github/workflows/persona-test.yml` is run by hand: two personas talk on a live model (secret `LLM_API_KEY`,
