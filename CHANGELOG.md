@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.0-beta.0] - 2026-11-18
+
 The notes of `0.1.0-beta.1`, which was never published, are folded in here: everything below is new since
 `0.1.0-beta.0`. [docs/configuration.md](./docs/configuration.md#coming-from-010-beta0) and
 [docs/attention.md](./docs/attention.md#coming-from-010-beta0) say what to change coming from it.
@@ -419,5 +421,6 @@ on the `beta` dist-tag under the MIT license.
   lines that hold what its code span names, every export is documented in `docs/api.md` (and nothing else), and every
   relative link and anchor resolves.
 
-[Unreleased]: https://github.com/RubyDevil/soulframe/compare/v0.1.0-beta.0...HEAD
+[Unreleased]: https://github.com/RubyDevil/soulframe/compare/v0.2.0-beta.0...HEAD
+[0.2.0-beta.0]: https://github.com/RubyDevil/soulframe/compare/v0.1.0-beta.0...v0.2.0-beta.0
 [0.1.0-beta.0]: https://github.com/RubyDevil/soulframe/releases/tag/v0.1.0-beta.0
