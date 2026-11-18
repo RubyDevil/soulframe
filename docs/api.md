@@ -49,7 +49,6 @@ function parsePersona(options: {
 	config: unknown;                    // id, name, timezone, schedule
 	prompt: string;                     // the persona's voice and background, in Markdown
 	channels: readonly ChannelId[];     // the channels it is on: the names its hours' `on:` may use
-	adult?: boolean;                    // for 18+ conversations: busy reasons about school are refused
 	settings?: Settings;                // its brain's: its own pacing and relationship are checked over them (default: the defaults)
 	source?: string;                    // named before each problem ("robin.md › schedule: Required")
 }): { persona?: Persona; issues: string[] };
@@ -66,7 +65,6 @@ problem there is no `persona`, and `issues` says what is wrong. The prompt is ke
 function parsePersonaMarkdown(text: string, options: {
 	id: string;                         // its id: the file's name without .md
 	channels: readonly ChannelId[];
-	adult?: boolean;
 	settings?: Settings;
 	source?: string;
 }): { persona?: Persona; issues: string[] };
@@ -84,7 +82,6 @@ function loadPersonas(options: {
 	dir: string;
 	channels: Readonly<Record<string, readonly ChannelId[]>>;
 	files?: ConfigFiles;
-	adult?: boolean;
 	settings?: Settings;
 }): LoadedPersonas;
 ```
@@ -365,7 +362,8 @@ function personaReport(persona: Persona, options: { settings: Settings; now: num
 Indented lines describing the persona, run with `settings` (its brain's) and its own pacing and relationship over them,
 a `ConfigError` if they don't fit (as from `createBrain`, which `samplePrompt` runs): its prompt's length, now (or
 `status`), today's and tomorrow's agenda, today's interruptions, whether it texts first (a line only when
-`initiative.enabled`) and its models.
+`initiative.enabled`) and its models. It reads no store, so the agenda is its schedule's routine, without its calendar's
+plans.
 
 ### `samplePrompt`
 
@@ -492,6 +490,7 @@ The application's content policy: soulframe applies none of its own beyond `Chan
 ```ts
 interface Brain {
 	readonly persona: Persona;     // as createBrain was given it
+	readonly hours: Hours;         // its persona's hours, with its calendar while settings.calendar is on
 	readonly settings: Settings;   // createBrain's, the persona's own pacing and relationship over them
 	incoming(channel: Channel, externalId: string, name: string, message: string | IncomingMessage, at?: number): Decision;
 	outgoing(channel: Channel, externalId: string, name: string, text: string, at?: number): Person | undefined;
@@ -510,6 +509,10 @@ interface Brain {
 }
 ```
 
+- **`hours`**: what its agenda is read from: the persona's hours (`{ id, timezone, schedule }`), with its calendar's
+  plans laid over them while `settings.calendar` is on ([concepts](./concepts.md#its-calendar)), the persona itself
+  while off. Its reply queue reads them; give them to `spanAt`, `fullyOnline` and `watchSpans` too, so a plan of its
+  own moves your view of its online time as well.
 - **`incoming`**: a message someone wrote on `channel` as `name`, now unless `at` says when (one read late).
   Synchronous, so a catch-up keeps its order. Records the message (creating the person on a first one; on a newer
   message under another name, the person takes that name), counts a new conversation after
@@ -525,7 +528,11 @@ interface Brain {
   until the turn's `keep()` is called, what it wrote and decided: the rewritten notes on the person and on itself, a
   block, an action (each audited then). The reply queue calls `keep()` once it keeps the turn (its first message sent,
   or its messages marked handled) and never for a draft it drops to write the reply again; call it yourself when you
-  use `compose` without the queue. The checks' own outcomes (a stop, a deny-listing, a minor caution) are stored at
+  use `compose` without the queue. Its calendar's part (the turn's plan, and what the calendar owed them, told) is kept
+  only once all of its reply reached them: `keep({ delivered: false })` keeps the rest, and a later `keep()` (or
+  `keep({ delivered: true })`) adds that part. The queue calls the first at its first message and the second as its
+  last goes out (whatever fails after it), never for a reply cut short, unreachable, or rehearsed in a dry run;
+  `keep()` alone does both. The checks' own outcomes (a stop, a deny-listing, a minor caution) are stored at
   once. `invitation` is a pending group-chat invitation's name, heeded only where `channel.invitations`; `extraLines`
   gives the application's lines for this turn. Throws when the model's answer can't be read (the queue retries). The
   answer, `Turn`, is:
@@ -537,7 +544,7 @@ interface Brain {
   	acceptInvite?: true;            // join the pending invitation
   	inviteWaits?: true;             // the invitation waits for full online time (a short break)
   	final?: true;                   // the code's goodbye: sent even though the person is no longer active
-  	keep?: () => void;              // stores what the turn wrote and decided; a second call does nothing
+  	keep?: (outcome?: { delivered?: boolean }) => void; // stores what it wrote and decided; a second call does nothing
   }
   ```
 
@@ -550,7 +557,8 @@ interface Brain {
   `opener`: a follow-up (its note), a check-in (how long they have been quiet) or a share (the busy block in `about`).
   What to text, or no message when the model chose not to. Builds the prompt from the
   history, notes, relationship and time as `compose` does (`openerTask`) and calls the model with
-  `task: 'initiative'`. Its `keep()` stores only the notes: familiarity and affinity move with their answer. Throws when
+  `task: 'initiative'`. Its `keep()` stores only the notes (and, sent, what it told them the calendar owed them, unless
+  `{ delivered: false }`): familiarity and affinity move with their answer. Throws when
   the answer can't be read. The reply queue calls it once the code's guardrails let the opener go
   ([concepts](./concepts.md#texting-first)); with `initiative.followUps` on, `compose`'s answer may plan a follow-up
   (stored by its `keep()`), and the queue plans check-ins and shares itself.
@@ -739,8 +747,10 @@ interface Conversation {
 Where a reply goes, implemented by a channel adapter: see [channels](./channels.md). Each stretch of typing is one
 `typing(true)` (repeated every `typingRefreshMs` ms when given, while the message is typed) and one `typing(false)`;
 a thinking pause (`pacing.thinkingPauses`) ends one stretch and starts the next. While the model writes a reply, the
-unread messages are read for as long as they take (`pacing.readingCharsPerSecond`, plus `pacing.looking` per photo), and `markRead()`, when given, is
-called as that starts (again for a draft written again: a turn left on read shows them read too); a rejection from it,
+unread messages are read for as long as they take (`pacing.readingCharsPerSecond`, plus `pacing.looking` per photo), then typing
+starts once the model is done (the time it wrote past the reading counts toward the first message's typing, never typing
+for a reply that isn't there), and `markRead()`, when given, is
+called as the reading starts (again for a draft written again: a turn left on read shows them read too); a rejection from it,
 as from `typing`, counts as a failed delivery. Without either, the calls are one `typing(true)`, the
 typing time, `send`, one `typing(false)` per message. `delivered(text)`, when given, is called after each message of
 a reply went out (once `send` resolved), and in a dry run after each message logged in place of sending; never for
@@ -852,7 +862,8 @@ interface StepClock {
 function spanAt(hours: { id: string; timezone: string; schedule: ScheduleConfig }, at: number, channel?: ChannelId): Span | null;
 ```
 
-The span open at `at` on `channel` (on any channel when left out), else `null`.
+The span open at `at` on `channel` (on any channel when left out), else `null`. Give it `brain.hours` for the agenda
+with its calendar's plans (`settings.calendar`), a persona for its routine alone.
 
 ### `fullyOnline`
 
@@ -872,6 +883,7 @@ interface Span {
 	end: number;
 	on?: readonly ChannelId[]; // undefined: every channel
 	day: { year: number; month: number; day: number }; // the agenda day it belongs to
+	event?: number; // the calendar event that made it (time it made to chat), if one did
 }
 ```
 
@@ -953,8 +965,22 @@ interface Store {
 	accountOpenedSince(personId: number, since: number): boolean;
 	firstInAfter(personId: number, after: number): number | null;
 	quietPeople(persona: string, quietSince: number): { person: Person; lastAt: number }[];
+	addEvent(
+		persona: string,
+		event: {
+			kind: 'busy' | 'online'; day: LocalDate; from: number; to: number; what?: string; personId?: number | null; source?: 'persona' | 'app';
+			share?: 'open' | 'personal' | 'confidential'; public?: string | null; withThem?: boolean;
+		},
+	): StoredEvent;
+	cancelEvent(id: number, by?: number | null): boolean;
+	calledOffOn(persona: string, personId: number, since: number): number;
+	eventById(id: number): StoredEvent | undefined;
+	events(persona: string, from: LocalDate, to: LocalDate): StoredEvent[];
+	eventsMadeSince(persona: string, since: number, only?: { kind?: 'busy' | 'online'; personId?: number; unbroken?: boolean }): number;
 }
 ```
+
+`LocalDate` is a date in the persona's time zone: `{ year: number; month: number; day: number }`.
 
 `Media` is what is stored with a message that had photos or links: `{ images: { url?: string; alt?: string; seen?: string;
 failed?: true }[]; links: (LinkPreview & { looked?: true })[] }`. A photo keeps its `url` until it was looked at, then
@@ -976,29 +1002,38 @@ failed?: true }[]; links: (LinkPreview & { looked?: true })[] }`. A photo keeps 
 - **`get`**, **`set`**: small values by persona and key (`set` with `null` deletes). The package uses `selfNotes` and
   `lastOnlineAt` per persona, and the persona `'*'` for token counts and minor flags.
 - **`audit`**, **`auditLog`**: the audit log (newest first, default 50, for one persona or all).
-- **`sweep`**: deletes messages, audit lines and closed openers older than `before`. The application sweeps its own tables.
+- **`sweep`**: deletes messages, audit lines and closed openers older than `before`, and the calendar events made before
+  it that were called off before it or are dated two days or more before it, but for the persona's own plans of the
+  last 90 days, which its limits still count, or called off in the last 30, which its calendar still tells. The
+  application sweeps its own tables.
 - **`block`**, **`unblock`**: by hand, for an operator. `block` makes an active person `blocked`: the persona ignores
   what they write and cuts a reply under way. `unblock` makes someone `stopped` (they asked to stop) or `blocked`
-  `active` again. Both are audited with `source: 'manual'`, answer whether anything changed, and only touch the store:
+  `active` again (the plans its calendar made with them still ahead lapsed when they left, hidden since and their time
+  perhaps another's now: called off for good, as by them, counting toward its limits, each audited `plan_lapsed`). Both are audited with `source: 'manual'`, answer whether anything changed, and only touch the store:
   blocking on the platform itself is the application's (`act`), and unblocking someone who asked to stop is your call,
   not the persona's.
 - **`undeny`**, **`clearMinorCaution`**: by hand, the other way for the safety lists: `undeny` takes an account off the
-  deny list and makes the people with it `active` again, unless another of their accounts is still listed;
+  deny list and makes the people with it `active` again, unless another of their accounts is still listed (their plans
+  lapsed, as `unblock`);
   `clearMinorCaution` takes the flag off an account. They answer whether the account was on the list, and `undeny` is
   audited for each persona. These lists protect people: use them for a mistake you checked, not as routine.
-- **`forgetPerson`**: deletes one person (their messages, notes, familiarity and affinity, accounts and the audit lines
-  about them) in one transaction. The deny list and minor flags are kept, so a deny-listed account stays so. Someone
+- **`forgetPerson`**: deletes one person (their messages, notes, familiarity and affinity, accounts, the plans its
+  calendar keeps from turns with them, and the audit lines about them) in one transaction. A promise to someone else
+  broken for them stays broken, for someone forgotten (`cancelledBy` 0, its audit line without them), and a plan
+  refused to someone else for a plan made with them keeps only that plan's public words; a share of its day with
+  someone else, just back from a plan made with them, keeps nothing of what it said (dropped if not sent). The deny list and minor flags are kept, so a deny-listed account stays so. Someone
   who asked to stop, was blocked or denied is kept too, since forgetting them would let the persona answer them
   again; `{ includeEnded: true }` forgets them as well. Answers whether anyone was forgotten.
 - **`resetPersona`**: deletes everything one persona knows: its people and their messages (ended people kept, as
-  above), its kv (self notes, when it was last online) and its audit lines (kept for ended people kept). Other personas,
+  above), its kv (self notes, when it was last online), its calendar and its audit lines (kept for ended people kept). Other personas,
   the deny list and the minor flags are untouched. Answers how many people and messages went. For a fresh start in
   development, or a persona retired and brought back; nothing asks for confirmation, so guard it in your tooling.
 
 `Opener` is a first message the persona plans to send (`settings.initiative`, [concepts](./concepts.md#texting-first)):
 `{ id, persona, personId, kind: OpenerKind, about, dueAt, expiresAt, createdAt, closedAt: number | null, outcome:
-OpenerOutcome | null }`, pending while `closedAt` is `null`. `OpenerKind` is `'followUp' | 'checkIn' | 'share'`;
-`about` is a follow-up's note or the busy block a share is about (empty for a check-in). `OpenerOutcome` is `'sent' | 'rehearsed' | 'declined' |
+OpenerOutcome | null }`, pending while `closedAt` is `null`. `OpenerKind` is `'followUp' | 'checkIn' | 'share' |
+'apology'`; `about` is a follow-up's note, the busy block a share is about, or the plan an apology is for (a plan with
+them it called off for someone else); empty for a check-in. `OpenerOutcome` is `'sent' | 'rehearsed' | 'declined' |
 'replaced' | 'dropped' | 'expired' | 'failed'`.
 
 - **`planOpener`**: plans one, closing the person's pending one as `replaced` (one pending per person).
@@ -1010,6 +1045,52 @@ OpenerOutcome | null }`, pending while `closedAt` is `null`. `OpenerKind` is `'f
 - **`firstInAfter`**: when the person first wrote after a time, or `null`. **`quietPeople`**: the persona's active people
   who wrote to it before, are owed no turn and whose last message either way (`lastAt`) is at `quietSince` or before,
   closest first: those it may check in with or share with.
+
+Calendar events are the plans in a persona's calendar (`settings.calendar`, [concepts](./concepts.md#its-calendar)),
+read only while it is on:
+
+- **`addEvent`**: puts a plan in the persona's calendar: `busy`, offline from `from` to `to` (minutes of its local
+  `day`; `to` past 1440 runs past midnight, 24 hours at most) with `what` as its reason, completing "you're ..." ("at
+  the team day"); or `online`, time it is online for every channel. `source` is `'app'` unless given: the app's plans
+  are its own to check (the persona's own go through the code's guardrails before they get here). A busy plan of the
+  persona's with someone carries how widely its words may be told (`share`, `'personal'` unless given), the words anyone
+  may hear (`public`) and whether it is with or for them (`withThem`, a promise). Throws on a date that doesn't exist,
+  times that make no block, or a busy plan without `what`. Answers it.
+- **`cancelEvent`**: calls a plan off, in a turn with `by` when it was (left out: the app): it stays stored (a plan the
+  persona made counts toward its limits) but no agenda reads it. Answers whether it stood. **`eventById`**: one by id,
+  standing or called off. **`calledOffOn`**: how many promises the persona made to the person (time made to chat with
+  them, or a plan with or for them) were called off in turns with someone else since a time: promises it broke for
+  others, as its calendar tells it.
+- **`events`**: the persona's standing plans from one date to another, both included, in order: what its agenda lays
+  over each drawn day; not one it made with someone who has since ended it (stopped, blocked or denied), which lapsed:
+  called off for good if they come back (`unblock`, `undeny`). **`eventsMadeSince`**: how many it made itself since a time, called off or not, by kind and
+  person when given: what its guardrails count; `unbroken` leaves out those called off for someone else (time broken
+  on them is no time they had). A forgotten person's plans made in turns with them go with them; the
+  app's stay, with `personId` `null`.
+
+### `StoredEvent`
+
+```ts
+interface StoredEvent {
+	id: number;
+	persona: string;
+	kind: 'busy' | 'online';
+	day: { year: number; month: number; day: number }; // its local date
+	from: number; // minutes of that day
+	to: number;   // past 1440: past midnight
+	what: string; // a busy plan's reason, completing "you're ..."; '' for online time
+	personId: number | null; // whom it was made with (time made to chat is for them); null for an app plan of someone forgotten
+	source: 'persona' | 'app'; // the persona's own, made in a DM turn, or the app's (addEvent)
+	share: 'open' | 'personal' | 'confidential'; // how widely its words may be told to others (settings.calendar.sharing)
+	public: string | null; // the words anyone may hear of a busy one; null for none
+	withThem: boolean; // a busy plan with or for personId: a promise to them (false for time made to chat, a promise by its kind)
+	createdAt: number;
+	cancelledAt: number | null; // null while it stands
+	cancelledBy: number | null; // in a turn with whom it was called off (0: someone since forgotten); null for the app's call
+}
+```
+
+A plan in a persona's calendar, as the store keeps it (`addEvent`, `events`).
 
 ### `Person`
 

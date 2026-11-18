@@ -4,10 +4,12 @@
  * These guardrails apply whatever the settings say: the settings may only make it rarer.
  */
 
+import { heardOf, nameIn } from './calendar.js';
+import { busyText } from './prompts.js';
 import { weightedPick, type Rng } from './rng.js';
 import { addDays, agendaOn, localDateOf, zonedToUtc, type Busy, type Hours, type Span } from './schedule.js';
 import { DAY, HOUR, MINUTE, type Settings } from './settings.js';
-import type { Opener, Person, Store } from './store.js';
+import { calledOffKey, type Opener, type Person, type Store } from './store.js';
 
 /** At least this long since the last message either way: it never texts first in the middle of a conversation. */
 export const REST_MS = 2 * HOUR;
@@ -43,7 +45,10 @@ export function openerBlock(
 	if (person.incoming === 0) return final('never_wrote');
 	if (person.lastInAt > person.handledAt) return later('reply_owed');
 	const last = store.history(person.id, 1)[0];
+	// A check-in they talked since; an apology once a reply or an opener told them all it owed (left on read, or a turn
+	// written before it called the plan off, told them nothing)
 	if (opener?.kind === 'checkIn' && last && last.at > opener.createdAt) return final('talked_since');
+	if (opener?.kind === 'apology' && store.get(person.persona, calledOffKey(person.id)) === null) return final('talked_since');
 	if (last && now - last.at < REST_MS) return later('mid_conversation');
 	const sent = store.sentOpeners(person.id, MAX_BACKOFF + 1);
 	const newest = sent[0];
@@ -154,7 +159,8 @@ const busyJustBefore = (persona: Hours, span: Span): Busy | null =>
  * Sharing its day (settings.initiative.sharing), as the span open now opens: when it comes online within JUST_BACK_MS
  * of a busy block's end, and it is still within JUST_BACK_MS of the span's start, at `chance`. One of its people at
  * rest, `reachable`, whom an opener may go to now, with no plan pending, at `minFamiliarity` and `minAffinity` (faded,
- * as for check-ins), picked by closeness, is planned to hear about it (`about`: the block's reason) at a random moment
+ * as for check-ins), picked by closeness, is planned to hear about it (`about`: the block's reason, as prompts.ts busyText
+ * says it) at a random moment
  * of the next JUST_BACK_MS, given up an hour into the span (it is not just back any more), and audited
  * (`share_planned`). Answers it, or null.
  */
@@ -169,11 +175,19 @@ export function planShare({ store, persona, settings, span, now, rng, reachable 
 		if (!reachable(person) || store.pendingOpener(person.id) || openerBlock(store, person, now, initiative)) return [];
 		const { familiarity, affinity } = faded(person, now - lastAt, settings.relationship);
 		const liked = !settings.relationship.affinity.enabled || affinity >= own.minAffinity;
-		return familiarity >= own.minFamiliarity && liked ? [{ weight: familiarity * (settings.relationship.affinity.enabled ? 1 + affinity : 1), value: person }] : [];
+		const viewer = { id: person.id, familiarity, ...(settings.relationship.affinity.enabled && { affinity }) };
+		// A plan made with someone else, as much of it as they may hear (calendar.ts heardOf): told in confidence, or not
+		// at all, it is no news of its day to share with them (its words in confidence are never to volunteer)
+		const heard = heardOf(busy, viewer, settings.calendar.sharing, nameIn(store));
+		if (heard.confidence || heard.words === undefined) return [];
+		return familiarity >= own.minFamiliarity && liked ? [{ weight: familiarity * (settings.relationship.affinity.enabled ? 1 + affinity : 1), value: { person, heard } }] : [];
 	});
-	const [person] = pickSome(rng, candidates, 1);
-	if (!person) return null;
-	const opener = store.planOpener(persona.id, person.id, { kind: 'share', about: busy.reason, dueAt: now + rng() * (until - now), expiresAt: Math.min(span.end, span.start + 2 * JUST_BACK_MS) });
-	store.audit(persona.id, 'share_planned', { personId: person.id, about: busy.reason, dueAt: opener.dueAt });
+	const [chosen] = pickSome(rng, candidates, 1);
+	if (!chosen) return null;
+	const { person, heard } = chosen;
+	const about = busyText(busy, () => heard);
+	const opener = store.planOpener(persona.id, person.id, { kind: 'share', about, dueAt: now + rng() * (until - now), expiresAt: Math.min(span.end, span.start + 2 * JUST_BACK_MS) });
+	// What it was told, and of a plan made with someone, with whom: forgetting them forgets it here too (store.forgetPerson)
+	store.audit(persona.id, 'share_planned', { personId: person.id, about, dueAt: opener.dueAt, openerId: opener.id, ...(busy.madeWith !== undefined && { madeWith: busy.madeWith }) });
 	return opener;
 }

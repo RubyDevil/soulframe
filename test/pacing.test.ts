@@ -20,7 +20,7 @@ describe('quietMs', () => {
 	const withSettle = (settleSeconds: [number, number]) => SettingsSchema.parse({ pacing: { burst: { settleSeconds } } }).pacing;
 
 	it('draws the quiet after their newest message within settleSeconds', () => {
-		expect(quietMs(() => 0)).toBe(2_000);
+		expect(quietMs(() => 0)).toBe(500);
 		// Log-normal by default: the middle draw is the geometric middle, √3 s
 		expect(quietMs(() => 0.5, withSettle([1, 3]))).toBe(1_732);
 	});
@@ -34,7 +34,7 @@ describe('quietMs', () => {
 	it('refuses a burst setting it does not know, and maxRestarts below 1', () => {
 		expect(SettingsSchema.safeParse({ pacing: { burst: { settle: [1, 2] } } }).success).toBe(false);
 		expect(SettingsSchema.safeParse({ pacing: { burst: { maxRestarts: 0 } } }).success).toBe(false);
-		expect(DEFAULT_SETTINGS.pacing.burst).toEqual({ settleSeconds: { range: [2, 5], shape: 'lognormal' }, maxSettleResets: 3, restartOnNewMessage: true, maxRestarts: 1 });
+		expect(DEFAULT_SETTINGS.pacing.burst).toEqual({ settleSeconds: { range: [0.5, 2], shape: 'lognormal' }, maxSettleResets: 3, restartOnNewMessage: true, maxRestarts: 1 });
 	});
 });
 
@@ -43,7 +43,7 @@ describe('typingMs', () => {
 		const short = typingMs('hey', seededRng('a'));
 		const long = typingMs('x'.repeat(200), seededRng('a'));
 		expect(long).toBeGreaterThan(short);
-		expect(short).toBeGreaterThanOrEqual(1_500);
+		expect(short).toBeGreaterThanOrEqual(800);
 		expect(typingMs('x'.repeat(5000), seededRng('a'))).toBe(45_000);
 	});
 });
@@ -97,7 +97,7 @@ describe('readingMs', () => {
 		// 25 characters a second at the top of the range, 15 at the bottom
 		expect(readingMs(300, () => 1)).toBe(12_000);
 		expect(readingMs(300, () => 0)).toBe(20_000);
-		expect(readingMs(5, () => 0)).toBe(1_000);
+		expect(readingMs(2, () => 0)).toBe(300);
 		expect(readingMs(5_000, () => 0)).toBe(20_000);
 	});
 	it('gives whole milliseconds, and nothing without a draw when there is nothing to read', () => {
@@ -113,7 +113,7 @@ describe('the typing settings', () => {
 	it('default to no thinking pause and a human reading speed, and refuse an unknown or out-of-range key', () => {
 		expect(DEFAULT_SETTINGS.pacing).toMatchObject({
 			readingCharsPerSecond: { range: [15, 25], shape: 'normal' },
-			readingDurationSeconds: [1, 20],
+			readingDurationSeconds: [0.3, 20],
 			thinkingPauses: { chance: 0, minChars: 120, max: 2, seconds: { range: [2, 6], shape: 'lognormal' } },
 		});
 		expect(() => SettingsSchema.parse({ pacing: { thinkingPauses: { chanse: 0.2 } } })).toThrow();
@@ -141,14 +141,16 @@ describe('replyDelay', () => {
 	it('is a short lag while it is still watching their chat, likelier the sooner they answer', () => {
 		const rng = seededRng('watching');
 		const shareWatching = (sinceMs: number) => Array.from({ length: 4000 }, () => replyDelay(rng, sinceMs)).filter((delay) => delay.watching).length / 4000;
+		// Certainly for the minute after its last turn (holdSeconds), then halving every 90 s
 		expect(shareWatching(0)).toBe(1);
-		expect(shareWatching(90_000)).toBeGreaterThan(0.45);
-		expect(shareWatching(90_000)).toBeLessThan(0.55);
+		expect(shareWatching(60_000)).toBe(1);
+		expect(shareWatching(150_000)).toBeGreaterThan(0.45);
+		expect(shareWatching(150_000)).toBeLessThan(0.55);
 		expect(shareWatching(15 * 60_000)).toBeLessThan(0.01);
 		for (let sample = 0; sample < 200; sample++) {
 			const delay = replyDelay(rng, 0);
-			expect(delay.ms).toBeGreaterThanOrEqual(2_000);
-			expect(delay.ms).toBeLessThanOrEqual(20_000);
+			expect(delay.ms).toBeGreaterThanOrEqual(500);
+			expect(delay.ms).toBeLessThanOrEqual(10_000);
 		}
 	});
 
@@ -156,7 +158,7 @@ describe('replyDelay', () => {
 		const rng = vi.fn(() => 0);
 		expect(replyDelay(rng, null)).toEqual({ ms: 4_000, watching: false });
 		expect(rng).toHaveBeenCalledTimes(1);
-		expect(replyDelay(rng, 10_000)).toEqual({ ms: 2_000, watching: true });
+		expect(replyDelay(rng, 10_000)).toEqual({ ms: 500, watching: true });
 		expect(rng).toHaveBeenCalledTimes(3);
 	});
 });
@@ -164,9 +166,10 @@ describe('replyDelay', () => {
 describe('watchingChance, skewedMs, watchingMs and glanceMs', () => {
 	const pacing = (settings: Record<string, unknown>) => SettingsSchema.parse({ pacing: settings }).pacing;
 
-	it('halves the chance that it still watches every halfLifeSeconds', () => {
-		expect([0, 90_000, 180_000].map((ms) => watchingChance(ms))).toEqual([1, 0.5, 0.25]);
-		expect(watchingChance(10_000, pacing({ watching: { halfLifeSeconds: 10 } }))).toBe(0.5);
+	it('keeps the chance that it still watches at 1 for holdSeconds, then halves it every halfLifeSeconds', () => {
+		expect([0, 60_000, 150_000, 240_000].map((ms) => watchingChance(ms))).toEqual([1, 1, 0.5, 0.25]);
+		expect(watchingChance(10_000, pacing({ watching: { holdSeconds: 0, halfLifeSeconds: 10 } }))).toBe(0.5);
+		expect(watchingChance(15_000, pacing({ watching: { holdSeconds: 5, halfLifeSeconds: 10 } }))).toBe(0.5);
 	});
 
 	it('draws a log-normal: the median at the middle draw, the 90th percentile at 0.9, the bounds at the ends', () => {
@@ -281,7 +284,7 @@ describe('drawIn and the shapes of drawn ranges', () => {
 		expect(parsed([10, 20])).toEqual({ range: [10, 20], shape: 'lognormal' });
 		expect(parsed({ range: [10, 20], shape: 'uniform' })).toEqual({ range: [10, 20], shape: 'uniform' });
 		expect(parsed({ range: [10, 20] })).toEqual({ range: [10, 20], shape: 'lognormal' });
-		expect(DEFAULT_SETTINGS.pacing.typingCharsPerSecond).toEqual({ range: [3.5, 7], shape: 'normal' });
+		expect(DEFAULT_SETTINGS.pacing.typingCharsPerSecond).toEqual({ range: [4.5, 8], shape: 'normal' });
 		expect(DEFAULT_SETTINGS.retries.delayMinutes).toEqual({ range: [1, 4], shape: 'uniform' });
 		for (const bad of [{ range: [20, 10] }, { range: [10, 20], shape: 'gaussian' }, { range: [10, 20], spread: 2 }]) {
 			expect(SettingsSchema.safeParse({ pacing: { backlogGapSeconds: bad } }).success).toBe(false);

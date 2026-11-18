@@ -34,6 +34,17 @@ Follow-ups, check-ins and sharing its day are the kinds of opener so far (`setti
 - **A cheap check first**: with the Decisions client on, whether a text would be welcome now, before paying for the
   model.
 - **A person's own "don't text me first"**, short of a stop.
+- **Time it made to chat, kept**: when that time comes, an opener of its own kind ("i'm free now, still up for a
+  chat?") to the person it was made for, under the same guardrails.
+
+## Planned: its calendar
+
+Plans of its own, time made to chat and the app's plans are in (`settings.calendar`,
+[concepts](./concepts.md#its-calendar)). Planned:
+
+- **Plans that move**: rescheduling one of its plans in place (today it calls one off and makes another, which counts
+  twice toward `perWeek`).
+- **Plans from group chats**: a group-chat line may make a plan the whole chat agreed on, under the same checks.
 
 ## Planned: realism
 

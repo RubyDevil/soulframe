@@ -118,7 +118,11 @@ export function personaReport(persona: Persona, { settings: given, now, status }
 		`  models: ${TASKS.map((task) => ({ task, used: taskModel(settings, task) }))
 			// The opener's model only once it texts first
 			.filter(({ task, used }) => !used.off && (task !== 'initiative' || settings.initiative.enabled))
-			.map(({ task, used }) => `${task} ${(provider && used.model) || '(canned)'}${provider && used.ownProvider && used.baseUrl ? ` (${new URL(used.baseUrl).host})` : ''}`)
+			.map(({ task, used }) => {
+				const where = provider && used.ownProvider && used.baseUrl ? new URL(used.baseUrl).host : undefined;
+				const notes = [where, provider && used.reasoningEffort ? `reasoning ${used.reasoningEffort}` : undefined].filter(Boolean);
+				return `${task} ${(provider && used.model) || '(canned)'}${notes.length ? ` (${notes.join(', ')})` : ''}`;
+			})
 			.join(', ')}`,
 	];
 }

@@ -68,6 +68,14 @@ const levels = (min: number) =>
 export const TASKS = ['directMessage', 'groupChat', 'post', 'vision', 'initiative'] as const;
 export type Task = (typeof TASKS)[number];
 
+/**
+ * How much a reasoning model thinks before it answers, sent as `reasoning_effort` to a model that takes it (which
+ * values, its provider's): its thinking counts toward `maxTokens`, and takes time. `'none'` or `'low'` keeps a texting
+ * persona quick.
+ */
+const ReasoningEffortSchema = z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']);
+export type ReasoningEffort = z.infer<typeof ReasoningEffortSchema>;
+
 /** The provider and model every task uses unless it names its own (`models.default`). */
 const DefaultModelSchema = z
 	.object({
@@ -81,6 +89,8 @@ const DefaultModelSchema = z
 		jsonMode: z.boolean().default(false),
 		/** Seconds before a request is given up (it is retried once). */
 		timeoutSeconds: z.number().min(5).max(300).default(60),
+		/** How much a reasoning model thinks before it answers (`ReasoningEffort`); none sent unless set. */
+		reasoningEffort: ReasoningEffortSchema.optional(),
 	})
 	.default({});
 
@@ -103,11 +113,31 @@ const TaskModelSchema = (defaults: { maxTokens: number; temperature: number }) =
 			jsonMode: z.boolean().optional(),
 			/** Seconds before its request is given up; else `default.timeoutSeconds`. */
 			timeoutSeconds: z.number().min(5).max(300).optional(),
-			/** The most tokens the answer may hold. */
+			/** How much its model thinks first; else `default.reasoningEffort` when it uses the default model, none otherwise. */
+			reasoningEffort: ReasoningEffortSchema.optional(),
+			/** The most tokens the answer may hold (a reasoning model's thinking included). */
 			maxTokens: z.number().int().min(16).max(4000).default(defaults.maxTokens),
 			/** 0 to 2: higher is more varied, lower more predictable. */
 			temperature: z.number().min(0).max(2).default(defaults.temperature),
 		})
+		.default({});
+
+/**
+ * The relationship levels from which someone hears the words of a plan made with someone else (calendar.sharing): its
+ * familiarity and, while affinity is kept, its affinity, at least these (a level's `from`); false for nobody. Each key
+ * left out keeps its default (`from`), so setting one never drops the other: -1 is no affinity gate at all.
+ */
+const shareLevel = (from: { familiarity: number; affinity?: number }) =>
+	z
+		.union([
+			z.literal(false),
+			z
+				.object({
+					familiarity: z.number().min(0).max(1).default(from.familiarity),
+					affinity: from.affinity === undefined ? z.number().min(-1).max(1).optional() : z.number().min(-1).max(1).default(from.affinity),
+				})
+				.strict(),
+		])
 		.default({});
 
 export const SettingsSchema = z
@@ -136,7 +166,7 @@ export const SettingsSchema = z
 				 */
 				vision: TaskModelSchema({ maxTokens: 200, temperature: 0.2 }),
 				/** A first message the persona sends on its own (`initiative`): whether to text them now, and what. */
-				initiative: TaskModelSchema({ maxTokens: 300, temperature: 0.9 }),
+				initiative: TaskModelSchema({ maxTokens: 500, temperature: 0.9 }),
 			})
 			.default({}),
 
@@ -293,23 +323,25 @@ export const SettingsSchema = z
 		pacing: z
 			.object({
 				/**
-				 * While it is on its phone, a new message from anyone is noticed after a short lag: right after a turn with
-				 * anyone the chance starts at 1 and halves every `halfLifeSeconds` (1 while it writes a reply), so a live
+				 * While it is on its phone, a new message from anyone is noticed after a short lag: after a turn with anyone the
+				 * chance is 1 for `holdSeconds`, then halves every `halfLifeSeconds` (1 while it writes a reply), so a live
 				 * conversation with one person doesn't leave another waiting for its next glance, and a pause of a few minutes
 				 * means it put the phone down. An interruption since then (`interruptions`) means it looked away.
 				 */
 				watching: z
 					.object({
-						/** Seconds after its last turn with anyone over which the chance that it is still on its phone halves. */
+						/** Seconds after its last turn with anyone that it is certainly still on its phone, waiting for the answer, before that chance starts to halve. */
+						holdSeconds: z.number().min(0).max(3600).default(60),
+						/** Seconds after `holdSeconds` over which the chance that it is still on its phone halves. */
 						halfLifeSeconds: z.number().min(1).max(3600).default(90),
 						/** Seconds after its last turn with someone over which the chance that it still has their chat open halves: their weight when several wait (`priority`). */
 						chatHalfLifeSeconds: z.number().min(1).max(3600).default(90),
 						/** The lag before it answers while watching (also every delay on a short break, when it is on its phone anyway): half are shorter than this, in seconds. */
-						medianSeconds: z.number().min(0.1).max(600).default(4),
+						medianSeconds: z.number().min(0.1).max(600).default(1.5),
 						/** …and nine in ten shorter than this (above the median): how far the slow ones go. */
-						p90Seconds: z.number().min(0.1).max(3600).default(8),
+						p90Seconds: z.number().min(0.1).max(3600).default(4),
 						/** The shortest and longest, in seconds. */
-						delaySeconds: range(2, 20),
+						delaySeconds: range(0.5, 10),
 					})
 					.strict()
 					.default({})
@@ -375,13 +407,13 @@ export const SettingsSchema = z
 					.strict()
 					.default({}),
 				/** Typing speed, in characters per second; the typing indicator shows for as long as the message would take. */
-				typingCharsPerSecond: drawn(3.5, 7, 'normal', 0.5),
+				typingCharsPerSecond: drawn(4.5, 8, 'normal', 0.5),
 				/** The shortest and longest the typing indicator shows for one message, in seconds (thinking pauses come on top). */
-				typingDurationSeconds: range(1.5, 45),
+				typingDurationSeconds: range(0.8, 45),
 				/** Reading speed, in characters per second: before it types, it spends as long as it takes to read what they wrote (the unread messages together). */
 				readingCharsPerSecond: drawn(15, 25, 'normal', 1),
 				/** The shortest and longest the reading takes, in seconds. */
-				readingDurationSeconds: range(1, 20),
+				readingDurationSeconds: range(0.3, 20),
 				/** Seconds it spends on each photo, on top of the reading. */
 				looking: drawn(1.5, 5, 'lognormal'),
 				/** Pauses while typing a long message: the indicator goes off a moment, as when someone stops to think, then on again. */
@@ -405,7 +437,7 @@ export const SettingsSchema = z
 				burst: z
 					.object({
 						/** Seconds of quiet after their newest message before it starts writing the reply; a message in that time starts the wait again. [0, 0] for none. */
-						settleSeconds: drawn(2, 5, 'lognormal'),
+						settleSeconds: drawn(0.5, 2, 'lognormal'),
 						/** The most messages that may start the wait again; past them it starts writing anyway, so someone who never stops still gets a reply. */
 						maxSettleResets: z.number().int().min(0).max(20).default(3),
 						/**
@@ -440,6 +472,17 @@ export const SettingsSchema = z
 				situation: z.boolean().default(true),
 				/** What comes next: "After that you're back at work until about 5:30 PM. You'll be online again today around 8:00 PM." */
 				upcoming: z.boolean().default(true),
+				/**
+				 * Its usual week, from its schedule (every range at its middle), in the common part of the prompt of a DM turn, an
+				 * opener and a group-chat line: "Your usual week (…): Monday to Friday: at work from about 9 AM to 5:15 PM and online
+				 * from about 7:30 PM to 11:45 PM. …". So it can say what it does on a Thursday, or at the weekend.
+				 */
+				week: z.boolean().default(true),
+				/**
+				 * How many days after today its time line gives exactly, as its agenda drew them (its calendar's plans in them):
+				 * "Coming days: Tomorrow: at work from about 9:10 AM to 5:20 PM and online from about 7:45 PM to 11:50 PM. …". 0 for none.
+				 */
+				daysAhead: z.number().int().min(0).max(7).default(3),
 				/** In DMs, that their messages came in while it was offline: "These messages came in while you were at work (from 12:16 PM)…". */
 				awayContext: z.boolean().default(true),
 				/** How well it knows and likes the person, in DMs: "Sam is one of your regulars… You like Sam." (`relationship`). */
@@ -531,6 +574,66 @@ export const SettingsSchema = z
 			})
 			.strict()
 			.default({}),
+
+		/**
+		 * Its calendar, off by default (calendar.ts): plans laid over the agenda its schedule draws, its own and the app's
+		 * (`store.addEvent`). A DM turn may make one (prompts.ts directMessageAnswerFormat's `plan`), which the code checks
+		 * against guardrails no setting relaxes; DM turns and openers list the coming ones. Off, no event is read and no
+		 * prompt says anything of it.
+		 */
+		calendar: z
+			.object({
+				enabled: z.boolean().default(false),
+				/** Plans of its own: somewhere it will be ("at the dentist": busy, so offline then), or calling one of them off. */
+				plans: z
+					.object({
+						/** Whether a DM turn may make one (with `enabled`). */
+						enabled: z.boolean().default(true),
+						/** The furthest ahead any plan may be, its own or time made to chat, in days (0: later today only). */
+						maxDays: z.number().int().min(0).max(365).default(60),
+						/** The most it makes in any 7 days. */
+						perWeek: z.number().int().min(1).max(20).default(4),
+						/** The longest one, in hours. */
+						maxHours: z.number().min(1).max(24).default(12),
+					})
+					.strict()
+					.default({}),
+				/** Time it makes to chat with someone, at an hour it would be offline: online then, for everyone; called off only with them. */
+				makeTime: z
+					.object({
+						/** Whether a DM turn may make some (with `enabled`). */
+						enabled: z.boolean().default(true),
+						/** The longest, in minutes. */
+						maxMinutes: z.number().int().min(15).max(240).default(120),
+						/** Days at least between two made for the same person. */
+						perPersonDays: z.number().min(1).max(90).default(7),
+					})
+					.strict()
+					.default({}),
+				/** How many of its coming plans a DM turn and an opener list, with the number of each it may call off there. */
+				shown: z.number().int().min(1).max(20).default(6),
+				/**
+				 * What one person hears of the plans the persona made with someone else (calendar.ts sightOf): each plan's words,
+				 * as the model ranked them when it made it (`open`, `personal`, `confidential`), told to those at the
+				 * relationship levels below, and the words anyone may hear to the rest. Off: nobody else ever hears a plan's own
+				 * words, nor whom time was made for.
+				 */
+				sharing: z
+					.object({
+						enabled: z.boolean().default(true),
+						/** A plan that names someone, their party: from these levels (each level's `from`, as relationship's levels set them; 0.48, "getting close"); false for nobody. */
+						personal: shareLevel({ familiarity: 0.48 }),
+						/**
+						 * A plan that is sensitive, or that they asked it to keep to itself: told in confidence, from these levels (0.82,
+						 * "very close", and affinity 0.6, "really like"); false for nobody.
+						 */
+						confidential: shareLevel({ familiarity: 0.82, affinity: 0.6 }),
+					})
+					.strict()
+					.default({}),
+			})
+			.strict()
+			.default({}),
 	})
 	.default({});
 
@@ -544,6 +647,8 @@ export interface TaskModel {
 	model?: string;
 	jsonMode: boolean;
 	timeoutSeconds: number;
+	/** Sent as `reasoning_effort` when set. */
+	reasoningEffort?: ReasoningEffort;
 	maxTokens: number;
 	temperature: number;
 	/** It names a `baseUrl` of its own: nothing of the default provider (key, model, jsonMode) is used for it. */
@@ -555,19 +660,23 @@ export interface TaskModel {
 /**
  * The model a task calls: what it names, else `models.default`'s, but on a provider of its own (its own `baseUrl`)
  * only what it names (the default key, model and jsonMode belong to the default provider), and for `vision` never the
- * default model (it may not take images). The timeout comes from `default` either way.
+ * default model (it may not take images). The timeout comes from `default` either way; the reasoning effort only with
+ * the default model.
  */
 export function taskModel(settings: Settings, task: Task): TaskModel {
 	const { default: base } = settings.models;
 	const own = settings.models[task];
 	const ownProvider = own.baseUrl !== undefined;
 	const model = own.model ?? (ownProvider || task === 'vision' ? undefined : base.model);
+	// The default model's goes with it: another model may not take one
+	const reasoningEffort = own.reasoningEffort ?? (own.model === undefined && !ownProvider ? base.reasoningEffort : undefined);
 	return {
 		baseUrl: own.baseUrl ?? base.baseUrl,
 		apiKeyEnv: own.apiKeyEnv ?? (ownProvider ? undefined : base.apiKeyEnv),
 		model,
 		jsonMode: own.jsonMode ?? (ownProvider ? false : base.jsonMode),
 		timeoutSeconds: own.timeoutSeconds ?? base.timeoutSeconds,
+		...(reasoningEffort && { reasoningEffort }),
 		maxTokens: own.maxTokens,
 		temperature: own.temperature,
 		ownProvider,

@@ -9,9 +9,12 @@ import {
 	fullyOnline,
 	nextSpan,
 	onlineMinutesByWeekday,
+	routineOn,
 	situationAt,
 	spanAt,
+	usualWeek,
 	zonedToUtc,
+	type CalendarEvent,
 	type Hours,
 	type LocalDate,
 } from '../src/schedule.js';
@@ -490,5 +493,112 @@ describe('onlineMinutesByWeekday', () => {
 		expect(onlineMinutesByWeekday(ScheduleSchema.parse(everyDay(['19:00', '20:00'], ['01:00', '02:00'])))).toEqual(Array(7).fill(360));
 		// 20:00 to 00:15 and the 15-minute break on weekdays
 		expect(onlineMinutesByWeekday(LENA.schedule)).toEqual([270, 270, 270, 270, 270, 0, 0]);
+	});
+});
+
+describe('usualWeek', () => {
+	it('gives each weekday its blocks in order at the middle of their ranges, from the config alone', () => {
+		const [monday, , , , friday, saturday] = usualWeek(LENA.schedule);
+		expect(monday).toEqual({
+			weekday: 0,
+			blocks: [
+				{ kind: 'busy', reason: 'at work', from: 9 * 60, to: 17 * 60 + 30, chance: 1 },
+				{ kind: 'break', from: 12 * 60 + 30, to: 12 * 60 + 45, chance: 1 },
+				{ kind: 'online', from: 20 * 60, to: 24 * 60 + 15, chance: 1 },
+			],
+			skipDayChance: 0,
+		});
+		expect(friday).toEqual({ ...monday, weekday: 4 });
+		expect(saturday).toEqual({ weekday: 5, blocks: [], skipDayChance: 0 });
+	});
+
+	it('rounds a usual time to the quarter hour, and keeps chances and the skip chance', () => {
+		const schedule = ScheduleSchema.parse({
+			skipDayChance: 0.2,
+			days: {
+				'mon-sat': { online: [{ start: ['18:50', '19:20'], end: ['23:05', '23:35'], chance: 0.7 }], breaks: [{ start: ['12:07', '12:07'], minutes: [10, 20] }] },
+				sun: { skipDayChance: 0, online: [{ start: ['10:00', '10:00'], end: ['12:00', '12:00'] }] },
+			},
+		});
+		const [monday, , , , , , sunday] = usualWeek(schedule);
+		// The middles 19:05 and 23:20 round to 19:00 and 23:15; the break's 12:07 to 12:00, for its middle 15 minutes
+		expect(monday!.blocks).toEqual([
+			{ kind: 'break', from: 12 * 60, to: 12 * 60 + 15, chance: 1 },
+			{ kind: 'online', from: 19 * 60, to: 23 * 60 + 15, chance: 0.7 },
+		]);
+		expect(monday!.skipDayChance).toBe(0.2);
+		expect(sunday!.skipDayChance).toBe(0);
+	});
+});
+
+describe('calendar events over the agenda', () => {
+	// Lena in November: Monday the 16th works 9:00 to 17:30, a break at 12:30, online 20:00 to 00:15; Saturday the 21st is empty
+	const [MON, TUE, SAT] = [16, 17, 21];
+	const keyOf = (day: LocalDate) => day.year * 10_000 + day.month * 100 + day.day;
+	/** Lena with these events in her calendar. */
+	const withCalendar = (events: CalendarEvent[]): Hours => ({ ...LENA, events: (from, to) => events.filter((event) => keyOf(event.day) >= keyOf(from) && keyOf(event.day) <= keyOf(to)) });
+	const busy = (id: number, day: number, from: number, to: number, what: string): CalendarEvent => ({ id, kind: 'busy', day: date(day), from: from * 60, to: to * 60, what });
+	const online = (id: number, day: number, from: number, to: number): CalendarEvent => ({ id, kind: 'online', day: date(day), from: from * 60, to: to * 60, what: '' });
+	const times = (blocks: readonly { start: number; end: number }[]) => blocks.map(({ start, end }) => [new Date(start).toISOString().slice(11, 16), new Date(end).toISOString().slice(11, 16)]);
+
+	it('takes a busy plan out of the day: a work day cut in two around it, its own block in between', () => {
+		const hours = withCalendar([busy(1, MON, 10, 11, 'at the dentist')]);
+		const agenda = agendaOn(hours, date(MON));
+		expect(agenda.busy.map(({ reason, event }) => [reason, event])).toEqual([['at work', undefined], ['at the dentist', 1], ['at work', undefined]]);
+		expect(times(agenda.busy)).toEqual([['09:00', '10:00'], ['10:00', '11:00'], ['11:00', '17:30']]);
+		// The routine stays as drawn
+		expect(routineOn(hours, date(MON))).toEqual(agendaOn(LENA, date(MON)));
+		// An evening out cuts its online time
+		const out = agendaOn(withCalendar([busy(2, MON, 19, 21, 'out with friends')]), date(MON));
+		expect(times(out.spans.filter((span) => span.kind === 'online'))).toEqual([['21:00', '00:15']]);
+	});
+
+	it('adds time it made to chat, joined to the online time it touches, outside every busy block', () => {
+		expect(agendaOn(withCalendar([online(3, SAT, 15, 16)]), date(SAT)).spans).toEqual([{ kind: 'online', start: at(SAT, 15), end: at(SAT, 16), day: date(SAT), event: 3 }]);
+		expect(spanAt(withCalendar([online(3, SAT, 15, 16)]), at(SAT, 15, 30))?.event).toBe(3);
+		const before = agendaOn(withCalendar([online(4, MON, 19, 20)]), date(MON)).spans.filter((span) => span.kind === 'online');
+		expect(times(before)).toEqual([['19:00', '00:15']]);
+		// Over its work (one the app added without checking): only what is past it
+		const late = agendaOn(withCalendar([online(5, MON, 16, 18)]), date(MON)).spans.filter((span) => span.kind === 'online');
+		expect(times(late)).toEqual([['17:30', '18:00'], ['20:00', '00:15']]);
+	});
+
+	it('keeps of a short break only what lies outside time it made to chat: it is online then already', () => {
+		const lunch = hoursOf({ days: { 'mon-sun': { breaks: [{ start: ['12:30', '12:30'], minutes: [15, 15] }], online: [{ start: ['20:00', '20:00'], end: ['22:00', '22:00'] }] } } });
+		const keyed = (events: CalendarEvent[]): Hours => ({ ...lunch, events: () => events });
+		expect(times(agendaOn(keyed([online(7, SAT, 12, 13)]), date(SAT)).spans)).toEqual([['12:00', '13:00'], ['20:00', '22:00']]);
+		// One it only overlaps: the rest of the break after it, so the time made is online all through
+		const overlapping = agendaOn(keyed([online(8, SAT, 11, 12.6)]), date(SAT)).spans;
+		expect(overlapping.map((span) => [span.kind, ...times([span])[0]!])).toEqual([['online', '11:00', '12:36'], ['break', '12:36', '12:45'], ['online', '20:00', '22:00']]);
+		expect(spanAt(keyed([online(8, SAT, 11, 12.6)]), at(SAT, 12, 33))?.kind).toBe('online');
+		// A break on one channel only, the same
+		const forum = hoursOf({ days: { 'mon-sun': { breaks: [{ start: ['12:30', '12:30'], minutes: [15, 15], on: ['forum'] }] } } });
+		expect(spanAt({ ...forum, events: () => [online(9, SAT, 12.6, 14)] }, at(SAT, 12, 40), 'forum')?.kind).toBe('online');
+	});
+
+	it("never makes time past midnight inside the next day's busy block: an app's evening into a 1 AM shift", () => {
+		const shift = hoursOf({ days: { 'mon-sun': { busy: [{ reason: 'at work', start: ['01:00', '01:00'], end: ['05:00', '05:00'] }] } } });
+		const late: CalendarEvent = { id: 11, kind: 'online', day: date(SAT), from: 22 * 60, to: 27 * 60, what: '' };
+		const hours: Hours = { ...shift, events: (from, to) => [late].filter((event) => keyOf(event.day) >= keyOf(from) && keyOf(event.day) <= keyOf(to)) };
+		expect(times(agendaOn(hours, date(SAT)).spans)).toEqual([['22:00', '01:00']]);
+		expect(spanAt(hours, at(SAT + 1, 2))).toBeNull();
+		expect(busyAt(hours, at(SAT + 1, 2))?.reason).toBe('at work');
+	});
+
+	it("never makes time to chat inside a busy block of the day before that runs into it: a night shift until 8 AM", () => {
+		const nights = hoursOf({ days: { 'mon-sun': { busy: [{ reason: 'at work', start: ['22:00', '22:00'], end: ['08:00', '08:00'] }] } } });
+		// One the app added without checking, 7:00 to 9:00: online from 8:00 only
+		const hours: Hours = { ...nights, events: (from, to) => [online(10, SAT, 7, 9)].filter((event) => keyOf(event.day) >= keyOf(from) && keyOf(event.day) <= keyOf(to)) };
+		expect(times(agendaOn(hours, date(SAT)).spans)).toEqual([['08:00', '09:00']]);
+		expect(spanAt(hours, at(SAT, 7, 30))).toBeNull();
+		expect(busyAt(hours, at(SAT, 7, 30))?.reason).toBe('at work');
+	});
+
+	it("cuts the online time of the day before that runs past midnight into a plan's, and lists the plan on its own day", () => {
+		const hours = withCalendar([busy(6, TUE, 0, 2, 'out with friends')]);
+		expect(times(agendaOn(hours, date(MON)).spans.filter((span) => span.kind === 'online'))).toEqual([['20:00', '00:00']]);
+		expect(agendaOn(hours, date(MON)).busy.map((block) => block.reason)).toEqual(['at work']);
+		expect(agendaOn(hours, date(TUE)).busy.map((block) => block.reason)).toEqual(['out with friends', 'at work']);
+		expect(spanAt(hours, at(TUE, 0, 5))).toBeNull();
 	});
 });

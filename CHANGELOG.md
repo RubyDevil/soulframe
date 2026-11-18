@@ -9,6 +9,71 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Its calendar, off by default** (`settings.calendar`): plans laid over the agenda its schedule draws, so its days go
+  the way it said. A DM turn may put a plan of its own in it (`plan` in the answer format: somewhere it will be, busy
+  and so offline then, "at a cousin's birthday"), make time to chat with the person at an hour it would be offline, or
+  call one of its plans off by its number (with a new plan in its place, `cancel` in it too: both or neither, a plan
+  of theirs moved counted once); the app may add its own
+  (`store.addEvent`). The model only proposes, and only a reply that all reached them makes its plan (`Turn.keep` takes
+  `{ delivered }`: the reply queue keeps the turn at its first message and its calendar's part once all of it went
+  out; never for a reply cut short, nor in a dry run). The code checks each
+  plan against guardrails no setting relaxes (a short reason of plain words, never sleep, joined to other words, in
+  other languages or look-alike letters too, never "them" or "their", over no other plan in
+  its calendar but a promise it may break;
+  time made to chat between 7 AM and midnight, over no busy block, never more online in a day than its schedule's
+  longest day and one such time, once per person a week; lengths as the time passes, daylight saving in it; limits per
+  week and days ahead) and audits the outcome (`plan_added`, `plan_cancelled`, `plan_called_off`, `plan_refused`, one
+  it couldn't read too). A plan it refused is told, once, to the next turn with that person that replies (its time
+  passed, to own up to; two weeks past, not at all), so a promise the model
+  made ("sure, 3 tomorrow" while at work) can be put right; time made at an hour it is online anyway is kept all the
+  same, so no later plan breaks the promise lightly. A busy plan cuts the day's online time and busy blocks (a
+  dentist's hour splits a work day); time made to chat is online time for every channel. DM turns and openers list the
+  coming plans (`calendar.shown`, a number on each it may call off there), and its time lines include them, a plan's
+  words always quoted as data. A plan made with someone who then ends it no longer stands: it lapses, called off for
+  good if they come back (`unblock`, `undeny`; those still ahead, audited `plan_lapsed`). Interruptions stay the
+  routine's.
+- **Promises, kept or broken like a person's.** Time made to chat with someone, and a plan the model marks as with or
+  for them (`withThem`), are promises to them. It may break one for someone who matters as much or more: in a turn
+  with someone not less close to it (their familiarity and affinity levels; one level apart is about as close), by
+  calling it off or by a plan over it (only one its calendar listed to that turn), never for someone less close. Its calendar gives it the facts to weigh that
+  with ("you're closer to Kim than to them; you've already called off plans with them twice this month"), and a line
+  on weighing it as in life; measured on a live model, those facts are what it decides by. The one it was broken on is
+  told at their next turn, to say sorry, and with texting first on, it texts them an apology first (a new `apology`
+  opener kind: one for all it owes them, never in place of a follow-up the model planned, which tells them too). A
+  turn left on read, or whose reply never reached them, tells them nothing. Making time again for whom it broke one on is no new favour:
+  `makeTime.perPersonDays` doesn't count the broken time.
+- **Who hears what of its plans** (`calendar.sharing`, on by default). A plan's words are the person's it was made
+  with, said as to them ("at your party"); every prompt says them with that person by name ("at Sam's party"), theirs
+  too, so the persona never reads "your party" as its own. The model ranks each as it makes it (`share`: `open`,
+  `personal`, `confidential`) and gives the words anyone may hear (`public`); others hear its words as their
+  relationship levels allow (`sharing.personal`, from "getting close"; `sharing.confidential`, from "one of the people closest to you" and "really fond", told in confidence, so
+  it asks them to keep it to themselves), and its public words otherwise; group chats hear an `open` plan's words
+  and only the public words of the rest; words that say "you" or "your" are never `open`, and whom a plan was made
+  with is named only to someone who may hear that plan's words, a personal one's at least ("the one you made it
+  with" otherwise). Sharing
+  its day never volunteers a plan told in confidence. A threshold left out keeps
+  its default (`affinity: -1` drops that gate).
+  Sharing off, nobody else ever hears a plan's own words, nor whom time was made for. Its notes about itself are not
+  held to this (documented).
+- `brain.hours`: the persona's hours with its calendar (the persona itself while the calendar is off), which its reply
+  queue reads; give them to `spanAt`, `fullyOnline` and `watchSpans` so a plan moves your view of its online time too.
+- The store's calendar: `addEvent`, `cancelEvent`, `eventById`, `events`, `eventsMadeSince`, `calledOffOn`, and the
+  `StoredEvent` type. Their `events` table is made when the store opens; `sweep` deletes the events called off and over (the
+  persona's own of the last 90 days kept, which its limits count, and those called off in the last 30, which it still
+  tells), `resetPersona` a persona's calendar, and
+  `forgetPerson` the plans made in turns with that person (the app's stay, without them; a promise to someone else
+  broken for them stays broken, for someone forgotten; refusals and shares kept for others keep nothing of their
+  plans; messages already sent stay in those others' history).
+- **Its week in the prompt.** Every prompt with a time line (DM turns, openers, group-chat lines) now gives its usual
+  week, made from its `schedule` alone, every range at its middle, with the online time of the prompt's channel
+  ("Monday to Friday you're at work from about 9:00 AM to 5:15 PM and online from about 7:30 PM to 11:45 PM. Saturday
+  and Sunday you're …"; a block by chance "(usually)" or "(sometimes)"), after the identity line where a provider's
+  prompt cache keeps it (`settings.context.week`, on by default); and the time line gives the coming days exactly as
+  its agenda drew them ("Tomorrow you're at work from about 9:10 AM to 5:20 PM and online from about 7:45 PM to 11:50
+  PM. …", `settings.context.daysAhead`, 3 by default), so "what are you up to this weekend?" or "are you free
+  Thursday?" can be answered from the days the code keeps instead of made up. A block that starts past its day's
+  midnight says so ("12:30 AM (after midnight)"). What comes next today stays as it was; a block on one of those days
+  is left to them.
 - **A step clock**: `createStepClock()` runs reply queues without waiting while keeping every timestamp: give its
   `now` and `timers` to the runtime, wrap the model's calls in `clock.track`, and `clock.run({ until, done })`. Each
   wait (a glance, reading, typing, a pause, the backlog's gaps, the tick that sends openers) is skipped, the clock moved
@@ -21,9 +86,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   someone who wrote to it before, on the channels the app allows (`queue.allowInitiative(channel, conversationOf)`).
   This first kind is the follow-up: a DM turn may plan to text them again about something still ahead of them or
   something it promised (the `followUp` field of the DM answer format, `initiative.followUps`), and when the day
-  comes the persona decides whether to send it (`brain.composeOpener`, the new `models.initiative` task). The code
-  decides who and when, with guardrails no setting relaxes: never to anyone who never wrote, is not active, is
-  deny-listed or flagged; never with a reply owed or mid-conversation; one unanswered opener at most, with a gap
+  comes the persona decides whether to send it (`brain.composeOpener`, the new `models.initiative` task, its
+  `maxTokens` 500 so a reasoning model's thinking fits). The code decides who and when, with guardrails no setting
+  relaxes: never to anyone who never wrote, is not active, is deny-listed or flagged; never with a reply owed or
+  mid-conversation; one unanswered opener at most, with a gap
   (`personGapHours`) that doubles for each one ignored; `perDay` a day and one a day per account across personas; in a
   full online span with `spanEndMinutes` left, and only when no reply waits. Every DM turn sees the plan, so talking
   about it drops it; if they write first, the opener stops and their reply is asked to bring it up. Openers spend the budget DMs don't keep for themselves, and each outcome is
@@ -47,6 +113,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   every default filled in, every problem returned with its path (an unknown key with the nearest known one).
 - `createBrain({ settings })` (required: `parseSettings({})` gives every default), and `brain.persona` and
   `brain.settings`, which the reply queue reads.
+- `pacing.watching.holdSeconds` (default 60): how long it certainly stays on its phone after its last reply, waiting
+  for the answer, before the chance that it still is starts to halve (`halfLifeSeconds`). It used to start halving at
+  once, so someone answering ten seconds later found it gone about one time in thirteen, and waited for its next look
+  at its messages (40 seconds typically, minutes now and then) in the middle of a live chat. `0` keeps the old curve.
 - `settingsWarnings(settings)`: the warnings about settings that `personaWarnings` used to give (`pacing.burst.maxRestarts`
   above 1, no text provider).
 - `Policy.sfw`: the safe-for-work rule, now the application's policy (`createBrain({ policy: { sfw: true } })`), in the
@@ -62,6 +132,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `models.default`: the provider and model of every task that names none (`baseUrl`, `apiKeyEnv`, `model`,
   `jsonMode`, `timeoutSeconds`), and a `timeoutSeconds` of each task's own. `personaReport` names the host of a task on
   a provider of its own.
+- `models.default.reasoningEffort` and each task's own (`none` to `xhigh`, sent as `reasoning_effort`; nothing sent
+  unless set), and `personaReport` shows it. A reasoning model's thinking counts toward `maxTokens` and takes time:
+  measured on one, a DM turn weighing a plan answered half the time at the default 400 tokens, and every time, three
+  times faster, with `none`.
 - **A persona's own `pacing` and `relationship`**: only the keys it changes, in its config, merged over its brain's
   settings by `createBrain` (`brain.settings`; a `ConfigError` if they don't fit). `parsePersona` and the loaders check
   them over their new `settings` option.
@@ -89,9 +163,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   it went), and `createConfiguredDecisions` takes the service settings' `decisions`, giving `DISABLED_DECISIONS` while
   it is off. A brain's `settings.decisions` keeps which checks it asks and their thresholds.
 - `vision` never takes the default model in the model client either (it already never did in the brain).
+- **The model's time counts as typing.** Whatever the model takes past the reading of their messages is taken off the
+  first message's typing time from its start, thinking pauses included (never under `typingDurationSeconds`' least),
+  so a slow model no longer adds its whole time to every reply; on a step clock too. Typing still shows only once there is a reply: it never types and then sends nothing.
+- **A message that comes in while a reply is typed restarts it only before half of its first message is typed.** Past
+  half, the draft goes out and the message gets a turn of its own after, as someone halfway through a text finishes it;
+  before, any message until the first send dropped the draft, so typing went off and on again. Half is of the whole
+  first message, its thinking pauses and the model's time counted as typed included; a message while the model still
+  writes, before any typing shows, always starts it over. An opener whose first message is out (or going out) types the
+  rest as planned.
+- **A draft that starts over stops typing once the newer message is noticed** (after the `pacing.watching` lag), not
+  when it would have been typed out, even in the middle of a typing refresh; `queue.stop()` ends every typing at once,
+  the code's goodbye's too, and someone who ends the conversation stops a draft's typing at once.
+- **Faster defaults for a live chat**, measured on texting-style conversations against a live model:
+  `pacing.watching` noticing lag `medianSeconds` 1.5 (was 4), `p90Seconds` 4 (was 8), `delaySeconds` `[0.5, 10]` (was
+  `[2, 20]`); `pacing.burst.settleSeconds` `[0.5, 2]` (was `[2, 5]`); `pacing.typingCharsPerSecond` `[4.5, 8]` (was
+  `[3.5, 7]`), a fast texter's speed; `pacing.typingDurationSeconds` `[0.8, 45]` (was `[1.5, 45]`);
+  `pacing.readingDurationSeconds` `[0.3, 20]` (was `[1, 20]`). A short text in an active chat now shows typing about
+  3 to 4 seconds after theirs and arrives a few seconds later. Set the old values to keep the old pace.
 
 ### Removed
 
+- **BREAKING: `adult` in `parsePersona`, `parsePersonaMarkdown` and `loadPersonas`.** It refused a persona's busy
+  reasons about school or students ("at an evening class" at most), but adults go to school, to a yoga class, to an
+  exam: a busy reason may be any of these now. Drop the option. `Channel.adult` and the minors safeguard it turns on
+  (the age checks on what people write, the prompt's adults-only line) are unchanged.
 - **BREAKING: `_shared.yaml` and the layering of persona files.** Each persona's config is its own. Settings shared by
   every persona are one settings object given to every brain; a limit every persona keeps belongs in the
   `policy.rules` you give each brain, after the persona's prompt, where no persona can drop it.
@@ -123,11 +219,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- A model that now and then answers nothing at all (one in testing did, about one call in twenty) failed the turn into a
+  retry 1 to 4 minutes later, a long silence in a live chat: the model client now asks once more at once. A reasoning
+  model may spend its whole `maxTokens` thinking, a different length each time: when the second ask is cut too, the
+  error says so.
 - A model that takes only its default temperature (OpenAI's reasoning models, among others) failed every request with
   a 400: the model client now asks again without a `temperature` when a provider refuses one, and sends that model
   none from then on. OpenAI's `gpt-5` models still get none from the start.
 - A config key named like a built-in member of every object (`constructor`, `toString`, `valueOf`) was taken as known
   and dropped without a word; it is refused as unknown like any other (`unknownKeys` too).
+- `Conversation.typing(false)` rejecting as a reply's typing was taken down escaped the reply queue: the turn was never
+  marked handled (answered again at the next start), and `handle` rejected for a goodbye. It is a failed delivery now,
+  as the docs said (`delivery_failed`, or `unreachable` for an `UnreachableError`), told even after a reply was cut.
+- `Conversation.delivered` is called for each message that went out before anything else can fail, and
+  `delivery_failed`'s `sent` counts a message whose `delivered` threw: it went out (an opener of one such message
+  closes as `sent`).
 
 ## [0.1.0-beta.1] - 2026-11-08
 

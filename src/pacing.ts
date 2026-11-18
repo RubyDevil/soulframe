@@ -1,5 +1,5 @@
 import { between, seededRng, type Rng } from './rng.js';
-import { addDays, agendaOn, localDateOf, type Hours, type LocalDate } from './schedule.js';
+import { addDays, localDateOf, routineOn, type Hours, type LocalDate } from './schedule.js';
 import { DEFAULT_SETTINGS, MINUTE, SECOND, type Settings, type Shape } from './settings.js';
 
 type Pacing = Settings['pacing'];
@@ -67,11 +67,12 @@ export function skewedMs(rng: Rng, { medianSeconds, p90Seconds, delaySeconds: [l
 }
 
 /**
- * The chance that it is still on its phone `sinceMs` after its last turn with anyone: 1 at once, halving every
- * `watching.halfLifeSeconds` (or every `halfLifeSeconds` given, as `watching.chatHalfLifeSeconds` for one chat).
+ * The chance that it is still on its phone `sinceMs` after its last turn with anyone: 1 for `watching.holdSeconds`
+ * (someone who just texted waits a while for the answer), then halving every `watching.halfLifeSeconds` (or every
+ * `halfLifeSeconds` given, as `watching.chatHalfLifeSeconds` for one chat).
  */
 export const watchingChance = (sinceMs: number, pacing: Pacing = DEFAULT_SETTINGS.pacing, halfLifeSeconds = pacing.watching.halfLifeSeconds) =>
-	0.5 ** (Math.max(0, sinceMs) / (halfLifeSeconds * SECOND));
+	0.5 ** (Math.max(0, sinceMs - pacing.watching.holdSeconds * SECOND) / (halfLifeSeconds * SECOND));
 
 /** The lag before it answers while it is watching their chat (`watching`): the only delay on a short break. */
 export const watchingMs = (rng: Rng, pacing: Pacing = DEFAULT_SETTINGS.pacing) => skewedMs(rng, pacing.watching);
@@ -96,10 +97,13 @@ export interface Interruption {
 	end: number;
 }
 
-/** The online time of a day: its online spans (not its breaks), the ones that overlap (on different channels) merged. */
+/**
+ * The online time of a day as its routine draws it (its calendar left out, so a plan never moves the day's
+ * interruptions): its online spans (not its breaks), the ones that overlap (on different channels) merged.
+ */
 const onlineTimeOf = (hours: Hours, date: LocalDate) => {
 	const merged: { start: number; end: number }[] = [];
-	for (const span of agendaOn(hours, date).spans.filter((span) => span.kind === 'online')) {
+	for (const span of routineOn(hours, date).spans.filter((span) => span.kind === 'online')) {
 		const last = merged.at(-1);
 		if (last && span.start <= last.end) last.end = Math.max(last.end, span.end);
 		else merged.push({ start: span.start, end: span.end });

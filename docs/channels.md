@@ -143,7 +143,7 @@ the same platform, since the id keys hours and identities.
   minors safeguard there: a message that says or hints that its writer is under 18 ends the conversation and
   deny-lists them, the Decisions age check runs when it is on, and the prompt says the persona only talks with adults.
   Left out, none of it runs. Set it the same way on every surface of an 18+ platform (its DMs, its group chats, its
-  posting channels), and load the personas with `loadPersonas({ ..., adult: true })` too.
+  posting channels).
 
 ## `Conversation`
 
@@ -190,11 +190,14 @@ described above: one `typing(true)` per message, the typing time, the send, one 
   after its last signal, while a long message may be typed for up to `pacing.typingDurationSeconds` (45 seconds by
   default). Give how long one signal shows, or a little less, and the queue calls `typing(true)` again at that rhythm
   until the message is sent. It checks the halt switch, `queue.stop()` and the person's state at each one, so a reply
-  cut short stops typing then, not at the end of the typing time.
+  cut short stops typing then, not at the end of the typing time. A newer message of theirs that makes the draft start
+  over stops typing once it is noticed (the `pacing.watching` lag), with or without `typingRefreshMs`, and
+  `queue.stop()` stops every typing at once.
 - **`markRead()`**: shows the person their messages were read (a read receipt). The queue calls it as it starts
   writing a reply (again for a draft written again with a newer message), and reads what they wrote while the model
-  writes, as long as that takes (15 to 25 characters a second by default, 1 to 20 seconds, plus `pacing.looking` per photo): typing starts once both
-  are done. That reading happens without `markRead` too. A reply halted or cancelled before then types nothing. A
+  writes, as long as that takes (15 to 25 characters a second by default, 0.3 to 20 seconds, plus `pacing.looking` per photo): typing starts once both
+  are done, and whatever the model took past the reading is taken off the first message's typing time. So typing never
+  shows for a reply the persona then doesn't send. That reading happens without `markRead` too. A reply halted or cancelled before then types nothing. A
   rejection counts as a failed delivery, as for `typing`: swallow it if a missing receipt doesn't matter. A turn the
   persona leaves on read shows their messages read too, as a person who read them and chose not to answer.
 - **Thinking pauses** are the brain's setting, not the adapter's (`pacing.thinkingPauses`, off by default): a long
@@ -274,15 +277,18 @@ If your platform delivers messages that came in while you were disconnected, pas
 
 ## Presence: `watchSpans` and `fullyOnline`
 
-`watchSpans(persona, channelId, runtime, onChange)` calls `onChange(span)` right away and whenever the span on that
+`watchSpans(brain.hours, channelId, runtime, onChange)` calls `onChange(span)` right away and whenever the span on that
 channel opens, closes or changes (checked every 30 seconds), and answers a function that stops watching. Use it to
 show the persona online, to join or leave group chats, to start a posting schedule.
 
 The reply queue does not need it: it checks the hours itself, for openers too ([texting first](#texting-first-allowinitiative)).
 But anything else the persona does on its own initiative should check them:
 
-- **Group chats, posts and joining a group chat** only in full online time: `fullyOnline(persona, channelId, runtime.now())`.
-- **DMs** in any span, breaks included: `spanAt(persona, runtime.now(), channelId)`.
+- **Group chats, posts and joining a group chat** only in full online time: `fullyOnline(brain.hours, channelId, runtime.now())`.
+- **DMs** in any span, breaks included: `spanAt(brain.hours, runtime.now(), channelId)`.
+
+`brain.hours` is the persona's hours with its calendar (the persona itself while that is off): give it to
+`watchSpans` too, so a plan of its own moves your view of its online time as it moves the reply queue's.
 
 ## Texting first: `allowInitiative`
 

@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { calendarHours } from '../src/calendar.js';
 import { followUpWindow, openerBlock, planCheckIns, planShare, REST_MS } from '../src/initiative.js';
 import type { Rng } from '../src/rng.js';
 import { spanAt } from '../src/schedule.js';
 import { DAY, HOUR, MINUTE, type Settings } from '../src/settings.js';
-import type { Store } from '../src/store.js';
+import { calledOffKey, type Store } from '../src/store.js';
 import { memoryStore, personaOf, settingsOf, testPersona } from './fixtures.js';
 
 // Thursday 20:00 UTC
@@ -90,13 +91,26 @@ describe('followUpWindow', () => {
 	});
 });
 
-describe('openerBlock on a check-in', () => {
+describe('openerBlock on a check-in or an apology', () => {
 	it('drops a check-in once they talked since it was planned, and lets it go otherwise', () => {
 		const { store, person } = setUp();
 		const opener = store.planOpener('robin', person.id, { kind: 'checkIn', about: '', dueAt: NOW, expiresAt: NOW + HOUR });
 		expect(openerBlock(store, person, NOW + 3 * HOUR, initiative, opener)).toBeNull();
 		store.addMessage(person.id, 'chat', 'in', 'hey you', NOW + MINUTE);
 		store.updatePerson(person.id, { lastInAt: NOW + MINUTE, handledAt: NOW + MINUTE });
+		expect(openerBlock(store, store.personById(person.id), NOW + 3 * HOUR, initiative, opener)).toEqual({ reason: 'talked_since', final: true });
+	});
+
+	it('drops an apology only once nothing is owed them: talking alone (left on read) told them nothing', () => {
+		const { store, person } = setUp();
+		store.set('robin', calledOffKey(person.id), JSON.stringify([{ id: 1, start: NOW + DAY, end: NOW + DAY + HOUR, kind: 'online', what: '' }]));
+		const opener = store.planOpener('robin', person.id, { kind: 'apology', about: 'x', dueAt: NOW, expiresAt: NOW + 2 * DAY });
+		expect(openerBlock(store, person, NOW + 3 * HOUR, initiative, opener)).toBeNull();
+		store.addMessage(person.id, 'chat', 'in', 'hey you', NOW + MINUTE);
+		store.updatePerson(person.id, { lastInAt: NOW + MINUTE, handledAt: NOW + MINUTE });
+		expect(openerBlock(store, store.personById(person.id), NOW + 3 * HOUR, initiative, opener)).toBeNull();
+		// A reply told them (the brain empties what it owes them)
+		store.set('robin', calledOffKey(person.id), null);
 		expect(openerBlock(store, store.personById(person.id), NOW + 3 * HOUR, initiative, opener)).toEqual({ reason: 'talked_since', final: true });
 	});
 });
@@ -214,6 +228,47 @@ describe('planShare', () => {
 		expect(opener).toMatchObject({ personId: alex.id, kind: 'share', about: 'at the gym', dueAt: EVENING });
 		expect(opener!.expiresAt).toBeLessThanOrEqual(Date.UTC(2026, 9, 15, 20));
 		expect(store.auditLog('test', 1)[0]).toMatchObject({ kind: 'share_planned', detail: { personId: alex.id, about: 'at the gym' } });
+	});
+
+	it('quotes the words of a plan it is back from, as data, as every prompt says them', () => {
+		const store = memoryStore(() => EVENING);
+		const alex = friend(store, 'alex', { familiarity: 0.7, affinity: 0.5, quietDays: 1 });
+		const plan = store.addEvent('test', { kind: 'busy', day: { year: 2026, month: 10, day: 15 }, from: 17 * 60 + 30, to: 18 * 60 + 50, what: "at a cousin's birthday", source: 'persona' });
+		const hours = calendarHours(persona, store);
+		const opener = planShare({ store, persona: hours, settings: ON, span: spanAt(hours, EVENING)!, now: EVENING, rng: () => 0 });
+		expect(opener).toMatchObject({ personId: alex.id, kind: 'share', about: `busy ("at a cousin's birthday")` });
+		expect(store.auditLog('test', 1)[0]).toMatchObject({ kind: 'share_planned', detail: { about: `busy ("at a cousin's birthday")`, openerId: opener!.id } });
+		expect(plan.id).toBeGreaterThan(0);
+	});
+
+	it('shares no plan made with someone else that they would hear only in confidence, or not at all', () => {
+		for (const [share, publicWords] of [['confidential', 'at a clinic'], ['personal', undefined]] as const) {
+			const store = memoryStore(() => EVENING);
+			// Among the closest, a confidential plan told to them in confidence; not close enough for a personal one without public words
+			friend(store, 'alex', { familiarity: 0.95, affinity: 0.8, quietDays: 1 });
+			const sam = friend(store, 'sam', { familiarity: 0.1 });
+			const settings = share === 'personal' ? settingsOf({ initiative: { enabled: true, sharing: { enabled: true } }, calendar: { sharing: { personal: { familiarity: 1 } } } }) : ON;
+			store.addEvent('test', { kind: 'busy', day: { year: 2026, month: 10, day: 15 }, from: 17 * 60 + 30, to: 18 * 60 + 50, what: 'at the therapist with you', ...(publicWords && { public: publicWords }), share, personId: sam.id, source: 'persona' });
+			const hours = calendarHours(persona, store);
+			expect(planShare({ store, persona: hours, settings, span: spanAt(hours, EVENING)!, now: EVENING, rng: () => 0 }), share).toBeNull();
+		}
+	});
+
+	it("tells of a plan made with someone as its sharing allows, and forgets it with them", () => {
+		const store = memoryStore(() => EVENING);
+		const alex = friend(store, 'alex', { familiarity: 0.7, affinity: 0.5, quietDays: 1 });
+		const sam = friend(store, 'sam', { familiarity: 0.1 });
+		store.addEvent('test', { kind: 'busy', day: { year: 2026, month: 10, day: 15 }, from: 17 * 60 + 30, to: 18 * 60 + 50, what: 'at your party', public: 'at a party', personId: sam.id, source: 'persona' });
+		const hours = calendarHours(persona, store);
+		const opener = planShare({ store, persona: hours, settings: ON, span: spanAt(hours, EVENING)!, now: EVENING, rng: () => 0 });
+		// Alex, close enough for a personal plan: its words, Sam by name ("sam" here); the audit keeps what was told, and whose plan
+		expect(opener).toMatchObject({ personId: alex.id, about: `busy ("at sam's party")` });
+		expect(store.auditLog('test', 1)[0]!.detail).toMatchObject({ about: `busy ("at sam's party")`, madeWith: sam.id });
+		// Sam forgotten: nothing of their plan stays with Alex, and the share isn't sent
+		store.forgetPerson(sam.id);
+		expect(store.pendingOpener(alex.id)).toBeUndefined();
+		expect(JSON.stringify(store.auditLog('test')) + JSON.stringify(store.sentOpeners(alex.id))).not.toContain('party');
+		expect(store.auditLog('test', 1)[0]).toMatchObject({ kind: 'share_planned', detail: { personId: alex.id, openerId: opener!.id } });
 	});
 
 	it('plans nothing without a busy block just before, late in its online time, at an unlucky draw, or while off', () => {

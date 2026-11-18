@@ -78,8 +78,7 @@ must be the file's name.
 
 `loadPersonas({ dir, channels })` reads `<dir>/<id>.md` for each key of `channels`, whose value lists the channel ids
 that persona is on (the names its hours' `on:` may use). `parsePersonaMarkdown(text, { id, channels })` reads one file's
-text, for files you read yourself (a bundler, remote storage). Both take `adult: true` for personas used in 18+
-conversations: a busy reason about school is then refused (see [`schedule`](#schedule)). Neither is required: see
+text, for files you read yourself (a bundler, remote storage). Neither is required: see
 [your own loader](#your-own-loader).
 
 ## The config
@@ -152,8 +151,7 @@ and both (`mon-wed,fri`). Every weekday must be in exactly one key; write `"sun:
 - blocks that can overlap, within a day and into the next one (`sun` into `mon` too); blocks may touch;
 - a break must be inside one busy block's core (from its latest start to its earliest end: a break from it) or clear
   of it;
-- a busy reason may not be sleep ("bed", "nap", ...: the night is simply offline); parsed with `adult: true`, it may
-  not be about school or students either ("at an evening class" at most).
+- a busy reason may not be sleep ("bed", "nap", ...: the night is simply offline).
 
 The same hours every day are one online block under `mon-sun`:
 
@@ -272,6 +270,7 @@ mostly a decision to stay quiet) or move to a provider of its own.
 | `model` | string | none | The model of every text task that doesn't name its own (never `vision`'s). |
 | `jsonMode` | boolean | `false` | Ask for strict JSON (`response_format: json_object`), for providers that support it. |
 | `timeoutSeconds` | number, 5 to 300 | `60` | Before a request is given up (it is retried once). |
+| `reasoningEffort` | `none`, `minimal`, `low`, `medium`, `high` or `xhigh` | none | How much a reasoning model thinks before it answers, sent as `reasoning_effort` (which values it takes is its provider's); left out, nothing is sent and the model's own default applies. Its thinking counts toward each task's `maxTokens` and takes time: `none` or `low` keeps a texting persona quick. Goes with the default model only. |
 
 `default` is no task: it holds the connection only. Each task's answer limits are its own:
 
@@ -281,7 +280,7 @@ mostly a decision to stay quiet) or move to a provider of its own.
 | `groupChat`: whether to say something in a group chat, and what | `100` | `0.9` |
 | `post`: a post | `160` | `1` |
 | `vision`: describing a photo someone sent in a DM, once | `200` | `0.2` |
-| `initiative`: a first message it sends on its own ([`initiative`](#initiative)), called only while that is on | `300` | `0.9` |
+| `initiative`: a first message it sends on its own ([`initiative`](#initiative)), called only while that is on | `500` | `0.9` |
 
 Each task takes:
 
@@ -292,8 +291,24 @@ Each task takes:
 | `apiKeyEnv` | string | `default.apiKeyEnv` on the default provider | Empty disables authentication. |
 | `jsonMode` | boolean | `default.jsonMode` on the default provider, off on its own | |
 | `timeoutSeconds` | number, 5 to 300 | `default.timeoutSeconds` | |
-| `maxTokens` | integer, 16 to 4000 | see above | The most tokens the answer may hold. |
+| `reasoningEffort` | as above | `default.reasoningEffort` while it uses the default model, else none | Its model's. |
+| `maxTokens` | integer, 16 to 4000 | see above | The most tokens the answer may hold, a reasoning model's thinking included. |
 | `temperature` | number, 0 to 2 | see above | Higher is more varied. Left out of the request to OpenAI's own `gpt-5` models (at `api.openai.com`); a model that refuses it (a 400 naming `temperature`: it takes only its default) is asked again without, and its client sends it none from then on. |
+
+**A reasoning model** spends part of `maxTokens` thinking before it writes, and a different part each time: at the
+defaults, one may now and then spend all of a DM turn's 400 before writing a word (an opener's 500: one that also had
+a plan to own up to ran out 6 times in 16 at 300 at `reasoningEffort: low`, once in 16 at 500). The model client asks once more at
+once when an answer comes back empty, and the turn is retried minutes later if that one is empty too (its error names
+the limit). Measured on one such model, a DM turn that weighs a plan in its calendar answered half the time at 400 with
+its default effort, every time at 800, and every time, three times faster, with `reasoningEffort: none`:
+
+```yaml
+models:
+  default:
+    baseUrl: https://api.openai.com/v1
+    model: a-reasoning-model
+    reasoningEffort: none   # or low; else raise each task's maxTokens
+```
 
 **A task on a provider of its own** (its own `baseUrl`) takes nothing of the default provider but its timeout: no key,
 no model, no `jsonMode`. It names its own `model` and `apiKeyEnv` (empty for none), and `parseSettings` refuses it
@@ -398,11 +413,12 @@ Unknown keys here are refused.
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `watching.halfLifeSeconds` | number, 1 to 3600 | `90` | While it writes a reply to anyone it is on its phone; after, the chance it still is starts at 1 and halves every this many seconds (an interruption since ends it). On its phone, a message from anyone is noticed after the short lag below. |
+| `watching.holdSeconds` | number, 0 to 3600 | `60` | While it writes a reply to anyone it is on its phone, and for this many seconds after, waiting for the answer (an interruption since ends it). On its phone, a message from anyone is noticed after the short lag below. |
+| `watching.halfLifeSeconds` | number, 1 to 3600 | `90` | After `holdSeconds`, the chance it is still on its phone halves every this many seconds. |
 | `watching.chatHalfLifeSeconds` | number, 1 to 3600 | `90` | The same for one person's chat: the chance it still has it open, which weighs who goes first when several wait (`priority`). |
-| `watching.medianSeconds` | number, 0.1 to 600 | `4` | The lag before it answers while watching (also every delay on a short break, when it is on its phone anyway): half are shorter. |
-| `watching.p90Seconds` | number, 0.1 to 3600 | `8` | Nine in ten are shorter; above `medianSeconds`. |
-| `watching.delaySeconds` | range | `[2, 20]` | The shortest and longest lag. |
+| `watching.medianSeconds` | number, 0.1 to 600 | `1.5` | The lag before it answers while watching (also every delay on a short break, when it is on its phone anyway): half are shorter. |
+| `watching.p90Seconds` | number, 0.1 to 3600 | `4` | Nine in ten are shorter; above `medianSeconds`. |
+| `watching.delaySeconds` | range | `[0.5, 10]` | The shortest and longest lag. |
 | `glance.medianSeconds` | number, 1 to 3600 | `40` | Off its phone: the time until it next looks at its messages, drawn when the first message comes in; everyone who writes before that look is noticed at it, together. Half its looks come sooner. |
 | `glance.p90Seconds` | number, 1 to 7200 | `150` | Nine in ten come sooner; above `medianSeconds`: how long the tail is. |
 | `glance.delaySeconds` | range | `[4, 900]` | The shortest and longest of those; the least is also the shortest time a reply must still fit in its span. |
@@ -413,18 +429,18 @@ Unknown keys here are refused.
 | `priority.weighted` | boolean | `true` | When several are due at once: picked at random by weight (closeness, how much their conversation matters now, whether it still watches their chat, how long they waited). `false`: in the order they came due. |
 | `priority.agingMinutes` | number, 0.1 to 120 | `2` | Minutes of waiting that add their whole weight again (1 + waited / agingMinutes): nobody waits forever. |
 | `priority.importanceHalfLifeMinutes` | number, 1 to 1440 | `30` | Minutes over which the importance of their conversation fades halfway back to an ordinary chat's. |
-| `typingCharsPerSecond` | drawn range, floor 0.5, normal | `[3.5, 7]` | The typing indicator shows for as long as the message would take. |
-| `typingDurationSeconds` | range | `[1.5, 45]` | The shortest and longest typing time for one message (thinking pauses come on top). |
+| `typingCharsPerSecond` | drawn range, floor 0.5, normal | `[4.5, 8]` | The typing indicator shows for as long as the message would take (a fast texter's speed). Whatever the model takes past the reading is taken off the first message's typing (never under `typingDurationSeconds`' least). |
+| `typingDurationSeconds` | range | `[0.8, 45]` | The shortest and longest typing time for one message (thinking pauses come on top). |
 | `readingCharsPerSecond` | drawn range, floor 1, normal | `[15, 25]` | How fast it reads: before typing it waits as long as their unread messages (together) take to read, with or without a `markRead` receipt (see [channels](./channels.md#typing-read-receipts-and-thinking-pauses)). |
-| `readingDurationSeconds` | range | `[1, 20]` | The shortest and longest that reading takes. |
+| `readingDurationSeconds` | range | `[0.3, 20]` | The shortest and longest that reading takes. |
 | `looking` | drawn | `[1.5, 5]`, lognormal | Seconds it spends on each photo, on top of the reading. |
 | `thinkingPauses.chance` | number, 0 to 1 | `0` | The chance of each pause while a long message is typed (typing off a moment, then on again); `0`: none. |
 | `thinkingPauses.minChars` | integer, 1 or more | `120` | The shortest message, in characters, that may have a pause. |
 | `thinkingPauses.max` | integer, 1 to 3 | `2` | The most pauses in one message. |
 | `thinkingPauses.seconds` | drawn range, lognormal | `[2, 6]` | How long each pause lasts; it adds to the typing time. Unknown keys under `thinkingPauses` are refused too. |
-| `burst.settleSeconds` | drawn range, lognormal | `[2, 5]` | Quiet after their newest message before it starts writing the reply: a message in that time starts the wait again. `[0, 0]` for none. |
+| `burst.settleSeconds` | drawn range, lognormal | `[0.5, 2]` | Quiet after their newest message before it starts writing the reply: a message in that time starts the wait again. `[0, 0]` for none. |
 | `burst.maxSettleResets` | integer, 0 to 20 | `3` | The most messages that may start that wait again; past them it starts writing anyway. |
-| `burst.restartOnNewMessage` | boolean | `true` | A message that comes in while it writes the reply, before the reply's first message is sent, drops the draft: it is written again with that message read. `false`: that message gets a turn of its own once this one is sent. |
+| `burst.restartOnNewMessage` | boolean | `true` | A message that comes in while it writes the reply, before half of the reply's first message is typed, drops the draft: typing stops once it notices (the `watching` lag), and it is written again with that message read. Past half, the draft is sent first. `false`: that message gets a turn of its own once this one is sent. |
 | `burst.maxRestarts` | integer, 1 to 5 | `1` | The most times in a row one reply may be written again so. Each dropped draft was paid for (a whole DM turn of tokens): `settingsWarnings` warns above 1 (`personaWarnings` for a persona's own). Unknown keys under `burst` are refused too. |
 | `betweenReplyMessagesSeconds` | drawn range, lognormal | `[0.8, 3.5]` | Between two messages of the same reply. |
 | `replySplitChance` | number, 0 to 1 | `0.35` | Chance that a single reply over 90 characters is sent as two messages. |
@@ -481,12 +497,14 @@ within `typingDurationSeconds`; a message of `thinkingPauses.minChars` or more t
 
 ### `context`
 
-`false` leaves that text out of the prompt; nothing else changes (hours, presence and pacing included).
+`false` (or `0`) leaves that text out of the prompt; nothing else changes (hours, presence and pacing included).
 
 | Key | Type | Default | What the model is told |
 | --- | --- | --- | --- |
 | `situation` | boolean | `true` | What it is doing now; in a DM near the end of a span, the wrap-up. |
 | `upcoming` | boolean | `true` | What comes next and when it is online again. |
+| `week` | boolean | `true` | Its usual week, from its `schedule` (every range at its middle, rounded): "Monday to Friday you're at work from about 9:00 AM to 5:15 PM and online from about 7:30 PM to 11:45 PM. …", in DMs, openers and group chats, so it can say what it does on a Thursday or at the weekend. The same every day, early in the prompt, where a provider's prompt cache keeps it. |
+| `daysAhead` | integer, 0 to 7 | `3` | How many days after today it is told exactly, as its agenda drew them: "Tomorrow you're at work from about 9:10 AM to 5:20 PM and online from about 7:45 PM to 11:50 PM. …", a day off and a skipped one too. `0`: none. |
 | `awayContext` | boolean | `true` | In DMs, that their messages came in while it was offline. |
 | `relationship` | boolean | `true` | In DMs, how well it knows and likes the person, and how that went lately (`relationship`). |
 | `timeSince` | boolean | `true` | How long since each side wrote in DMs, and since the last line in a group chat. |
@@ -503,7 +521,8 @@ within `typingDurationSeconds`; a message of `thinkingPauses.minChars` or more t
 
 Texting first, off by default: the persona may start a DM conversation itself, through its reply queue, with someone
 who wrote to it before, on a channel the app allows (`queue.allowInitiative`): to follow up on something, to check in
-with someone close gone quiet, or to share its day. The code decides who and when, with
+with someone close gone quiet, to share its day, or to say sorry for a plan it called off on them (with its
+calendar on). The code decides who and when, with
 guardrails no setting relaxes; the model decides whether to text and what, and may decline. See
 [concepts](./concepts.md#texting-first).
 
@@ -528,6 +547,88 @@ guardrails no setting relaxes; the model decides whether to text and what, and m
 Each opener costs about one DM turn of tokens, sent or declined, from the share of the daily budget DMs don't keep for
 themselves (the service settings' [`text.directMessageReserve`](#text)): openers stop before replies run short. A
 failed or budget-refused opener is not tried again.
+
+### `calendar`
+
+Its calendar, off by default: plans laid over the agenda its schedule draws, its own (made in a DM turn) and the
+app's (`store.addEvent`). A plan of its own is somewhere it will be ("at a friend's for dinner", busy and so offline
+then); time it makes to chat is online time for everyone at an hour it would be offline. The model proposes, in the
+`plan` field of a DM turn's answer; the code checks each against guardrails no setting relaxes (below) and refuses,
+audited, one that doesn't fit. DM turns and openers list its coming plans, and its coming days and its "now" and
+"next" lines include them. See [concepts](./concepts.md#its-calendar).
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `enabled` | boolean | `false` | Whether it has a calendar. Off, no event is read (the app's neither) and no prompt says anything of it. |
+| `plans.enabled` | boolean | `true` | A DM turn may make a plan of its own, or call one off. |
+| `plans.maxDays` | integer, 0 to 365 | `60` | The furthest ahead any plan may be, in days (0: later today); how far ahead its coming plans are listed. |
+| `plans.perWeek` | integer, 1 to 20 | `4` | The most plans of its own it makes in any 7 days, those called off counting too. |
+| `plans.maxHours` | number, 1 to 24 | `12` | The longest plan of its own. |
+| `makeTime.enabled` | boolean | `true` | A DM turn may make time to chat with the person at an hour it would be offline, or call off time it made. |
+| `makeTime.maxMinutes` | integer, 15 to 240 | `120` | The longest time it makes. |
+| `makeTime.perPersonDays` | number, 1 to 90 | `7` | At least this many days between two made for the same person. |
+| `shown` | integer, 1 to 20 | `6` | How many of its coming plans a DM turn and an opener list, with its number each one that conversation may call off. |
+| `sharing.enabled` | boolean | `true` | Whether others may hear the words of a plan made with someone, as its `share` and their levels allow. Off: nobody else ever hears a plan's own words, nor whom time was made for; they hear its public words. |
+| `sharing.personal.familiarity` | number, 0 to 1 | `0.48` | From which familiarity level (a level's `from`; the shipped "getting close") someone hears a `personal` plan's words (it names someone, their party) and whom time was made for. Measured live: below it, one of its regulars heard which friend it dropped them for, nearly every time. |
+| `sharing.personal.affinity` | number, -1 to 1 | none | And from which affinity level, while affinity is kept. |
+| `sharing.confidential.familiarity` | number, 0 to 1 | `0.82` | From which familiarity level (the shipped "one of the people closest to you") someone hears a `confidential` plan's words, told in confidence. |
+| `sharing.confidential.affinity` | number, -1 to 1 | `0.6` | And from which affinity level (the shipped "really fond"), while affinity is kept. |
+
+`sharing.personal` or `sharing.confidential` set to `false` shares those plans with nobody. A key left out keeps its
+default, so `confidential: { familiarity: 0.9 }` keeps its affinity of `0.6`; `affinity: -1` drops the affinity gate.
+The thresholds read best at a level's `from`, as `relationship.familiarity.levels` and `relationship.affinity.levels`
+set them.
+
+What the code checks, whatever the settings say:
+
+- every plan is at least 15 minutes, on a day from today to `plans.maxDays` (counted from the date its turn was written,
+  so a turn kept just past midnight keeps its day), and starts after the turn that made it;
+- every length counts as the time passes: 10 PM to midnight on a night the clock goes back is three hours;
+- a plan of its own has a reason of 2 to 40 characters, only Latin letters once read plain (look-alike letters as the
+  plain ones, accents off), digits, spaces and `, . ' ’ & -` (a few plain words, which every prompt quotes as data),
+  never sleep (joined to other words, as "sleepover", and in the other languages most likely too: what the model
+  writes is held to the strictest), never talking with them ("online", "chatting": a busy plan is time away from
+  the phone), never "them" or "their" (whose is not sure; "you" and "your" mean the person it was made with, and anyone
+  else who may hear it hears their name: "at Sam's party"), and lies over no other plan in its calendar (bar a promise
+  it may break), the app's too; over its routine
+  it wins (an appointment cuts a work day in two); its public words, held to the same, never say "you" or "your"
+  either (else they are left out), and own words that do are never `open` (at least `personal`: anyone else who
+  hears them hears a name);
+- time made to chat lies between 7 AM and midnight, over no busy block (its routine's, one of the day before that runs
+  into it, as a night shift until 8 AM, or a plan's), and never makes the day's online time longer than its
+  schedule's longest day by more than `makeTime.maxMinutes`; at an hour it is online for every channel anyway it adds
+  nothing but is kept, so no plan of its own takes that time later (unless another for them is too soon: then it is
+  left out, and not told, since nothing was broken; over a promise to someone else that would be broken, refused as
+  too soon, and told);
+- it calls off only its own plans of a kind it may make now, still ahead; a plan called off still counts toward
+  `perWeek` and `perPersonDays` (time broken on someone for someone else doesn't count toward theirs), and
+  `store.sweep` keeps the persona's own plans of the last 90 days for that;
+- a plan in place of one (`cancel` in it) is both or neither: the new one checked on the day without the old, a plan
+  of theirs moved counted once toward the limits (another's it breaks for it, no move, counts); refused, or written so
+  the code can't read it, the old one stands (with nothing to replace, no such plan or one over, the new one alone);
+- a promise to someone (time made to chat with them, or a plan the model marked as with or for them) is called off in
+  a turn with someone else, by its number or by a plan over it, only when that person is not less close to it than the
+  one it was made with (their familiarity and, while it is kept, affinity levels, summed: one level apart is about as
+  close), and by a plan over it only when that turn listed it (`shown`): one it never weighed is a clash. The one it was broken on is told, at their next turn, and by an apology while texting first is on (or by a
+  follow-up already planned, which an apology never replaces);
+- a plan made with someone who then ends it (stops, blocks it, is denied) no longer stands: nobody is left to call it
+  off with, and it lapses: if they come back (`store.unblock`, `store.undeny`), it is called off for good (if still
+  ahead), as by them
+  (hidden while they were away, its time may be another's now), counting toward the limits as any plan called off
+  with them.
+
+Each outcome is audited: `plan_added`, `plan_cancelled`, `plan_called_off` (a promise broken for someone else),
+`plan_lapsed` (one with someone who ended it, as they came back), or
+`plan_refused` with its reason (`unreadable` for a `plan` the code couldn't read). A refused plan is told, once, to the
+next turn with that person that replies (when it was for, and why), so a promise the model made can be put right;
+once its time has passed, to own up to, and two weeks past, not at all.
+
+What others hear of a plan made with someone is its own words as its `share` (chosen by the model) and their levels
+allow (`sharing`), else its public words, also chosen by the model; group chats, with no one person, hear an `open`
+plan's words and only the public words of the rest. A `confidential` plan is told in confidence: the model is told so, and to ask them to keep it to
+themselves. The persona's notes about itself (`self`), written by the model and read in every conversation, are not
+held to this: what one person told it could still reach another through them. Interruptions (`pacing.interruptions`)
+stay those of its routine.
 
 ## Service settings
 
@@ -625,8 +726,8 @@ For a config check command (none of them starts anything or touches the network)
 - **`settingsWarnings(settings)`**: the same for settings: a reply that may be written again more than once
   (`pacing.burst.maxRestarts`), and no text provider.
 - **`personaReport(persona, { settings, now, status? })`**: lines describing what is in effect: its prompt's length,
-  what it is doing now (or `status`), today's and tomorrow's agenda, today's
-  interruptions and its models.
+  what it is doing now (or `status`), today's and tomorrow's agenda (its routine: it reads no store, so no calendar),
+  today's interruptions and its models.
 - **`samplePrompt({ persona, settings, identity?, style?, channel, extraLines?, now, policy? })`**: the system prompt of
   a sample DM turn on `channel`, built by the brain itself on a throwaway in-memory store. Offline at `now`, it is
   taken a minute into the next span on that channel, so the lines about its day show.

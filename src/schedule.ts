@@ -5,8 +5,9 @@ import type { ChannelId } from './channel.js';
 
 /**
  * A persona's agenda: for each local date, the exact online spans and busy blocks drawn from its hours (config/hours.ts
- * `schedule`), in its own time zone. Each day is seeded by the persona and the date, so a restart draws the same agenda.
- * A block belongs to the day whose plan made it, past midnight too.
+ * `schedule`), in its own time zone, with its calendar's events laid over them when its hours carry one (`Hours.events`,
+ * calendar.ts). Each day is seeded by the persona and the date, so a restart draws the same agenda. A block belongs to
+ * the day whose plan made it, past midnight too.
  */
 
 /** 0 = Monday. */
@@ -16,26 +17,68 @@ export interface LocalDate {
 	month: number;
 	day: number;
 }
+/**
+ * A plan in a persona's calendar (calendar.ts, settings.calendar), laid over the agenda its schedule draws: `busy`,
+ * somewhere it will be (offline then, with `what` as its reason), or `online`, time it made to chat.
+ */
+export interface CalendarEvent {
+	id: number;
+	kind: 'busy' | 'online';
+	/** Its local date, and its times in minutes of that day: `to` past 1440 runs past midnight. */
+	day: LocalDate;
+	from: number;
+	to: number;
+	/** A busy one's reason, completing "you're ..."; empty for an online one. */
+	what: string;
+	/** Who put it there: the persona in a turn with `personId` (whose words its reason are), or the app. Left out: the app. */
+	source?: 'persona' | 'app';
+	personId?: number | null;
+	/**
+	 * For one the persona made with someone: how widely its words may be told (calendar.ts sightOf; `personal` when left
+	 * out), the words anyone may hear instead (`public`), and whether it is a busy plan with or for that person, a
+	 * promise (false for time made to chat, a promise by its kind: calendar.ts isPromise).
+	 */
+	share?: 'open' | 'personal' | 'confidential';
+	public?: string | null;
+	withThem?: boolean;
+}
 /** What the agenda needs of a persona (a PersonaConfig satisfies it). */
 export interface Hours {
 	id: string;
 	timezone: string;
 	schedule: ScheduleConfig;
+	/**
+	 * Its calendar's events from one local date to another, both included, laid over each drawn day (`agendaOn`); none
+	 * when left out (calendar.ts calendarHours).
+	 */
+	events?: (from: LocalDate, to: LocalDate) => readonly CalendarEvent[];
 }
-/** Online time: `online` allows everything, `break` only DMs. `on` undefined = every channel. `day` = the agenda day it belongs to. */
+/**
+ * Online time: `online` allows everything, `break` only DMs. `on` undefined = every channel. `day` = the agenda day it
+ * belongs to. `event`: the calendar event that made it (time it made to chat), if one did.
+ */
 export interface Span {
 	kind: 'online' | 'break';
 	start: number;
 	end: number;
 	on?: readonly ChannelId[];
 	day: LocalDate;
+	event?: number;
 }
-/** Offline time with a reason that completes "you're ...". */
+/**
+ * Offline time with a reason that completes "you're ...". `event`: the calendar event it is, if it is one; `madeWith`:
+ * the person it made that plan with in a DM turn, whose words the reason are, with how widely they may be told
+ * (`share`) and the words anyone may hear (`public`): prompts.ts busyText tells each prompt what its reader may hear.
+ */
 export interface Busy {
 	reason: string;
 	start: number;
 	end: number;
 	day: LocalDate;
+	event?: number;
+	madeWith?: number;
+	share?: 'open' | 'personal' | 'confidential';
+	public?: string;
 }
 export interface DayAgenda {
 	day: LocalDate;
@@ -395,8 +438,8 @@ function drawAgenda({ id, timezone, schedule }: Hours, day: LocalDate): DayAgend
 const agendas = new WeakMap<ScheduleConfig, Map<string, DayAgenda>>();
 const CACHED_DAYS = 16;
 
-/** The persona's agenda for one local date: drawn once, then kept (the newest 16 days per schedule). */
-export function agendaOn(hours: Hours, date: LocalDate): DayAgenda {
+/** The persona's routine for one local date, as its schedule draws it, its calendar left out: drawn once, then kept (the newest 16 days per schedule). */
+export function routineOn(hours: Hours, date: LocalDate): DayAgenda {
 	let days = agendas.get(hours.schedule);
 	if (!days) agendas.set(hours.schedule, (days = new Map()));
 	const key = `${hours.id}|${hours.timezone}|${date.year}-${date.month}-${date.day}`;
@@ -407,6 +450,86 @@ export function agendaOn(hours: Hours, date: LocalDate): DayAgenda {
 		if (days.size > CACHED_DAYS) days.delete(days.keys().next().value!);
 	}
 	return agenda;
+}
+
+const withCalendar = new WeakMap<ScheduleConfig, Map<string, DayAgenda>>();
+
+/**
+ * The persona's agenda for one local date: its routine (`routineOn`), with its calendar's events over it (`withEvents`):
+ * those of that date, and the busy ones of the dates either side, which may reach into its blocks past midnight (as may
+ * the routine busy blocks of the days either side into time made to chat: a night shift until 8 AM). A day with events is kept
+ * for those exact events (the newest 16 days per schedule), so it is laid out again only once they change: placing
+ * them is the costly part, every time in its time zone.
+ */
+export function agendaOn(hours: Hours, date: LocalDate): DayAgenda {
+	const routine = routineOn(hours, date);
+	const near = hours.events?.(addDays(date, -1), addDays(date, 1)) ?? [];
+	if (!near.length) return routine;
+	let days = withCalendar.get(hours.schedule);
+	if (!days) withCalendar.set(hours.schedule, (days = new Map()));
+	const key = JSON.stringify([hours.id, hours.timezone, date, near]);
+	let agenda = days.get(key);
+	if (!agenda) {
+		const around = [...routineOn(hours, addDays(date, -1)).busy, ...routineOn(hours, addDays(date, 1)).busy];
+		agenda = withEvents(routine, near, hours.timezone, around);
+		days.set(key, agenda);
+		if (days.size > CACHED_DAYS) days.delete(days.keys().next().value!);
+	}
+	return agenda;
+}
+
+/** `blocks` without the time of `cuts`: a block a cut falls inside of is split in two, a piece under a minute dropped. */
+const without = <B extends { start: number; end: number }>(blocks: readonly B[], cuts: readonly { start: number; end: number }[]): B[] =>
+	cuts.reduce<B[]>(
+		(left, cut) =>
+			left.flatMap((block) =>
+				cut.end <= block.start || block.end <= cut.start
+					? [block]
+					: [{ ...block, end: cut.start }, { ...block, start: cut.end }].filter((piece) => piece.end - piece.start >= MINUTE),
+			),
+		[...blocks],
+	);
+
+/** Online spans for every channel that overlap or touch, as one: time it made to chat runs on from its usual evening. */
+const joined = (spans: readonly Span[]) =>
+	[...spans].sort(byStart).reduce<Span[]>((out, span) => {
+		const last = out.at(-1);
+		const merges = last && last.kind === 'online' && span.kind === 'online' && !last.on && !span.on && span.start <= last.end;
+		if (merges) out[out.length - 1] = { ...last, end: Math.max(last.end, span.end) };
+		else out.push(span);
+		return out;
+	}, []);
+
+const sameDay = (a: LocalDate, b: LocalDate) => a.year === b.year && a.month === b.month && a.day === b.day;
+
+/**
+ * A drawn day with its calendar's events over it (`events`: those of its date and of the dates either side). Every busy
+ * event takes its time out of the day's spans and busy blocks (a dentist's hour cuts a work day in two); those of its
+ * date are busy blocks of its own. An online event of its date is online time for every channel outside every busy
+ * block (the routine's of the days either side too, `around`: a night shift until 8 AM, or one from 1 AM after an app's
+ * evening past midnight), joined to the online time it touches; a short break is what is left of it outside online
+ * time for every channel.
+ */
+function withEvents(routine: DayAgenda, events: readonly CalendarEvent[], timeZone: string, around: readonly Busy[] = []): DayAgenda {
+	const instants = (event: CalendarEvent) => ({ start: zonedToUtc(event.day, event.from, timeZone), end: zonedToUtc(event.day, event.to, timeZone) });
+	const busyEvents: Busy[] = events
+		.filter((event) => event.kind === 'busy')
+		.map((event) => ({
+			reason: event.what,
+			...instants(event),
+			day: event.day,
+			event: event.id,
+			...(event.source === 'persona' &&
+				typeof event.personId === 'number' && { madeWith: event.personId, share: event.share ?? 'personal', ...(event.public && { public: event.public }) }),
+		}));
+	const own = <B extends { day: LocalDate }>(blocks: B[]) => blocks.filter((block) => sameDay(block.day, routine.day));
+	const busy = tidy([...without(routine.busy, busyEvents), ...own(busyEvents)]);
+	const made: Span[] = own(events.filter((event) => event.kind === 'online').map((event) => ({ kind: 'online' as const, ...instants(event), day: event.day, event: event.id })));
+	const online = joined(tidy([...without(routine.spans, busyEvents), ...without(made, [...busyEvents, ...busy, ...around])]));
+	// A short break is DM time within online time for every channel: only what lies outside it stays a break
+	const everywhere = online.filter((span) => span.kind === 'online' && !span.on);
+	const spans = tidy(online.flatMap((span) => (span.kind === 'break' ? without([span], everywhere) : [span])));
+	return { ...routine, spans, busy };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -473,6 +596,52 @@ export function situationAt(hours: Hours, now: number, channel: ChannelId): Situ
 
 /** Always the middle of a range. */
 const MIDDLE: Rng = () => 0.5;
+
+/** A block of a usual day: its kind, its times in minutes of the day (past 1440 for one that runs past midnight), how often it happens. */
+export interface UsualBlock {
+	kind: 'online' | 'break' | 'busy';
+	/** A busy block's reason, completing "you're ...". */
+	reason?: string;
+	from: number;
+	to: number;
+	/** Its `chance`: 1 every day it is planned. */
+	chance: number;
+}
+/** A weekday as its plan usually goes (`usualWeek`): its blocks in order, and the chance of a day with no online time. */
+export interface UsualDay {
+	weekday: Weekday;
+	blocks: readonly UsualBlock[];
+	skipDayChance: number;
+}
+
+/** Minutes rounded to the nearest quarter hour: a usual time is only ever roughly that. */
+const quarter = (minutes: number) => Math.round(minutes / 15) * 15;
+
+/**
+ * How each weekday usually goes, Monday first, from the config alone (never a drawn day, so it stays the same every
+ * day): every block at the middle of its ranges, rounded to the quarter hour, with its chance; a break at its middle
+ * start, as long as its middle length; with `channel`, only the online time on it (`isOn`). What a prompt says of the
+ * persona's usual week (prompts.ts usualWeekPrompt).
+ */
+export function usualWeek(schedule: ScheduleConfig, channel?: ChannelId): UsualDay[] {
+	return WEEKDAYS.map((_, index) => {
+		const weekday = index as Weekday;
+		const plan = planFor(schedule, weekday);
+		const ranged = (kind: 'online' | 'busy', block: { start: ClockRange; end: ClockRange; chance: number }, reason?: string): UsualBlock => {
+			const [from, to] = timesOf(MIDDLE, block);
+			return { kind, ...(reason !== undefined && { reason }), from: quarter(from), to: quarter(to), chance: block.chance };
+		};
+		const blocks: UsualBlock[] = [
+			...(plan?.online ?? []).filter((block) => isOn(block, channel)).map((block) => ranged('online', block)),
+			...(plan?.busy ?? []).map((block) => ranged('busy', block, block.reason)),
+			...(plan?.breaks ?? []).filter((block) => isOn(block, channel)).map((block) => {
+				const from = quarter(pick(MIDDLE, rangeOf(block.start)));
+				return { kind: 'break' as const, from, to: from + between(MIDDLE, ...block.minutes), chance: block.chance };
+			}),
+		];
+		return { weekday, blocks: blocks.sort((a, b) => a.from - b.from), skipDayChance: plan?.skipDayChance ?? schedule.skipDayChance };
+	});
+}
 
 /** Online minutes on each weekday (0 = Monday), from the middle of every range, chances and skips aside: for a config check's warnings. */
 export function onlineMinutesByWeekday(schedule: ScheduleConfig): number[] {

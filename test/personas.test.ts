@@ -188,18 +188,15 @@ describe('the persona folder (loadPersonas)', () => {
 		]);
 	});
 
-	it('refuses school as a busy reason for 18+ conversations (adult)', () => {
+	it('takes school as a busy reason: adults go to school too', () => {
 		const files = virtual({ [at('test.md')]: markdown(fileConfig({ schedule: { days: { 'mon-sun': { busy: [{ reason: 'at school', start: ['08:00', '08:00'], end: ['15:00', '15:00'] }] } } } })) });
 		expect(loadPersonas({ dir, channels: { test: ['forum'] }, files }).issues).toEqual([]);
-		expect(loadPersonas({ dir, channels: { test: ['forum'] }, files, adult: true }).issues).toEqual([
-			`${at('test.md')} › schedule.days.mon-sun.busy.0.reason: no school or student framing (personas are adults); "at an evening class" at most (got "at school")`,
-		]);
 	});
 });
 
 describe('the example persona file', () => {
 	it('loads as written, from disk (examples/personas/robin.md, shown in docs/configuration.md)', () => {
-		const loaded = loadPersonas({ dir: fileURLToPath(new URL('../examples/personas', import.meta.url)), channels: { robin: ['chat'] }, adult: true });
+		const loaded = loadPersonas({ dir: fileURLToPath(new URL('../examples/personas', import.meta.url)), channels: { robin: ['chat'] } });
 		expect(loaded.issues).toEqual([]);
 		expect(loaded.personas[0]).toMatchObject({ id: 'robin', name: 'Robin', timezone: 'Europe/Lisbon' });
 		expect(loaded.personas[0]!.prompt).toMatch(/^You are Robin, 29,[^]*kindly\.$/);
@@ -231,20 +228,13 @@ describe('hours', () => {
 
 	const busyAs = (reason: string) => testPersona({ schedule: { days: { 'mon-sun': { busy: [{ reason, start: ['18:00', '18:00'], end: ['19:30', '19:30'] }] } } } });
 	const refused = (reason: string, message: string) => [`schedule.days.mon-sun.busy.0.reason: ${message} (got "${reason}")`];
-	const SCHOOL = 'no school or student framing (personas are adults); "at an evening class" at most';
 
-	it('refuses sleep as a busy reason, with or without adult', () => {
+	it('refuses sleep as a busy reason', () => {
 		expect(issuesOf(busyAs('asleep'))).toEqual(refused('asleep', 'sleep is never a busy reason (the night is simply offline)'));
-		expect(issuesOf(busyAs('asleep'), { adult: true })).toEqual(refused('asleep', 'sleep is never a busy reason (the night is simply offline)'));
 	});
 
-	it('refuses school as a busy reason for 18+ conversations (adult), "at an evening class" aside', () => {
-		for (const reason of ['at school', 'at a yoga class', 'doing homework']) expect(issuesOf(busyAs(reason), { adult: true })).toEqual(refused(reason, SCHOOL));
-		expect(personaOf(busyAs('at an evening class'), { adult: true }).schedule.days['mon-sun']!.busy[0]!.reason).toBe('at an evening class');
-	});
-
-	it('takes school as a busy reason without adult', () => {
-		expect(personaOf(busyAs('at school')).schedule.days['mon-sun']!.busy[0]!.reason).toBe('at school');
+	it('takes school, classes and exams as busy reasons: adults go to school too', () => {
+		for (const reason of ['at school', 'at a yoga class', 'doing homework', 'at a lecture', 'at university']) expect(personaOf(busyAs(reason)).schedule.days['mon-sun']!.busy[0]!.reason).toBe(reason);
 	});
 });
 

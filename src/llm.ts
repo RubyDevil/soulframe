@@ -175,7 +175,7 @@ export function createConfiguredLlm({
 			const apiKey = apiKeyEnv ? apiKeyOf(apiKeyEnv) : '';
 			const openAi = new URL(baseUrl).hostname === 'api.openai.com';
 			// Checked and counted within its turn, so the calls waiting behind the concurrency limit never spend past their share
-			const text = await limit(async () => {
+			const ask = () => limit(async () => {
 				// A photo is looked at only in a DM, so it spends what is kept for them
 				if (meter?.exceeded(task === 'directMessage' || task === 'vision' ? 1 : 1 - budget.directMessageReserve)) throw new LlmBudgetError();
 				const which = `${baseUrl} ${model}`;
@@ -186,6 +186,7 @@ export function createConfiguredLlm({
 						...(openAi ? { max_completion_tokens: used.maxTokens } : { max_tokens: used.maxTokens }),
 						...(temperature && { temperature: used.temperature }),
 						...(used.jsonMode && json && { response_format: { type: 'json_object' } }),
+						...(used.reasoningEffort && { reasoning_effort: used.reasoningEffort }),
 					}, used.timeoutSeconds * 1000, () => between(rng, 2_000, 6_000), 'LLM');
 				// OpenAI's gpt-5 models take only their default temperature, and so do others: one that refuses it is asked again without, and remembered
 				const temperature = !(openAi && model.startsWith('gpt-5')) && !noTemperature.has(which);
@@ -197,15 +198,22 @@ export function createConfiguredLlm({
 					noTemperature.add(which);
 					answered = await request(false);
 				}
-				const body = answered as { choices?: { message?: { content?: string } }[]; usage?: { total_tokens?: number } };
+				const body = answered as { choices?: { message?: { content?: string }; finish_reason?: string }[]; usage?: { total_tokens?: number } };
 				const answer = body.choices?.[0]?.message?.content?.trim();
+				// Cut at its answer limit: a model that reasons first may have spent it all before writing
+				const spent = body.choices?.[0]?.finish_reason === 'length';
 				// A provider that reports no usage is counted at about four characters a token
 				const images = messages.reduce((sum, message) => sum + (message.images?.length ?? 0), 0);
 				meter?.add(body.usage?.total_tokens ?? Math.ceil((JSON.stringify(messages, (key, value: unknown) => (key === 'images' ? undefined : value)).length + (answer?.length ?? 0)) / 4) + images * IMAGE_TOKENS);
-				return answer;
+				return { answer, spent };
 			});
-			if (!text) throw new Error('LLM answered no text');
-			return text;
+			// A model now and then answers nothing at all: asked once more at once, rather than the turn failing into a retry
+			// minutes later. Its answer limit spent too: a reasoning model thinks for a different length each time, and the
+			// second ask often fits (the error says so when it doesn't: raise maxTokens, or lower reasoningEffort)
+			let asked = await ask();
+			if (!asked.answer) asked = await ask();
+			if (!asked.answer) throw new Error(asked.spent ? `LLM answered no text: its answer limit (maxTokens ${used.maxTokens}) was spent, its reasoning included` : 'LLM answered no text');
+			return asked.answer;
 		},
 	};
 }

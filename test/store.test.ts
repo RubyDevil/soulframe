@@ -268,10 +268,13 @@ describe('forgetting and resetting', () => {
 	it('keeps the ended people of a persona and their audit lines, unless includeEnded', () => {
 		const { store, ana, bo } = populated();
 		store.updatePerson(bo.id, { state: 'blocked' });
+		// A promise to Bo broken for Ana: kept about Bo, without Ana
+		store.audit('robin', 'plan_called_off', { personId: bo.id, eventId: 1, for: ana.id });
 		expect(store.resetPersona('robin')).toEqual({ people: 1, messages: 2 });
 		expect(store.personById(bo.id).state).toBe('blocked');
 		expect(store.history(bo.id)).toHaveLength(2);
-		expect(store.auditLog('robin').map((row) => row.detail.personId)).toEqual([bo.id]);
+		expect(store.auditLog('robin').map((row) => row.detail.personId)).toEqual([bo.id, bo.id]);
+		expect(store.auditLog('robin')[0]!.detail).toEqual({ personId: bo.id, eventId: 1 });
 		expect(() => store.personById(ana.id)).toThrow();
 		expect(store.resetPersona('robin', { includeEnded: true })).toEqual({ people: 1, messages: 2 });
 		expect(store.auditLog('robin')).toEqual([]);
@@ -389,5 +392,267 @@ describe('openers', () => {
 		store.addMessage(sam.id, 'chat', 'out', 'me too', Date.UTC(2026, 9, 17, 4));
 		expect(store.firstInAfter(sam.id, Date.UTC(2026, 9, 16))).toBe(Date.UTC(2026, 9, 16, 23, 5));
 		expect(store.firstInAfter(sam.id, Date.UTC(2026, 9, 17))).toBeNull();
+	});
+});
+
+describe('calendar events', () => {
+	const friday = { year: 2026, month: 11, day: 20 };
+	const saturday = { year: 2026, month: 11, day: 21 };
+
+	it('keeps a plan with its day and times, lists the standing ones in order, and calls one off once', () => {
+		let at = 1_000;
+		const store = memoryStore(() => at);
+		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const dinner = store.addEvent('robin', { kind: 'busy', day: saturday, from: 18 * 60, to: 22 * 60, what: ' at a friend’s for dinner ', personId: sam.id, source: 'persona' });
+		const call = store.addEvent('robin', { kind: 'online', day: friday, from: 15 * 60, to: 16 * 60, what: 'ignored for online time' });
+		expect(dinner).toEqual({
+			id: dinner.id,
+			persona: 'robin',
+			kind: 'busy',
+			day: saturday,
+			from: 1080,
+			to: 1320,
+			what: 'at a friend’s for dinner',
+			personId: sam.id,
+			source: 'persona',
+			share: 'personal',
+			public: null,
+			withThem: false,
+			createdAt: 1_000,
+			cancelledAt: null,
+			cancelledBy: null,
+		});
+		// The app's by default, its online time with no reason
+		expect(call).toMatchObject({ kind: 'online', what: '', personId: null, source: 'app' });
+		expect(store.events('robin', friday, saturday).map((event) => event.id)).toEqual([call.id, dinner.id]);
+		expect(store.events('robin', saturday, saturday).map((event) => event.id)).toEqual([dinner.id]);
+		expect(store.events('kim', friday, saturday)).toEqual([]);
+		at = 2_000;
+		expect(store.cancelEvent(dinner.id)).toBe(true);
+		expect(store.cancelEvent(dinner.id)).toBe(false);
+		expect(store.eventById(dinner.id)?.cancelledAt).toBe(2_000);
+		expect(store.events('robin', friday, saturday).map((event) => event.id)).toEqual([call.id]);
+	});
+
+	it("keeps a plan's sharing, public words and promise, and counts the promises to someone called off for others", () => {
+		let at = 1_000;
+		const store = memoryStore(() => at);
+		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const kim = store.createPerson('robin', 'chat', 'kim', 'Kim');
+		const party = store.addEvent('robin', { kind: 'busy', day: saturday, from: 1080, to: 1320, what: "at Jo's party", personId: sam.id, source: 'persona', share: 'confidential', public: " at a friend's ", withThem: true });
+		expect(party).toMatchObject({ share: 'confidential', public: "at a friend's", withThem: true });
+		// Online time keeps no public words
+		expect(store.addEvent('robin', { kind: 'online', day: friday, from: 900, to: 960, public: 'x' }).public).toBeNull();
+		const call = store.addEvent('robin', { kind: 'online', day: friday, from: 1000, to: 1060, personId: sam.id, source: 'persona' });
+		const own = store.addEvent('robin', { kind: 'online', day: friday, from: 1100, to: 1160, personId: sam.id, source: 'persona' });
+		at = 5_000;
+		store.cancelEvent(party.id, kim.id);
+		store.cancelEvent(call.id, kim.id);
+		// Called off with Sam, or by the app: no promise broken for someone else; nor a plan only told them
+		store.cancelEvent(own.id, sam.id);
+		const told = store.addEvent('robin', { kind: 'busy', day: saturday, from: 600, to: 700, what: 'at the gym', personId: sam.id, source: 'persona' });
+		store.cancelEvent(told.id, kim.id);
+		expect(store.eventById(party.id)?.cancelledBy).toBe(kim.id);
+		expect(store.calledOffOn('robin', sam.id, 0)).toBe(2);
+		expect(store.calledOffOn('robin', sam.id, 6_000)).toBe(0);
+		expect(store.calledOffOn('robin', kim.id, 0)).toBe(0);
+		// Time made for them, broken for someone else, is no time they had (`unbroken`); called off with them, it is
+		expect(store.eventsMadeSince('robin', 0, { kind: 'online', personId: sam.id })).toBe(2);
+		expect(store.eventsMadeSince('robin', 0, { kind: 'online', personId: sam.id, unbroken: true })).toBe(1);
+		// Kim forgotten: Sam was still let down, for someone forgotten, and the audit keeps it without Kim
+		store.audit('robin', 'plan_called_off', { personId: sam.id, eventId: party.id, for: kim.id });
+		store.forgetPerson(kim.id);
+		expect(store.eventById(party.id)?.cancelledBy).toBe(0);
+		expect(store.calledOffOn('robin', sam.id, 0)).toBe(2);
+		expect(store.eventsMadeSince('robin', 0, { kind: 'online', personId: sam.id, unbroken: true })).toBe(1);
+		expect(store.auditLog('robin')).toEqual([expect.objectContaining({ kind: 'plan_called_off', detail: { personId: sam.id, eventId: party.id } })]);
+	});
+
+	it('adds the columns plans gained to a calendar made before them', () => {
+		const db = openDatabase(':memory:');
+		db.exec('CREATE TABLE events (id INTEGER PRIMARY KEY, persona TEXT NOT NULL, day TEXT NOT NULL, from_minute INTEGER NOT NULL, to_minute INTEGER NOT NULL, kind TEXT NOT NULL, what TEXT NOT NULL, person_id INTEGER, source TEXT NOT NULL, created_at INTEGER NOT NULL, cancelled_at INTEGER)');
+		db.exec("INSERT INTO events (persona, day, from_minute, to_minute, kind, what, person_id, source, created_at) VALUES ('robin', '2026-11-20', 600, 660, 'busy', 'at the dentist', NULL, 'app', 1)");
+		const store = createStore(db, () => 2);
+		expect(store.eventById(1)).toMatchObject({ what: 'at the dentist', share: 'personal', public: null, withThem: false, cancelledBy: null });
+		expect(store.cancelEvent(1)).toBe(true);
+		db.close();
+	});
+
+	it('refuses times that make no block, and a busy plan without what it is', () => {
+		const store = memoryStore();
+		for (const [from, to] of [[600, 600], [600, 500], [-10, 60], [1440, 1500], [0, 1441], [600.5, 700]]) {
+			expect(() => store.addEvent('robin', { kind: 'online', day: friday, from: from!, to: to! })).toThrow('Not a calendar block');
+		}
+		expect(() => store.addEvent('robin', { kind: 'busy', day: friday, from: 600, to: 700, what: '  ' })).toThrow('needs what it is');
+		for (const day of [{ year: 2026, month: 13, day: 1 }, { year: 2026, month: 2, day: 30 }, { year: 2026, month: 11, day: 0 }]) {
+			expect(() => store.addEvent('robin', { kind: 'online', day, from: 600, to: 700 })).toThrow('Not a date');
+		}
+		// Past midnight, up to 24 hours
+		expect(store.addEvent('robin', { kind: 'online', day: friday, from: 1380, to: 1500 }).to).toBe(1500);
+	});
+
+	it("counts the plans it made itself since a time, called off or not, by kind and person; never the app's", () => {
+		let at = 1_000;
+		const store = memoryStore(() => at);
+		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const kim = store.createPerson('robin', 'chat', 'kim', 'Kim');
+		const plan = { day: friday, from: 600, to: 700, source: 'persona' as const };
+		store.cancelEvent(store.addEvent('robin', { ...plan, kind: 'busy', what: 'at the dentist', personId: sam.id }).id);
+		at = 2_000;
+		store.addEvent('robin', { ...plan, kind: 'online', personId: sam.id });
+		store.addEvent('robin', { ...plan, kind: 'online', personId: kim.id });
+		store.addEvent('robin', { kind: 'busy', day: friday, from: 600, to: 700, what: 'at work' });
+		expect(store.eventsMadeSince('robin', 0)).toBe(3);
+		expect(store.eventsMadeSince('robin', 1_500)).toBe(2);
+		expect(store.eventsMadeSince('robin', 0, { kind: 'busy' })).toBe(1);
+		expect(store.eventsMadeSince('robin', 0, { kind: 'online', personId: sam.id })).toBe(1);
+		expect(store.eventsMadeSince('kim', 0)).toBe(0);
+	});
+
+	it("forgets the plans made in turns with someone forgotten, keeps the app's without them, sweeps those called off, and resets with the persona", () => {
+		let at = 1_000;
+		const store = memoryStore(() => at);
+		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const kim = store.createPerson('robin', 'chat', 'kim', 'Kim');
+		const call = store.addEvent('robin', { kind: 'online', day: friday, from: 600, to: 700, personId: sam.id, source: 'persona' });
+		const party = store.addEvent('robin', { kind: 'busy', day: friday, from: 1000, to: 1100, what: "at Sam's party", personId: sam.id, source: 'persona' });
+		const apps = store.addEvent('robin', { kind: 'online', day: friday, from: 1200, to: 1260, personId: sam.id });
+		const kims = store.addEvent('robin', { kind: 'online', day: friday, from: 400, to: 460, personId: kim.id, source: 'persona' });
+		const off = store.addEvent('robin', { kind: 'busy', day: friday, from: 800, to: 900, what: 'at the dentist' });
+		store.addEvent('kim', { kind: 'busy', day: friday, from: 800, to: 900, what: 'at the gym' });
+		store.cancelEvent(off.id);
+		store.set('robin', `calendarRefused:${sam.id}`, '{"reason":"busy"}');
+		expect(store.forgetPerson(sam.id)).toBe(true);
+		// What came of their conversation goes with them; the app's plan stays, without them; another's is untouched
+		expect(store.eventById(call.id)).toBeUndefined();
+		expect(store.eventById(party.id)).toBeUndefined();
+		expect(store.eventById(apps.id)?.personId).toBeNull();
+		expect(store.eventById(kims.id)?.personId).toBe(kim.id);
+		expect(store.get('robin', `calendarRefused:${sam.id}`)).toBeNull();
+		at = 5_000;
+		store.sweep(2_000);
+		expect(store.eventById(off.id)).toBeUndefined();
+		expect(store.eventById(apps.id)).toBeDefined();
+		store.resetPersona('robin');
+		expect(store.events('robin', friday, friday)).toEqual([]);
+		expect(store.events('kim', friday, friday)).toHaveLength(1);
+	});
+
+	it('lets the plans made with someone who ended it lapse: called off as by them when they come back (unblocked, undenied)', () => {
+		const store = memoryStore(() => 1_000);
+		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const kim = store.createPerson('robin', 'chat', 'kim', 'Kim');
+		const lee = store.createPerson('robin', 'chat', 'lee', 'Lee');
+		const time = store.addEvent('robin', { kind: 'online', day: friday, from: 900, to: 960, personId: sam.id, source: 'persona' });
+		const later = store.addEvent('robin', { kind: 'online', day: friday, from: 1200, to: 1260, personId: sam.id, source: 'persona' });
+		const party = store.addEvent('robin', { kind: 'busy', day: saturday, from: 900, to: 960, what: 'at your party', personId: lee.id, source: 'persona', withThem: true });
+		// Over long before now (1 January 1970): left as it was
+		const over = store.addEvent('robin', { kind: 'online', day: { year: 1969, month: 12, day: 20 }, from: 900, to: 960, personId: sam.id, source: 'persona' });
+		store.block(sam.id);
+		expect(store.events('robin', friday, friday)).toEqual([]);
+		// While Sam was away, Kim's plan took the time of one of theirs (hidden then, so nothing weighed it)
+		const kims = store.addEvent('robin', { kind: 'busy', day: friday, from: 930, to: 1000, what: 'at the cinema', personId: kim.id, source: 'persona' });
+		store.unblock(sam.id);
+		// Both lapsed, as by Sam (their leaving): no promise broken for anyone, and never in two places at once
+		expect(store.events('robin', friday, friday).map((event) => event.id)).toEqual([kims.id]);
+		expect(store.eventById(time.id)).toMatchObject({ cancelledBy: sam.id, cancelledAt: 1_000 });
+		expect(store.eventById(later.id)).toMatchObject({ cancelledBy: sam.id });
+		expect(store.eventById(over.id)).toMatchObject({ cancelledAt: null });
+		expect(store.auditLog('robin').filter((row) => row.kind === 'plan_lapsed').map((row) => row.detail.eventId)).toEqual([later.id, time.id]);
+		expect(store.calledOffOn('robin', sam.id, 0)).toBe(0);
+		store.deny('chat', 'lee', 'minor');
+		store.undeny('chat', 'lee');
+		expect(store.eventById(party.id)).toMatchObject({ cancelledBy: lee.id });
+	});
+
+	it('keeps a promise broken for someone else through a sweep for 30 days, which its calendar still tells', () => {
+		let at = Date.UTC(2026, 10, 1);
+		const store = memoryStore(() => at);
+		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const kim = store.createPerson('robin', 'chat', 'kim', 'Kim');
+		// Made 100 days before it is broken, far ahead
+		const made = store.addEvent('robin', { kind: 'online', day: { year: 2027, month: 2, day: 10 }, from: 900, to: 960, personId: sam.id, source: 'persona' });
+		at += 100 * 86_400_000;
+		store.cancelEvent(made.id, kim.id);
+		at += 10 * 86_400_000;
+		store.sweep(at - 86_400_000);
+		expect(store.calledOffOn('robin', sam.id, at - 30 * 86_400_000)).toBe(1);
+		at += 25 * 86_400_000;
+		store.sweep(at - 86_400_000);
+		expect(store.eventById(made.id)).toBeUndefined();
+	});
+
+	it('forgets someone even past a kv value it cannot read', () => {
+		const store = memoryStore(() => 1_000);
+		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const kim = store.createPerson('robin', 'chat', 'kim', 'Kim');
+		store.set('robin', `calendarRefused:${kim.id}`, 'not json');
+		store.set('robin', 'calendarRefused:77', 'null');
+		expect(store.forgetPerson(sam.id)).toBe(true);
+		expect(store.get('robin', `calendarRefused:${kim.id}`)).toBe('not json');
+	});
+
+	it('keeps nothing of a forgotten person\'s plan in what was shared with someone kept by a reset', () => {
+		const store = memoryStore(() => 1_000);
+		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const kim = store.createPerson('robin', 'chat', 'kim', 'Kim');
+		const share = store.planOpener('robin', kim.id, { kind: 'share', about: 'busy ("at Sam\'s surprise party")', dueAt: 1_000, expiresAt: 2_000 });
+		store.audit('robin', 'share_planned', { personId: kim.id, about: share.about, openerId: share.id, madeWith: sam.id });
+		store.block(kim.id);
+		store.resetPersona('robin');
+		expect(JSON.stringify(store.auditLog('robin'))).not.toContain('surprise');
+		expect(store.auditLog('robin').find((row) => row.kind === 'share_planned')?.detail).toEqual({ personId: kim.id, openerId: share.id });
+		expect(store.pendingOpener(kim.id)).toBeUndefined();
+	});
+
+	it('sweeps a plan made before the cut and dated two days or more before it, and keeps the others', () => {
+		const nov23 = Date.UTC(2026, 10, 23);
+		let at = nov23 - 10 * 86_400_000;
+		const store = memoryStore(() => at);
+		const gym = (day: number) => store.addEvent('robin', { kind: 'busy', day: { year: 2026, month: 11, day }, from: 600, to: 700, what: 'at the gym' });
+		const old = gym(20);
+		// A day before the cut: not over everywhere yet
+		const recent = gym(22);
+		at = nov23;
+		// Made at the cut: it counts toward the limits of the days that follow
+		const late = gym(19);
+		store.sweep(nov23);
+		expect([old, recent, late].map((event) => store.eventById(event.id) !== undefined)).toEqual([false, true, true]);
+	});
+
+	it("keeps the persona's own plans of the last 90 days, called off or over, whatever the cut: its limits count them", () => {
+		const day = 86_400_000;
+		let at = Date.UTC(2026, 10, 16);
+		const store = memoryStore(() => at);
+		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const own = store.addEvent('robin', { kind: 'online', day: { year: 2026, month: 11, day: 17 }, from: 900, to: 960, personId: sam.id, source: 'persona' });
+		const apps = store.addEvent('robin', { kind: 'busy', day: { year: 2026, month: 11, day: 17 }, from: 600, to: 700, what: 'at a team day' });
+		store.cancelEvent(own.id);
+		store.cancelEvent(apps.id);
+		// Two days on, a sweep of all but the last day: Sam's time still counts toward makeTime.perPersonDays
+		at += 2 * day;
+		store.sweep(at - day);
+		expect(store.eventById(own.id)).toBeDefined();
+		expect(store.eventById(apps.id)).toBeUndefined();
+		expect(store.eventsMadeSince('robin', at - 7 * day, { kind: 'online', personId: sam.id })).toBe(1);
+		// Past 90 days, it goes
+		at += 90 * day;
+		store.sweep(at - day);
+		expect(store.eventById(own.id)).toBeUndefined();
+	});
+
+	it('stands no plan made with someone who has since ended it, and stands it again if they come back', () => {
+		const store = memoryStore(() => Date.UTC(2026, 10, 16));
+		const sam = store.createPerson('robin', 'chat', 'sam', 'Sam');
+		const plan = store.addEvent('robin', { kind: 'busy', day: friday, from: 1080, to: 1320, what: 'at a party', personId: sam.id, source: 'persona' });
+		const apps = store.addEvent('robin', { kind: 'busy', day: friday, from: 600, to: 700, what: 'at a team day', personId: sam.id });
+		const standing = () => store.events('robin', friday, friday).map((event) => event.id);
+		expect(standing()).toEqual([apps.id, plan.id]);
+		for (const state of ['stopped', 'blocked', 'denied'] as const) {
+			store.updatePerson(sam.id, { state });
+			expect(standing(), state).toEqual([apps.id]);
+		}
+		store.updatePerson(sam.id, { state: 'active' });
+		expect(standing()).toEqual([apps.id, plan.id]);
 	});
 });
