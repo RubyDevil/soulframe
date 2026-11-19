@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-## [0.2.0-beta.0] - 2026-11-18
+## [0.2.0-beta.0] - 2026-11-19
 
 The notes of `0.1.0-beta.1`, which was never published, are folded in here: everything below is new since
 `0.1.0-beta.0`. [docs/configuration.md](./docs/configuration.md#coming-from-010-beta0) and
