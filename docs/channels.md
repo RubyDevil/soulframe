@@ -9,7 +9,7 @@ The pieces an adapter uses:
 | Piece | Role |
 | --- | --- |
 | `ChannelId` | The string your application chooses for the platform, e.g. `'chat'`. The same everywhere: in the persona's `on:`, in identities, in the deny list. |
-| `Channel` | How the brain is told about the place: `where`, `maxLength`, optional `identityNote`, `notes`, `invitations`, `actions` and `adult`. |
+| `Channel` | How the brain is told about the place: `where`, `maxLength`, optional `targetLength`, `identityNote`, `notes`, `invitations`, `actions` and `adult`. |
 | `Conversation` | One person on that channel: `typing`, `send`, optional `typingRefreshMs`, `markRead`, `delivered`, `extraLines` and `invitation`. |
 | `brain.incoming` | Called for every message, synchronously. |
 | `queue.handle` | Hands the decision to the reply queue. |
@@ -21,7 +21,7 @@ The pieces an adapter uses:
 The client below is a stand-in for whatever SDK your platform has.
 
 ```ts
-import { UnreachableError, watchSpans, type Brain, type Channel, type Conversation, type LinkPreview, type Persona, type ReplyQueue, type Runtime } from 'soulframe';
+import { UnreachableError, watchSpans, type Brain, type Channel, type Conversation, type LinkPreview, type Persona, type PersonAction, type ReplyQueue, type Runtime } from 'soulframe';
 
 /** A stand-in for your platform's SDK. */
 interface ChatClient {
@@ -30,6 +30,7 @@ interface ChatClient {
 	markRead(userId: string): Promise<void>;
 	sendMessage(userId: string, text: string): Promise<void>;
 	setPresence(online: boolean): Promise<void>;
+	block(userId: string): Promise<void>;
 }
 
 const CHAT_DM: Channel = { id: 'chat', where: 'Example Chat direct messages', maxLength: 2000 };
@@ -66,11 +67,16 @@ export function createChatAdapter({ persona, brain, queue, runtime, client }: { 
 		async start() {
 			// Everyone still owed a reply from before the restart
 			await queue.requeue(CHAT_DM.id, async (person) => (person.ids[CHAT_DM.id] ? conversationWith(person.ids[CHAT_DM.id]!) : null));
-			// Show online while a span is open here
-			stopHours = watchSpans(persona, CHAT_DM.id, runtime, (span) => void client.setPresence(span !== null));
+			// Show online while a span is open here: its hours with its calendar's plans (brain.hours)
+			stopHours = watchSpans(brain.hours, CHAT_DM.id, runtime, (span) => void client.setPresence(span !== null));
 		},
 		stop() {
 			stopHours?.();
+		},
+		// What the persona chose besides talking (createReplyQueue's act): see the act callback below
+		async act(personId: number, action: PersonAction) {
+			const userId = runtime.store.personById(personId).ids[CHAT_DM.id];
+			if (userId && action === 'block') await client.block(userId);
 		},
 	};
 }
@@ -277,8 +283,8 @@ If your platform delivers messages that came in while you were disconnected, pas
 
 ## Presence: `watchSpans` and `fullyOnline`
 
-`watchSpans(brain.hours, channelId, runtime, onChange)` calls `onChange(span)` right away and whenever the span on that
-channel opens, closes or changes (checked every 30 seconds), and answers a function that stops watching. Use it to
+`watchSpans(brain.hours, channelId, runtime, onChange)` calls `onChange(span)` right away and whenever a span on that
+channel opens, closes or another one starts (checked every 30 seconds), and answers a function that stops watching. Use it to
 show the persona online, to join or leave group chats, to start a posting schedule.
 
 The reply queue does not need it: it checks the hours itself, for openers too ([texting first](#texting-first-allowinitiative)).

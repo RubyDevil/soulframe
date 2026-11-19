@@ -1,4 +1,4 @@
-// Checks commit subjects against Conventional Commits 1.0.0 (see CONTRIBUTING.md, "Commit messages").
+// Checks commit messages: subjects against Conventional Commits 1.0.0, and no AI credit (see CONTRIBUTING.md, "Commit messages").
 // Usage: node scripts/lint-commits.mjs [<git revision range>]   (default: origin/main..HEAD)
 import { execFileSync } from 'node:child_process';
 

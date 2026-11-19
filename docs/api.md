@@ -17,6 +17,7 @@ signatures are not exported themselves; each is named with the way to reach it:
 | Type in a signature | Not exported; reach it as |
 | --- | --- |
 | `ScheduleConfig` | `PersonaConfig['schedule']` |
+| `Hours` (`{ id, timezone, schedule, events? }`: a persona, or its hours with its calendar) | `Brain['hours']` |
 | `Turn` | `Awaited<ReturnType<Brain['compose']>>` |
 | `TokenMeter` | `ReturnType<typeof createTokenMeter>` |
 | `Opener`, `OpenerKind`, `OpenerOutcome` | `ReturnType<Store['planOpener']>`, `Opener['kind']`, `Parameters<Store['closeOpener']>[1]` |
@@ -49,7 +50,7 @@ function parsePersona(options: {
 	config: unknown;                    // id, name, timezone, schedule
 	prompt: string;                     // the persona's voice and background, in Markdown
 	channels: readonly ChannelId[];     // the channels it is on: the names its hours' `on:` may use
-	settings?: Settings;                // its brain's: its own pacing and relationship are checked over them (default: the defaults)
+	settings?: Settings;                // its brain's: its own pacing, relationship and initiative are checked over them (default: the defaults)
 	source?: string;                    // named before each problem ("robin.md › schedule: Required")
 }): { persona?: Persona; issues: string[] };
 ```
@@ -137,6 +138,7 @@ interface PersonaConfig {
 	schedule: ScheduleConfig;                     // its hours by weekday
 	pacing?: { /* any keys of Settings['pacing'] */ };              // its own, over its brain's
 	relationship?: { /* any keys of Settings['relationship'] */ };  // its own, over its brain's
+	initiative?: { /* any keys of Settings['initiative'] */ };      // its own, over its brain's
 }
 ```
 
@@ -278,6 +280,7 @@ type Settings = {
 	context: { /* ... */ };
 	retries: { /* ... */ };
 	initiative: { /* ... */ };
+	calendar: { /* ... */ };
 };
 ```
 
@@ -359,7 +362,7 @@ What is valid but probably wrong in settings: a reply that may be written again 
 function personaReport(persona: Persona, options: { settings: Settings; now: number; status?: string }): string[];
 ```
 
-Indented lines describing the persona, run with `settings` (its brain's) and its own pacing and relationship over them,
+Indented lines describing the persona, run with `settings` (its brain's) and its own pacing, relationship and initiative over them,
 a `ConfigError` if they don't fit (as from `createBrain`, which `samplePrompt` runs): its prompt's length, now (or
 `status`), today's and tomorrow's agenda, today's interruptions, whether it texts first (a line only when
 `initiative.enabled`) and its models. It reads no store, so the agenda is its schedule's routine, without its calendar's
@@ -491,7 +494,7 @@ The application's content policy: soulframe applies none of its own beyond `Chan
 interface Brain {
 	readonly persona: Persona;     // as createBrain was given it
 	readonly hours: Hours;         // its persona's hours, with its calendar while settings.calendar is on
-	readonly settings: Settings;   // createBrain's, the persona's own pacing and relationship over them
+	readonly settings: Settings;   // createBrain's, the persona's own pacing, relationship and initiative over them
 	incoming(channel: Channel, externalId: string, name: string, message: string | IncomingMessage, at?: number): Decision;
 	outgoing(channel: Channel, externalId: string, name: string, text: string, at?: number): Person | undefined;
 	compose(personId: number, channel: Channel, options?: {
@@ -499,7 +502,7 @@ interface Brain {
 		extraLines?: (person: Person) => readonly string[];
 	}): Promise<Turn>;
 	assess(personId: number, channel: Channel): Promise<void>;
-	composeOpener(personId: number, channel: Channel, opener: { kind: 'followUp' | 'checkIn' | 'share'; about: string }, options?: {
+	composeOpener(personId: number, channel: Channel, opener: { kind: OpenerKind; about: string }, options?: {
 		extraLines?: (person: Person) => readonly string[];
 	}): Promise<Turn>;
 	composePost(channel: Channel, post: { rules: string; examples: readonly string[]; recent: readonly string[] }): Promise<string | null>;
@@ -554,14 +557,16 @@ interface Brain {
   `compose` then uses those answers while no newer message came, asking nothing again. Never throws: a failure leaves
   the model's own rating of their last turn.
 - **`composeOpener`**: a first message to the person on `channel` (`settings.initiative`, off by default), for
-  `opener`: a follow-up (its note), a check-in (how long they have been quiet) or a share (the busy block in `about`).
+  `opener`: a follow-up (its note), a check-in (how long they have been quiet), a share (the busy block in `about`) or
+  an apology (the plans its calendar broke with them, in `about`).
   What to text, or no message when the model chose not to. Builds the prompt from the
   history, notes, relationship and time as `compose` does (`openerTask`) and calls the model with
   `task: 'initiative'`. Its `keep()` stores only the notes (and, sent, what it told them the calendar owed them, unless
   `{ delivered: false }`): familiarity and affinity move with their answer. Throws when
   the answer can't be read. The reply queue calls it once the code's guardrails let the opener go
   ([concepts](./concepts.md#texting-first)); with `initiative.followUps` on, `compose`'s answer may plan a follow-up
-  (stored by its `keep()`), and the queue plans check-ins and shares itself.
+  (stored by its `keep()`), the queue plans check-ins and shares itself, and the brain plans an apology when a kept
+  turn breaks a promise to someone else ([concepts](./concepts.md#its-calendar)).
 - **`composePost`**: a post for `channel` in the persona's voice, with the channel's `notes`, following `rules`, like
   `examples`, not repeating `recent`; every link removed when `policy.allowedLinks` is set; `null` when under 10
   characters. Uses `task: 'post'`.
@@ -771,11 +776,11 @@ closed their DMs): the rest of the reply is dropped and an active person becomes
 ### `watchSpans`
 
 ```ts
-function watchSpans(hours: { id: string; timezone: string; schedule: ScheduleConfig }, channel: ChannelId, runtime: Runtime, onChange: (span: Span | null) => void): () => void;
+function watchSpans(hours: Hours, channel: ChannelId, runtime: Runtime, onChange: (span: Span | null) => void): () => void;
 ```
 
 Calls `onChange(span)` right away and again whenever the span open on `channel` changes (checked every 30 seconds),
-logging `hours_open` or `hours_closed`. Pass a persona as `hours`. Answers a function that stops watching.
+logging `hours_open` or `hours_closed`. Pass `brain.hours` as `hours` (a persona for its routine alone). Answers a function that stops watching.
 
 ### `Timers`
 
@@ -859,7 +864,7 @@ interface StepClock {
 ### `spanAt`
 
 ```ts
-function spanAt(hours: { id: string; timezone: string; schedule: ScheduleConfig }, at: number, channel?: ChannelId): Span | null;
+function spanAt(hours: Hours, at: number, channel?: ChannelId): Span | null;
 ```
 
 The span open at `at` on `channel` (on any channel when left out), else `null`. Give it `brain.hours` for the agenda
@@ -868,11 +873,11 @@ with its calendar's plans (`settings.calendar`), a persona for its routine alone
 ### `fullyOnline`
 
 ```ts
-function fullyOnline(hours: { id: string; timezone: string; schedule: ScheduleConfig }, channel: ChannelId, at: number): boolean;
+function fullyOnline(hours: Hours, channel: ChannelId, at: number): boolean;
 ```
 
 Whether a full `online` span (not a break) is open on `channel` at `at`: group chats, posts and joining a group chat need
-one. Mind the argument order: `channel` before `at`, unlike `spanAt`.
+one. Mind the argument order: `channel` before `at`, unlike `spanAt`. Give it `brain.hours`, as `spanAt`.
 
 ### `Span`
 
@@ -916,8 +921,8 @@ function createStore(db: Database, now?: () => number): Store;
 Creates the package's tables in `db` if missing, then answers the store. `now` (default `Date.now`) stamps what it
 records. A database made by an earlier beta gets the columns added since (`familiarity`, `affinity`, `importance`,
 `importanceAt`), in one transaction; familiarity then starts from each person's conversations so far (1 - 0.9^n), so
-someone who was close stays close. Its `messages` get a `media` column too, outside that transaction. Data the application kept in a layout of its own is its own to migrate before this
-(`inTransaction`).
+someone who was close stays close. Its `messages` get a `media` column too, outside that transaction. Data the
+application kept in a layout of its own is its own to migrate before this (`inTransaction`).
 
 ### `inTransaction`
 
@@ -999,8 +1004,10 @@ failed?: true }[]; links: (LinkPreview & { looked?: true })[] }`. A photo keeps 
   `denied` at once.
 - **`cautionMinor`**, **`isMinorCautioned`**: the flag on someone possibly under 18, for every persona; it keeps the
   first probability and is never cleared by the code.
-- **`get`**, **`set`**: small values by persona and key (`set` with `null` deletes). The package uses `selfNotes` and
-  `lastOnlineAt` per persona, and the persona `'*'` for token counts and minor flags.
+- **`get`**, **`set`**: small values by persona and key (`set` with `null` deletes). The package uses, per persona,
+  `selfNotes`, `lastOnlineAt`, `initiativeSpan`, and per person `relationship:<id>` (the levels shown),
+  `calendarRefused:<id>` and `calendarCalledOff:<id>` (what its calendar still has to tell them), and the persona
+  `'*'` for token counts and minor flags (`minorCaution:<channel>:<account>`). Keep your own keys apart from these.
 - **`audit`**, **`auditLog`**: the audit log (newest first, default 50, for one persona or all).
 - **`sweep`**: deletes messages, audit lines and closed openers older than `before`, and the calendar events made before
   it that were called off before it or are dated two days or more before it, but for the persona's own plans of the
@@ -1079,7 +1086,7 @@ interface StoredEvent {
 	from: number; // minutes of that day
 	to: number;   // past 1440: past midnight
 	what: string; // a busy plan's reason, completing "you're ..."; '' for online time
-	personId: number | null; // whom it was made with (time made to chat is for them); null for an app plan of someone forgotten
+	personId: number | null; // whom it was made with (time made to chat is for them); null for an app plan with nobody, or of someone forgotten
 	source: 'persona' | 'app'; // the persona's own, made in a DM turn, or the app's (addEvent)
 	share: 'open' | 'personal' | 'confidential'; // how widely its words may be told to others (settings.calendar.sharing)
 	public: string | null; // the words anyone may hear of a busy one; null for none
@@ -1132,7 +1139,7 @@ type PersonState = 'active' | 'stopped' | 'blocked' | 'denied';
 
 ```ts
 interface Llm {
-	complete(messages: LlmMessage[], options: { task: 'directMessage' | 'groupChat' | 'post' | 'vision'; json?: boolean }): Promise<string>;
+	complete(messages: LlmMessage[], options: { task: 'directMessage' | 'groupChat' | 'post' | 'vision' | 'initiative'; json?: boolean }): Promise<string>;
 }
 ```
 
@@ -1200,8 +1207,8 @@ At most `size` calls in progress at once; the others wait their turn, in order.
 function createCannedLlm(rng: Rng): Llm;
 ```
 
-A model that answers one of a few fixed lines (picked with `rng`) for DMs and group chats, a fixed post and a fixed photo description, without
-any network: for dry runs, demos and tests.
+A model that answers one of a few fixed lines (picked with `rng`) for DMs and group chats, a fixed opener ("hey, how
+did it go?"), a fixed post and a fixed photo description, without any network: for dry runs, demos and tests.
 
 ### `modelKeys`
 

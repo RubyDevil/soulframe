@@ -99,9 +99,9 @@ const initiativeText = ({ perDay, followUps, checkIns, sharing }: Settings['init
 
 /**
  * A config check's lines on one persona, after the app's header line, with the settings its brain runs with (its own
- * pacing and relationship over `settings`; a ConfigError if they don't fit, as from createBrain): its prompt's length,
- * now (`status` in place of what its hours say, when the app gives one), today, tomorrow, today's interruptions
- * (`pacing.interruptions`), whether it texts first (only when it does: `initiative`) and its models.
+ * pacing, relationship and initiative over `settings`; a ConfigError if they don't fit, as from createBrain): its
+ * prompt's length, now (`status` in place of what its hours say, when the app gives one), today, tomorrow, today's
+ * interruptions (`pacing.interruptions`), whether it texts first (only when it does: `initiative`) and its models.
  */
 export function personaReport(persona: Persona, { settings: given, now, status }: { settings: Settings; now: number; status?: string }): string[] {
 	const settings = ownSettings(persona, given);
@@ -143,7 +143,7 @@ export async function samplePrompt({
 	policy,
 }: {
 	persona: Persona;
-	/** As createBrain's: the settings its brain runs with, its own pacing and relationship over them (a ConfigError if they don't fit). */
+	/** As createBrain's: the settings its brain runs with, its own pacing, relationship and initiative over them (a ConfigError if they don't fit). */
 	settings: Settings;
 	/** As createBrain's. */
 	identity?: string;

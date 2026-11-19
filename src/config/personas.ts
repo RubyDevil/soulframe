@@ -75,7 +75,7 @@ const MOVED: Readonly<Record<string, string>> = {
 	chattiness: "no longer read: say how much it talks in group chats in its prompt (with the group-chat gate on, how readily it speaks is its brain's decisions.groupChatGate.chimeInAt)",
 	sfw: "is the brain's policy now: createBrain({ policy: { sfw: true } })",
 	character: 'no longer read: write its facts, interests and boundaries in its prompt (moods are gone)',
-	settings: "no longer read: its own pacing and relationship are keys of its config now; any other setting is its brain's: createBrain({ settings })",
+	settings: "no longer read: its own pacing, relationship and initiative are keys of its config now; any other setting is its brain's: createBrain({ settings })",
 };
 
 /** The `on:` names of these hours that are none of `channels`, each with its path. */
@@ -91,9 +91,10 @@ type Parsed = { persona?: Persona; issues: string[] };
 
 /**
  * A persona from its config and its prompt, checked, from wherever the app keeps them (its own loader, a database,
- * values in code). `channels` are the channels the app puts it on: the names its hours' `on:` may use. Its own pacing and relationship
- * are checked over `settings` (the defaults unless given). `source` names where it came from in the problems (a file,
- * say). Never throws: with any problem there is no persona, and `issues` say what is wrong.
+ * values in code). `channels` are the channels the app puts it on: the names its hours' `on:` may use. Its own pacing,
+ * relationship and initiative are checked over `settings` (the defaults unless given). `source` names where it came
+ * from in the problems (a file, say). Never throws: with any problem there is no persona, and `issues` say what is
+ * wrong.
  */
 export function parsePersona({
 	config,

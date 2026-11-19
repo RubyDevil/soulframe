@@ -42,12 +42,12 @@ frontmatter, is optional (`loadPersonas`, `parsePersonaMarkdown`). A loaded pers
 | `name` | The name it goes by, 1 to 32 characters. |
 | `timezone` | An IANA time zone; its hours are local to it. |
 | `schedule` | Its hours by weekday. |
-| `pacing`, `relationship` | Optional: its own, over its brain's settings (only the keys it changes). |
+| `pacing`, `relationship`, `initiative` | Optional: its own, over its brain's settings (only the keys it changes). |
 | `prompt` | Its voice and background, trimmed. |
 
 Nothing else: what it says is its prompt's, and how its brain runs (models, limits, memory, pacing, the typed checks)
-is the brain's **settings** (`createBrain({ persona, settings })`, read with `parseSettings`), but for its own pacing and
-relationship.
+is the brain's **settings** (`createBrain({ persona, settings })`, read with `parseSettings`), but for its own pacing,
+relationship and initiative.
 One settings object may serve every persona, or a persona's brain may get its own.
 
 The **system prompt** of every task is assembled in this order, so what comes later wins:
@@ -55,12 +55,14 @@ The **system prompt** of every task is assembled in this order, so what comes la
 1. the persona's own prompt;
 2. the identity line: its name, your phrase on what it is (`createBrain({ identity })`) and where it is talking
    (`Channel.where`), then the channel's `identityNote` when there is one;
-3. your style block, if any (`createBrain({ style })`): how your personas write. soulframe has no voice of its own;
-4. the rules, if any (see [Safeguards and policy](#safeguards-and-policy)): the 18+ line on an adult channel, the
+3. its usual week, in the tasks with a time line (`settings.context.week`): the same on every call, so a provider's
+   prompt cache keeps it;
+4. your style block, if any (`createBrain({ style })`): how your personas write. soulframe has no voice of its own;
+5. the rules, if any (see [Safeguards and policy](#safeguards-and-policy)): the 18+ line on an adult channel, the
    `sfw` line of a safe-for-work policy (`policy.sfw`), then your `policy.rules`;
-5. the task (a DM turn, a group-chat line or a post) with its answer format and the model's notes. A DM turn and a
-   group-chat line end with the time line: the time and the persona's day. A post has no time line. What changes on
-   every call goes last, so a provider's prompt cache can reuse the rest.
+6. the task (a DM turn, an opener, a group-chat line or a post) with its answer format and the model's notes. A DM
+   turn, an opener and a group-chat line end with the time line: the time and the persona's days. A post has no time
+   line. What changes on every call goes last, so a provider's prompt cache can reuse the rest.
 
 ## Agenda: spans, busy blocks and the situation
 
@@ -157,7 +159,8 @@ delivers:
   (`Turn.keep`). Too late for that (something was sent already, or the restarts are spent), the message gets a turn of
   its own once this one ends (`reply_after_turn`).
 - **Inside an open span**, a turn is timed by what the persona is doing. While it writes a reply to anyone, and for a
-  while after, it is on its phone (`pacing.watching`: the chance starts at 1 and halves every 90 seconds by default),
+  while after, it is on its phone (`pacing.watching`: the chance stays at 1 for `holdSeconds`, 60 by default, then
+  halves every 90 seconds),
   and a new message from anyone is noticed after a short lag: a live conversation with one person doesn't leave
   another waiting for its next glance (they still wait for the reply under way, one person at a time). Otherwise it
   notices a message when it next looks at its messages, one look for everyone: whoever wrote before it is noticed
@@ -232,7 +235,8 @@ Off by default (`settings.initiative.enabled`). With it on, a persona may start 
 
   A follow-up is kept only with the turn that planned it (`Turn.keep`). Every later turn with them sees it, so once
   they talk about it the model drops it, and once its day has come their own turn is asked to bring it up. It may go
-  from 6 AM that day, in the persona's time zone, until the end of the day after it. Check-ins, shares and apologies
+  from 6 AM that day, in the persona's time zone (two hours on, for one planned for later today), until the end of the
+  day after it. Check-ins, shares and apologies
   are the code's: no turn sees them. They are planned once per span (a restart doesn't plan it again), for people an allowed
   channel reaches, at most what `perDay` leaves.
 - **Which channels.** Only those the app allows: `queue.allowInitiative(channel, conversationOf)` (see
@@ -244,7 +248,8 @@ Off by default (`settings.initiative.enabled`). With it on, a persona may start 
   hours, and one a day per account across every persona.
 - **When.** Checked at each tick of the queue, in a full `online` span on that channel with `spanEndMinutes` left,
   and only when nothing else wants the persona: no turn under way, coming due or in the backlog, not away. Replies
-  always come first. A due opener then goes at a random moment, on average 20 minutes on, one at a time.
+  always come first. A due follow-up then goes at a random moment, on average 20 minutes on; a check-in or a share
+  has its moment already, and an apology is due at once; one at a time.
 - **The turn.** An opener is a turn like the others (one person at a time): `brain.composeOpener` writes it from the
   history, the notes, the relationship and the time line, with its own model task (`models.initiative`), and the
   queue types and sends it as a reply, without a read receipt. If they write while it is being written or typed,
@@ -346,7 +351,8 @@ loads; `node --disable-warning=ExperimentalWarning` hides it.
   approached by another, and every person with that account is denied at once.
 - **Minor flags**, **kv** (small per-persona values, token counts) and the **audit** log (what was decided, with the
   probabilities of any typed checks). `store.sweep(before)` deletes old messages, audit lines, closed openers and old
-  calendar events (the persona's own plans of the last 90 days kept: its limits count them).
+  calendar events (the persona's own plans of the last 90 days kept, which its limits count, and those called off in
+  the last 30, which it still tells).
 
 ## The brain
 
@@ -440,9 +446,9 @@ are not calibrated: tune them from the audit rows, which record each probability
 
 Where things can go wrong, and how each one reaches you:
 
-- **Config.** `parsePersona`, `parsePersonaMarkdown`, `loadPersonas` and `parseSettings` never throw on a config
-  problem: every problem is in `issues`, with its source and path, and a persona (or settings) with one is not given
-  (see [configuration](./configuration.md#errors-and-warnings)).
+- **Config.** `parsePersona`, `parsePersonaMarkdown`, `loadPersonas`, `parseSettings` and `parseServiceSettings` never
+  throw on a config problem: every problem is in `issues`, with its source and path, and a persona (or settings) with
+  one is not given (see [configuration](./configuration.md#errors-and-warnings)).
   Throw a `ConfigError` yourself to stop on them.
 - **No provider.** `llmsFor` throws, naming every persona without one, outside a dry run. A task left without a
   provider or a model rejects with a configuration error that the queue never retries (`reply_given_up`).

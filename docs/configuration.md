@@ -7,7 +7,7 @@ a Markdown file per persona with its config as YAML frontmatter (`loadPersonas`,
 
 What a brain runs with (its models, memory, pacing, which typed checks it asks) is its **settings**: you give them to
 `createBrain({ persona, settings })` and read them with `parseSettings`; a persona may set
-[its own pacing and relationship](#its-own-pacing-and-relationship) over them. What every persona
+[its own pacing, relationship and initiative](#its-own-pacing-relationship-and-initiative) over them. What every persona
 shares (the text provider's daily budget, the Decisions client) is the **service settings**, set once
 (`parseServiceSettings`).
 
@@ -18,14 +18,14 @@ Everything below is taken from the package's schemas (`src/config/personas.ts`, 
 - [The config](#the-config)
 - [The prompt](#the-prompt)
 - [`schedule`](#schedule)
-- [Its own pacing and relationship](#its-own-pacing-and-relationship)
+- [Its own pacing, relationship and initiative](#its-own-pacing-relationship-and-initiative)
 - [Your own loader](#your-own-loader)
 - [`settings`](#settings): [`models`](#models), [`perception`](#perception), [`decisions`](#decisions),
   [`memory`](#memory), [`relationship`](#relationship), [`pacing`](#pacing), [`context`](#context), [`retries`](#retries)
 - [Service settings](#service-settings): [`text`](#text), [`decisions` (the client)](#decisions-the-client)
 - [Errors and warnings](#errors-and-warnings)
 - [Check helpers](#check-helpers)
-- [Coming from 0.1.0-beta.1](#coming-from-010-beta1)
+- [Coming from 0.1.0-beta.0](#coming-from-010-beta0)
 
 ## A persona file
 
@@ -92,12 +92,12 @@ says is its prompt's; how its brain runs is its [settings](#settings).
 | `name` | string, 1 to 32 characters | required | The name it goes by: in its identity line, and how group chats and the typed checks name it. |
 | `timezone` | IANA time zone | required | e.g. `America/Toronto`. Checked with `Intl`; a near miss gets a suggestion. |
 | `schedule` | [schedule](#schedule) | required | Its hours by weekday. |
-| `pacing` | any keys of [`pacing`](#pacing) | none | [Its own](#its-own-pacing-and-relationship), over its brain's. |
-| `relationship` | any keys of [`relationship`](#relationship) | none | [Its own](#its-own-pacing-and-relationship), over its brain's. |
-| `initiative` | any keys of [`initiative`](#initiative) | none | [Its own](#its-own-pacing-and-relationship), over its brain's: whether and how it texts first. |
+| `pacing` | any keys of [`pacing`](#pacing) | none | [Its own](#its-own-pacing-relationship-and-initiative), over its brain's. |
+| `relationship` | any keys of [`relationship`](#relationship) | none | [Its own](#its-own-pacing-relationship-and-initiative), over its brain's. |
+| `initiative` | any keys of [`initiative`](#initiative) | none | [Its own](#its-own-pacing-relationship-and-initiative), over its brain's: whether and how it texts first. |
 
 A key the schema doesn't know is an error, with the nearest known one; a key the 0.1 betas read says where it went
-(see [Coming from 0.1.0-beta.1](#coming-from-010-beta1)).
+(see [Coming from 0.1.0-beta.0](#coming-from-010-beta0)).
 
 ## The prompt
 
@@ -165,7 +165,7 @@ schedule:
           end: ["23:00", "00:30"]
 ```
 
-## Its own pacing and relationship
+## Its own pacing, relationship and initiative
 
 A persona's config may set its own `pacing`, `relationship` and `initiative`, only the keys it changes, written as in
 [the settings](#settings):
@@ -384,11 +384,11 @@ Explained in full, with the reply timing and who goes first, in
 | --- | --- | --- | --- |
 | `familiarity.growth` | number, 0 to 0.5 | `0.012` | The share of what is left to know (1 - familiarity) that one kept turn of an ordinary chat (importance 1) adds; small talk (0) adds a quarter of that, something personal (2) two and a half times, something that matters a lot (3) five times. |
 | `familiarity.fadeHalfLifeDays` | number, 0 to 3650 | `60` | Days apart over which it halves, counted when they next write; `0` never fades. |
-| `familiarity.levels` | list of `{ from, text }` | the shipped seven | The levels the prompt describes, lowest first: each from its `from` (0 to 1; the first is 0, each above the one before) up to the next, its `text` with `{name}` for their name. Replaces the shipped levels whole (`FAMILIARITY_LEVELS` in `prompts.ts`). |
+| `familiarity.levels` | list of 2 to 12 `{ from, text }`, `text` up to 400 characters | the shipped seven | The levels the prompt describes, lowest first: each from its `from` (0 to 1; the first is 0, each above the one before) up to the next, its `text` with `{name}` for their name. Replaces the shipped levels whole (`FAMILIARITY_LEVELS` in `prompts.ts`). |
 | `affinity.enabled` | boolean | `true` | Off: the model is asked nothing about it, the prompt says nothing of it, and it weighs nothing in who goes first. |
 | `affinity.step` | number, 0.001 to 0.5 | `0.05` | How far one turn moves it; the model answers -1 (a little cooler), 0 or 1 (a little warmer). |
 | `affinity.fadeHalfLifeDays` | number, 0 to 3650 | `0` | Days apart over which it drifts halfway back to neutral; `0` never. |
-| `affinity.levels` | list of `{ from, text }` | the shipped five | As `familiarity.levels`, from -1; an empty `text` says nothing (the shipped neutral level). Replaces `AFFINITY_LEVELS` whole. |
+| `affinity.levels` | list of 2 to 12 `{ from, text }`, as `familiarity.levels` | the shipped five | As `familiarity.levels`, from -1; an empty `text` says nothing (the shipped neutral level). Replaces `AFFINITY_LEVELS` whole. |
 | `hysteresis` | number, 0 to 0.5 | `0.05` | How far below a level's `from` a value must fall before the level shown goes back down. |
 
 The levels are set when a conversation starts (`memory.conversationGapHours`) and kept for all of it. Your own words,
@@ -480,9 +480,10 @@ pacing:
 
 A persona answers one person at a time, always: while it writes or sends a reply to someone, the others' turns wait,
 and the first that came due starts the moment it is free (a turn under way for over 10 minutes stops holding them
-back). Someone who writes in bursts gets one reply once they stop: with the defaults it waits 2 to 5 seconds of quiet
-after their newest message, and a message that lands while the reply is being written makes it write the reply again,
-once, with that message read:
+back). Someone who writes in bursts gets one reply once they stop: with the defaults it waits half a second to 2
+seconds of quiet after their newest message, and a message that lands while the reply is written, before half of its
+first message is typed, makes it write the reply again, once, with that message read (past half, the draft goes out
+and the message gets a reply of its own):
 
 ```yaml
 pacing:
@@ -727,12 +728,17 @@ For a config check command (none of them starts anything or touches the network)
   (`pacing.burst.maxRestarts`), and no text provider.
 - **`personaReport(persona, { settings, now, status? })`**: lines describing what is in effect: its prompt's length,
   what it is doing now (or `status`), today's and tomorrow's agenda (its routine: it reads no store, so no calendar),
-  today's interruptions and its models.
+  today's interruptions, whether it texts first (only when it does) and its models.
 - **`samplePrompt({ persona, settings, identity?, style?, channel, extraLines?, now, policy? })`**: the system prompt of
   a sample DM turn on `channel`, built by the brain itself on a throwaway in-memory store. Offline at `now`, it is
   taken a minute into the next span on that channel, so the lines about its day show.
 
-## Coming from 0.1.0-beta.1
+## Coming from 0.1.0-beta.0
+
+The persona's config, its settings and the functions that read them. What changed in the timing, attention and
+relationships (the per-message delay rolls, the relationship counted in conversations, the switch for answering one
+person at a time, faster typing and reading defaults) is in [attention](./attention.md#coming-from-010-beta0);
+everything is in the [CHANGELOG](../CHANGELOG.md).
 
 | Before | Now |
 | --- | --- |
@@ -744,7 +750,11 @@ For a config check command (none of them starts anything or touches the network)
 | `sfw: true` | `createBrain({ policy: { sfw: true } })` |
 | `character.facts`, `interests`, `boundaries` | In the prompt, in your words |
 | `character.moods` | Gone: soulframe picks no mood. A mood that follows what happens is planned ([roadmap](./roadmap.md)) |
-| `settings:` in a persona's file or `_shared.yaml` | `parseSettings`, then `createBrain({ settings })` and `llmsFor`; a persona's own `pacing` and `relationship` are keys of its config |
+| `settings:` in a persona's file or `_shared.yaml` | `parseSettings`, then `createBrain({ settings })` and `llmsFor`; a persona's own `pacing`, `relationship` and `initiative` are keys of its config |
+| `loadPersonas({ dir, channels, adult })` | `loadPersonas({ dir, channels, settings? })`: drop `adult` (`Channel.adult` and its safeguard are unchanged; school is a busy reason like any other) |
+| `loadPersonas(…)` answering `{ shared, personas, issues }` | `{ personas, issues }`: no `shared` |
+| `PersonaConfig.promptText` | `Persona.prompt` |
+| `decisions.groupChatGate.chimeInAt: { quiet, easygoing, talkative }` | One number (default `1.7`): the old shape is refused |
 | `settings.llm.baseUrl`, `apiKeyEnv`, `model`, `jsonMode`, `timeoutSeconds` | `models.default.*` |
 | `settings.llm.dailyTokens`, `directMessageReserve`, `concurrency` | The service settings' `text` (`parseServiceSettings`); `llmsFor` takes it as `budget` in place of `concurrency` |
 | `settings.decisions.enabled`, `baseUrl`, `apiKeyEnv`, `model`, `timeoutSeconds`, `dailyTokens` | The service settings' `decisions`, given to `createConfiguredDecisions` (the thresholds stay in each brain's `settings.decisions`) |
@@ -753,3 +763,6 @@ For a config check command (none of them starts anything or touches the network)
 | `createReplyQueue({ persona, brain, runtime, act })` | `createReplyQueue({ brain, runtime, act })`: the persona and settings are the brain's |
 | `personaReport(persona, { shared, now })` | `personaReport(persona, { settings, now })` |
 | The provider and budget warnings of `personaWarnings` | `settingsWarnings(settings)` |
+| `samplePrompt({ persona, channel, now, … })` | `samplePrompt({ persona, settings, channel, now, … })`: the settings its brain runs with |
+| `brain.compose` storing a turn's notes, block and action as the model answers | Nothing until `turn.keep({ delivered })`: the reply queue calls it; without the queue, call `turn.keep?.({ delivered: true })` once the reply went out |
+| `Conversation.typing(false)` rejecting escaped the reply queue | A failed delivery (`delivery_failed`, or `unreachable` for an `UnreachableError`): let it reject as `send` does |

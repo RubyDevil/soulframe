@@ -25,7 +25,7 @@ describe('a persona config', () => {
 		expect(Object.keys(test()).sort()).toEqual(['id', 'name', 'prompt', 'schedule', 'timezone']);
 	});
 
-	it('keeps its own pacing and relationship as written, checked as settings over the ones given (the defaults unless given)', () => {
+	it('keeps its own pacing, relationship and initiative as written, checked as settings over the ones given (the defaults unless given)', () => {
 		const own = { pacing: { glance: { medianSeconds: 90 }, typingCharsPerSecond: [2, 3] }, relationship: { familiarity: { growth: 0.02 } } };
 		expect(test(own)).toMatchObject(own);
 		expect(issuesOf(testPersona({ pacing: { glanse: { medianSeconds: 30 }, replySplitChance: 1.5 } }), { source: 'test.md' })).toEqual([
@@ -77,7 +77,7 @@ describe('a persona config', () => {
 			"chattiness: no longer read: say how much it talks in group chats in its prompt (with the group-chat gate on, how readily it speaks is its brain's decisions.groupChatGate.chimeInAt)",
 			"sfw: is the brain's policy now: createBrain({ policy: { sfw: true } })",
 			'character: no longer read: write its facts, interests and boundaries in its prompt (moods are gone)',
-			"settings: no longer read: its own pacing and relationship are keys of its config now; any other setting is its brain's: createBrain({ settings })",
+			"settings: no longer read: its own pacing, relationship and initiative are keys of its config now; any other setting is its brain's: createBrain({ settings })",
 		]);
 		// A window in place of a schedule: the schedule is missing, and the window says how to write it
 		expect(issuesOf(testPersona({ schedule: undefined, window: old.window }))).toEqual(['schedule: Required', expect.stringMatching(/^window: no longer read/)]);

@@ -21,10 +21,10 @@ the docs import the package by its own name, `soulframe`, as an application inst
 ## Checks
 
 ```sh
+npm run type-check                # tsc --noEmit over src, test, examples and scripts
 npm test                          # vitest run: every test/**/*.test.ts
-npm run type-check                # tsc --noEmit over src, test and examples
-npx tsx examples/console-chat.ts  # the example still runs, offline
-npm run check                     # all of the above's gates plus the build, publint and are-the-types-wrong
+npm run check                     # type-check, test, the build, publint and are-the-types-wrong, in that order
+npx tsx examples/console-chat.ts  # the example still runs, offline (check doesn't run it)
 npm run persona-test              # two personas on a live model, reviewed (--suite, --runs, --baseline; --canned offline)
 ```
 
@@ -46,7 +46,10 @@ A pull request keeps these green (CI runs `npm run check` once, then the tests a
   that span when you add a reference: it is what keeps the reference from drifting silently. A failure names the
   nearest line that holds the name;
 - every export of `src/index.ts` has its `###` heading in `docs/api.md`, and every heading there is an export;
-- every relative link and `#anchor` in the package's Markdown resolves.
+- every relative link and `#anchor` in the package's Markdown resolves;
+- every setting (a brain's and the service's) is in `docs/configuration.md`, every timing and relationship setting is
+  explained in `docs/attention.md`, and no removed setting is left in the docs but in the notes on moving from the
+  first beta.
 
 ## The boundary
 
@@ -92,7 +95,8 @@ versions with the same rules.
   From 1.0.0 on, a breaking change raises `MAJOR`, a backwards-compatible feature `MINOR`, a fix `PATCH`.
 - **Prereleases** add a hyphen and dot-separated identifiers after the version: `0.1.0-beta.0`
   ([SemVer §9](https://semver.org/spec/v2.0.0.html#spec-item-9)). `beta` is the label and the number after it counts the
-  prereleases of that version: `0.1.0-beta.0`, `0.1.0-beta.1`, ..., then `0.1.0` for the stable release. Numeric
+  prereleases of that version: `0.1.0-beta.0`, `0.1.0-beta.1`, ..., then `0.1.0` for the stable release. A breaking
+  change during the betas starts the next minor's instead (`0.1.0-beta.0`, then `0.2.0-beta.0`). Numeric
   identifiers are compared as numbers, so `beta.2` comes before `beta.10`
   ([§11](https://semver.org/spec/v2.0.0.html#spec-item-11)). The labels, in order: `alpha`, `beta`, `rc`.
 - **npm dist-tags.** A version with a hyphen is published with `npm publish --tag beta` (the tag matches the label), so
@@ -124,8 +128,8 @@ Commits follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/
   `BREAKING CHANGE: <what changed and how to migrate>` footer. They also get a CHANGELOG line under `Changed` or `Removed`.
 - **No AI attribution.** Commit messages, pull request descriptions and changelog entries never credit an AI assistant:
   no `Co-Authored-By:` trailer, no "Generated with ..." line. Commits carry the contributor's own git identity only.
-- One logical change per commit. `npm run lint:commits` checks the subjects of the commits since `origin/main` (CI
-  checks every pull request's commits).
+- One logical change per commit. `npm run lint:commits` checks the commits since `origin/main` (CI checks every pull
+  request's commits): each subject, and that no message credits an AI assistant.
 
 ## Changelog
 
@@ -147,5 +151,5 @@ To release (maintainers):
 1. Move the `[Unreleased]` notes under a new `## [x.y.z] - date` heading in the CHANGELOG.
 2. `npm version <x.y.z> --no-git-tag-version`, commit (`chore(release): x.y.z`) and push to `main` once CI is green.
 3. `git tag vx.y.z && git push origin vx.y.z`. The `Release` workflow checks the tag against `package.json`, runs
-   `npm run check`, publishes to npm (a prerelease such as `0.1.0-beta.1` goes out on the `beta` dist-tag, and only a
+   `npm run check`, publishes to npm (a prerelease such as `0.2.0-beta.0` goes out on the `beta` dist-tag, and only a
    version without a suffix becomes `latest`) and creates the GitHub release from the CHANGELOG.
